@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ================================================================
+  NWOAS  autounattend.xml  —  [2] INSTALL / DESTRUCTIVE
+  ================================================================
+  ★★★ 경고: 이 파일은 대상 디스크를 완전히 지웁니다(clean). 반드시 아래를 먼저 읽으세요.
+
+  전제(반드시 선행): FINAL_diagnostic_autounattend.xml 을 먼저 돌려 X:\nwoas_probe.txt 를
+    hv.readmem 으로 읽고 다음을 확인했을 것:
+      (1) WinPE에서 wmic 가 동작한다.
+      (2) 어느 Index가 USB-C SSD인지, Apple 내장 NVMe가 보이는지/InterfaceType이 USB가 아닌지.
+      (3) InterfaceType='USB' AND MediaType!='Removable Media' 로 매칭되는 디스크가 정확히 1개.
+
+  ★ 파괴 대상 = USB-C 외장 SSD = /Volumes/X31 = "NWOAS 빌드 디렉토리 전체(APFS, 57GB 사용중)".
+    이 SSD에 Windows를 설치하면 NWOAS 프로젝트 전체가 소멸합니다(APFS라 wipe 불가피).
+    => 설치 전에 (a) 빌드 트리를 다른 매체로 백업하거나,
+       (b) 아예 별도의 빈 USB 디스크를 설치 대상으로 준비하는 것을 강력 권장.
+
+  안전 타겟팅 방식(워커B 종합, 하드코딩 DiskID 안 씀):
+    - nwoas_disksetup.bat 가 wmic로 "USB & 비이동식" 디스크를 동적 탐지.
+    - 정확히 1개 + 정수 Index + Index!=0 일 때만 diskpart 실행, 아니면 ABORT(무접촉).
+    - ImageInstall은 InstallToAvailablePartition=true 로 그 bat가 만든 NTFS 파티션을 선택.
+    - 내장 NVMe는 APFS(비-NTFS)이므로 InstallToAvailablePartition의 대상이 될 수 없음(2차 안전망).
+
+  워커 수정(설계=Opus): LabConfig(Win11 hw 우회)는 windowsPE에 배치해야 함.
+    (워커B 초안은 specialize에 뒀는데, 그 시점엔 이미 hw 게이트를 지난 뒤라 무효 — 여기서 교정.)
+
+  체크리스트(사용 전 필수):
+    [ ] 진단본으로 wmic/디스크 열거 확인 완료
+    [ ] 매칭 디스크 정확히 1개(=USB-C SSD) 확인
+    [ ] 빌드 트리 백업 또는 별도 빈 디스크 준비
+    [ ] 아래 install.wim INDEX 값 확인 (DISM /Get-ImageInfo /ImageFile:<media>\sources\install.wim)
+    [ ] nwoas_disksetup.bat 를 USB 루트에 함께 복사 (경로 D:\ 는 실제 미디어 드라이브문자로 조정)
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <!-- ============================================================
+       PASS: windowsPE  —  언어 + EULA + LabConfig(hw우회) + 안전디스크셋업 + 이미지적용
+       ============================================================ -->
+  <settings pass="windowsPE">
+
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <SetupUILanguage><UILanguage>en-US</UILanguage><WillShowUI>Never</WillShowUI></SetupUILanguage>
+      <InputLocale>0409:00000409</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <SetupUILanguage><UILanguage>en-US</UILanguage><WillShowUI>Never</WillShowUI></SetupUILanguage>
+      <InputLocale>0409:00000409</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <FullName>NWOAS</FullName>
+        <Organization>NWOAS</Organization>
+        <ProductKey>
+          <Key>W269N-WFGWX-YVC9B-4J6C9-T83GX</Key>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+      </UserData>
+
+      <RunSynchronous>
+        <!-- LabConfig: Win11 hw 우회 (windowsPE = 정확한 위치). 디스크셋업보다 먼저(Order 1-5). -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order><Description>BypassTPMCheck</Description>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order><Description>BypassSecureBootCheck</Description>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order><Description>BypassRAMCheck</Description>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order><Description>BypassStorageCheck</Description>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>5</Order><Description>BypassCPUCheck</Description>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+
+        <!-- 안전 디스크 탐지+파티셔닝. ★ D:\ 를 실제 설치미디어 드라이브문자로 조정할 것.
+             bat 내부에서 매칭 1개+정수+비-0 검증 실패 시 ABORT(무접촉). -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>6</Order><Description>NWOAS safe disk detect + partition</Description>
+          <Path>cmd /c "D:\nwoas_disksetup.bat"</Path>
+          <WillReboot>Never</WillReboot>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+
+      <!-- DiskConfiguration 없음: 파티셔닝은 위 bat가 전담(하드코딩 DiskID 회피). -->
+
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <!-- ★ INDEX 확인: DISM /Get-ImageInfo /ImageFile:<media>\sources\install.wim
+                 ARM64 22H2 미디어의 에디션 인덱스는 x64와 다를 수 있음. 확인 후 값 조정. -->
+            <MetaData wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>1</Value></MetaData>
+          </InstallFrom>
+          <!-- bat가 만든 빈 NTFS(Windows) 파티션을 선택. 내장 NVMe=APFS이므로 대상 불가(안전망). -->
+          <InstallToAvailablePartition>true</InstallToAvailablePartition>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+    </component>
+
+    <!-- amd64 fallback: 위 arm64와 동일 -->
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <FullName>NWOAS</FullName>
+        <Organization>NWOAS</Organization>
+        <ProductKey><Key>W269N-WFGWX-YVC9B-4J6C9-T83GX</Key><WillShowUI>OnError</WillShowUI></ProductKey>
+      </UserData>
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order><Description>BypassTPMCheck</Description>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order><Description>BypassSecureBootCheck</Description>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order><Description>BypassRAMCheck</Description>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order><Description>BypassStorageCheck</Description>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>5</Order><Description>BypassCPUCheck</Description>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>6</Order><Description>NWOAS safe disk detect + partition</Description>
+          <Path>cmd /c "D:\nwoas_disksetup.bat"</Path>
+          <WillReboot>Never</WillReboot>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom><MetaData wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>1</Value></MetaData></InstallFrom>
+          <InstallToAvailablePartition>true</InstallToAvailablePartition>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+    </component>
+
+  </settings>
+
+  <!-- ============================================================
+       PASS: specialize  —  BypassNRO(OOBE 네트워크요구 우회, 22H2 전용)
+       (이 시점엔 HKLM\SOFTWARE 하이브 마운트됨 → 여기가 정위치)
+       ============================================================ -->
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order><Description>BypassNRO</Description>
+          <Path>reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order><Description>BypassNRO</Description>
+          <Path>reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+
+  <!-- ============================================================
+       PASS: oobeSystem  —  헤드리스 무인 OOBE + 로컬관리자 계정 + 자동로그온
+       ============================================================ -->
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>0409:00000409</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>0409:00000409</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <HideLocalAccountScreen>false</HideLocalAccountScreen>
+        <ProtectYourPC>3</ProtectYourPC>
+        <NetworkLocation>Work</NetworkLocation>
+      </OOBE>
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>WinUser</Name>
+            <DisplayName>WinUser</DisplayName>
+            <Group>Administrators</Group>
+            <Password><Value>CHANGE_ME_BEFORE_USE</Value><PlainText>true</PlainText></Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+      <AutoLogon>
+        <Username>WinUser</Username>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Password><Value>CHANGE_ME_BEFORE_USE</Value><PlainText>true</PlainText></Password>
+      </AutoLogon>
+      <TimeZone>Pacific Standard Time</TimeZone>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35"
+               language="neutral" versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <HideLocalAccountScreen>false</HideLocalAccountScreen>
+        <ProtectYourPC>3</ProtectYourPC>
+        <NetworkLocation>Work</NetworkLocation>
+      </OOBE>
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>WinUser</Name>
+            <DisplayName>WinUser</DisplayName>
+            <Group>Administrators</Group>
+            <Password><Value>CHANGE_ME_BEFORE_USE</Value><PlainText>true</PlainText></Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+      <AutoLogon>
+        <Username>WinUser</Username>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Password><Value>CHANGE_ME_BEFORE_USE</Value><PlainText>true</PlainText></Password>
+      </AutoLogon>
+      <TimeZone>Pacific Standard Time</TimeZone>
+    </component>
+  </settings>
+
+</unattend>

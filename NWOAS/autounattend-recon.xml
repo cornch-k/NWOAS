@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ============================================================================
+  NWOAS - RECON answer file (autounattend-recon.xml)  *** NON-DESTRUCTIVE ***
+  Purpose: dump the disk list to the USB so we can identify the target external
+           SSD's disk number BY SIZE before doing any destructive install.
+  This file does NOT wipe or install anything. It only runs diskpart 'list disk'
+  + 'list volume' and copies the result to <USB>\NWOAS-DISKS.txt.
+  After it runs, Setup will reach the (interactive) partition screen and stop
+  because there is no keyboard - that is fine. Just force power-off, then read
+  NWOAS-DISKS.txt on the Mac.
+  ============================================================================
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="windowsPE">
+
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+      <!-- ONLY a non-destructive disk dump. No DiskConfiguration, no
+           ImageInstall => nothing is wiped or written to any disk. -->
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>dump disk+volume list to USB (non-destructive)</Description>
+          <Path>cmd /c "(echo list disk &amp; echo list volume) &gt; X:\dp.txt &amp; diskpart /s X:\dp.txt &gt; X:\disks.txt 2&gt;&amp;1 &amp; for %d in (C D E F G H I J K L M N O P) do @if exist %d:\sources\install.wim copy /y X:\disks.txt %d:\NWOAS-DISKS.txt"</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+
+    </component>
+  </settings>
+</unattend>

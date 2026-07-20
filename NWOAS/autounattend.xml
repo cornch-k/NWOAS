@@ -1,0 +1,303 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ============================================================================
+  NWOAS - Windows 11 ARM64 fully-unattended answer file (autounattend.xml)
+  Target: Mac mini M1 (16GB) booted native via m1n1 -> UEFI(Project Mu) -> WinPE
+  Language: en-US  (see report for how to switch to ko-KR)
+  Status: WRITTEN / UNVERIFIED. Not tested on real hardware. Build/parse
+          success != boot/install success. Verify only on the actual M1.
+
+  >>>>>>>>>>>>>>>>>>>>>>>>>>>>  DANGER  <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+  This file WIPES an ENTIRE DISK (WillWipeDisk=true) identified only by DiskID.
+  DiskID below is a PLACEHOLDER (0). On this machine the INTERNAL macOS NVMe is
+  very likely disk 0. If DiskID points at the internal disk you WILL DESTROY
+  macOS. If it points at the USB install stick the install will fail.
+  You MUST confirm the correct DiskID (by SIZE) before using this file.
+  See the INSTALL_DISK_ID procedure in the accompanying report.
+  Placeholder DiskID = 0. Replace it after running diskpart 'list disk'.
+  >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+  ============================================================================
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <!-- =====================================================================
+       PASS 1: windowsPE
+       Runs inside the WinPE setup environment. Language, hardware-check
+       bypass, disk wipe/partition, image select+apply, EULA, product key.
+       ALL components MUST be processorArchitecture="arm64".
+       ===================================================================== -->
+  <settings pass="windowsPE">
+
+    <!-- WinPE UI language + keyboard/locale (auto, no prompts) -->
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>en-US</InputLocale>   <!-- ko-KR keyboard: ko-KR -->
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+      <!-- Win11 hardware-requirement bypass. Written into LabConfig BEFORE
+           Setup evaluates requirements. Mac mini has no TPM/SecureBoot. -->
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>reg add HKLM\System\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg add HKLM\System\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>reg add HKLM\System\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Path>reg add HKLM\System\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <Path>reg add HKLM\System\Setup\LabConfig /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>6</Order>
+          <Path>reg add HKLM\System\Setup\LabConfig /v BypassDiskCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+
+      <!-- GPT/UEFI layout on the TARGET disk. WillShowUI=OnError: on any disk
+           error it stops (safe) rather than silently wiping the wrong disk.
+           (Trade-off: with no working keyboard an error screen cannot be
+           dismissed and the machine will hang - that is INTENTIONALLY safer
+           than destroying the internal macOS disk.) -->
+      <DiskConfiguration>
+        <WillShowUI>OnError</WillShowUI>
+        <Disk wcm:action="add">
+          <!-- ################  CONFIRM THIS NUMBER BY SIZE  ################ -->
+          <DiskID>0</DiskID> <!-- INSTALL_DISK_ID: PLACEHOLDER - replace -->
+          <!-- ############################################################## -->
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <!-- 1: EFI System Partition, 260MB (Advanced-Format safe) -->
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>260</Size>
+            </CreatePartition>
+            <!-- 2: Microsoft Reserved (MSR), 16MB, no format -->
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
+            <!-- 3: Windows, fills the rest of the disk -->
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Label>System</Label>
+              <Format>FAT32</Format>
+            </ModifyPartition>
+            <!-- MSR is never formatted / lettered -->
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>3</PartitionID>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+              <Format>NTFS</Format>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <!-- Select the image by NAME (robust across ISOs; index varies) and
+           apply it to the Windows partition (partition 3 of the disk above). -->
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <!-- Change to "Windows 11 Home" etc. to match your media.
+                   Verify with: dism /Get-WimInfo /WimFile:X:\sources\install.wim -->
+              <Value>Windows 11 Pro</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo>
+            <!-- MUST match the DiskID above -->
+            <DiskID>0</DiskID> <!-- INSTALL_DISK_ID: PLACEHOLDER - replace -->
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+
+      <!-- EULA auto-accept + generic Win11 Pro setup key (NOT activation) -->
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <FullName>NWOAS</FullName>
+        <Organization>NWOAS</Organization>
+        <ProductKey>
+          <!-- Generic Win11 Pro key: lets Setup proceed unattended. Does NOT
+               activate Windows. Blank triggers an edition prompt on some media. -->
+          <Key>VK7JG-NPHTM-C97JM-9MPGT-3V66T</Key>
+          <WillShowUI>Never</WillShowUI>
+        </ProductKey>
+      </UserData>
+
+    </component>
+  </settings>
+
+  <!-- =====================================================================
+       PASS 2: specialize
+       Runs after image apply, in the installed OS. Computer name, and belt-
+       and-suspenders OOBE / privacy registry (local-account path, telemetry).
+       ===================================================================== -->
+  <settings pass="specialize">
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <ComputerName>NWOAS-M1</ComputerName>
+    </component>
+
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <RunSynchronous>
+        <!-- Force the local/offline account path in OOBE (24H2/25H2 still
+             honor this reg value even though the CLI bypassnro was removed).
+             Redundant here because we fully define a local account below, but
+             harmless insurance in case OOBE is ever reached. -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <!-- Minimize telemetry -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection" /v AllowTelemetry /t REG_DWORD /d 0 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+
+  <!-- =====================================================================
+       PASS 3: oobeSystem
+       The out-of-box experience. Skip every OOBE screen, create a local
+       admin account, and enable AutoLogon (critical: HID input does not work
+       on this machine yet, so AutoLogon is the ONLY way to reach the desktop).
+       ===================================================================== -->
+  <settings pass="oobeSystem">
+
+    <!-- Installed-OS locale/keyboard (auto) -->
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>en-US</InputLocale>   <!-- ko-KR keyboard: ko-KR -->
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35" language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+      <!-- Skip ALL OOBE screens: region, keyboard, network, EULA, MS account,
+           privacy sliders. HideOnlineAccountScreens avoids the forced MS login. -->
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>       <!-- disable express privacy settings -->
+        <NetworkLocation>Home</NetworkLocation>
+      </OOBE>
+
+      <!-- Local admin account. No MS account. -->
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>user</Name>
+            <DisplayName>user</DisplayName>
+            <Group>Administrators</Group>
+            <Password>
+              <!-- Simple password so AutoLogon is reliable. Change if desired,
+                   but it MUST match the AutoLogon password below. With no
+                   keyboard you can never type it, so AutoLogon must work. -->
+              <Value>CHANGE_ME_BEFORE_USE</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+
+      <!-- Log the local account in automatically on every boot. No LogonCount
+           => permanent AutoAdminLogon. Password MUST equal the one above. -->
+      <AutoLogon>
+        <Username>user</Username>
+        <Enabled>true</Enabled>
+        <Password>
+          <Value>CHANGE_ME_BEFORE_USE</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+
+      <TimeZone>Korea Standard Time</TimeZone>
+      <RegisteredOwner>NWOAS</RegisteredOwner>
+      <RegisteredOrganization>NWOAS</RegisteredOrganization>
+
+      <!-- First-logon: nothing interactive. (Placeholder for future setup.) -->
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>cmd /c echo NWOAS first logon reached &gt; C:\nwoas-firstlogon.txt</CommandLine>
+          <Description>marker so you can confirm desktop reached</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+
+    </component>
+  </settings>
+
+</unattend>

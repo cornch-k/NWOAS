@@ -1,0 +1,20 @@
+# Secrets / local env
+.env
+.env.*
+
+# Markdown notes — root README.md is the only one kept
+*.md
+!/README.md
+
+# Build artifacts / caches
+build/
+*.o
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Agent / orchestration scratch
+.claude/
+.superpowers/

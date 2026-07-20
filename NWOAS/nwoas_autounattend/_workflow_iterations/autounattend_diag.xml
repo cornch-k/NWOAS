@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  NWOAS autounattend — PHASE 1: DIAGNOSTIC (NON-DESTRUCTIVE)
+  ===========================================================
+  Purpose: Probe disk enumeration. NO wipe, NO partition, NO install.
+  Setup will pause at "Where do you want to install Windows?" screen.
+  That is expected and intentional.
+
+  What this does:
+  1. Runs wmic to dump all disk info to X:\nwoas_probe.txt (RAM disk)
+  2. Does NOT touch any disk (no DiskConfiguration, no ImageInstall)
+
+  Reading the output:
+  - Host-side: break into m1n1 Python console, use hv.readmem to dump
+    the X:\ RAM region and search for "nwoas_probe" content.
+  - Or: connect HDMI display, observe the disk selection screen
+    (which shows detected disks visually).
+  - Reboot loses X:\ content — read before rebooting.
+
+  Key things to record from output:
+  - Each disk's Index (DiskID), InterfaceType, MediaType, Size, Model
+  - Especially: is Apple NVMe visible? What Index does USB-C SSD have?
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <!-- =========================================================== -->
+  <!-- windowsPE pass: disk probe only, no install                  -->
+  <!-- =========================================================== -->
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+      <!-- Probe: dump disk info to X:\ (non-destructive) -->
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>NWOAS: wmic full disk probe to X:\nwoas_probe.txt</Description>
+          <Path>cmd /c "wmic diskdrive get Index,InterfaceType,MediaType,Size,Model /value > X:\nwoas_probe.txt 2>&amp;1"</Path>
+          <WillReboot>Never</WillReboot>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Description>NWOAS: also log volume list</Description>
+          <Path>cmd /c "echo. >> X:\nwoas_probe.txt &amp;&amp; echo === volumes === >> X:\nwoas_probe.txt &amp;&amp; wmic logicaldisk get DeviceID,DriveType,FileSystem,Size,VolumeName /value >> X:\nwoas_probe.txt 2>&amp;1"</Path>
+          <WillReboot>Never</WillReboot>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+
+      <!-- NO DiskConfiguration = no disk wipe -->
+      <!-- NO ImageInstall = setup pauses at disk selection screen -->
+
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <ProductKey>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+      </UserData>
+
+    </component>
+  </settings>
+
+</unattend>

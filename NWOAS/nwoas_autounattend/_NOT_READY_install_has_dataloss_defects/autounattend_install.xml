@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  NWOAS autounattend — PHASE 2: INSTALLATION
+  ============================================
+  PREREQUISITE: Run autounattend_diag.xml first and verify:
+    (1) USB-C SSD appears in wmic output with InterfaceType=USB + non-Removable
+    (2) The USB media drive letter is correct (default: D: — update RunSynchronous if different)
+    (3) wmic is available in this WinPE environment
+
+  What this does:
+    windowsPE pass:
+      1. RunSynchronous: calls nwoas_disksetup.bat from USB media
+         - bat detects USB non-removable disk via wmic
+         - Partitions it (EFI + MSR + Windows + Recovery)
+         - Aborts without touching any disk if not exactly 1 match
+      2. ImageInstall: InstallToAvailablePartition = true
+         (setup picks the freshly prepared NTFS partition)
+    specialize pass: LabConfig bypass for Win11 hardware checks
+    oobeSystem pass: local account, no network required, headless OOBE
+
+  IMPORTANT:
+    - Update "D:\nwoas_disksetup.bat" below if USB media gets a different drive letter.
+      Determine correct drive letter from Phase 1 diagnostic (check wmic logicaldisk output).
+    - This file DESTROYS the target disk when disksetup.bat runs successfully.
+      Phase 1 verification is mandatory before using this file.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <!-- =========================================================== -->
+  <!-- windowsPE pass                                               -->
+  <!-- =========================================================== -->
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+      <!--
+        RunSynchronous: safe disk detection + partitioning
+        ADJUST DRIVE LETTER: "D:\" below must match the actual drive letter
+        of the USB installation media in WinPE (verify from Phase 1 output).
+      -->
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>NWOAS: safe disk detect and partition</Description>
+          <Path>cmd /c "D:\nwoas_disksetup.bat"</Path>
+          <WillReboot>Never</WillReboot>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+
+      <!--
+        NO DiskConfiguration here.
+        All partitioning is done by nwoas_disksetup.bat above.
+        If the bat aborts (wrong disk count), InstallToAvailablePartition
+        will find no suitable partition and setup will pause — safe.
+      -->
+
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <!--
+              Specify which image to install from install.wim.
+              For Win11 22H2 ARM64 ISO, index 1 = Windows 11 Home.
+              Adjust if using a different edition.
+            -->
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>1</Value>
+            </MetaData>
+          </InstallFrom>
+          <!--
+            InstallToAvailablePartition: setup finds the first available
+            empty NTFS partition (the one disksetup.bat just created).
+            Alternative (after confirming DiskID from Phase 1):
+              <InstallTo>
+                <DiskID>1</DiskID>      <- UPDATE with confirmed DiskID
+                <PartitionID>3</PartitionID>  <- Windows is partition 3
+              </InstallTo>
+          -->
+          <InstallToAvailablePartition>true</InstallToAvailablePartition>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <ProductKey>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+      </UserData>
+
+    </component>
+  </settings>
+
+  <!-- =========================================================== -->
+  <!-- specialize pass: Win11 hardware check bypass (LabConfig)     -->
+  <!-- M1 has no TPM, no Secure Boot — these registry keys bypass   -->
+  <!-- the hardware requirement checks in Windows 11 setup.         -->
+  <!-- =========================================================== -->
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <RunSynchronous>
+        <!-- Win11 TPM/SecureBoot/RAM bypass via LabConfig registry keys -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>Win11 LabConfig: bypass TPM check</Description>
+          <Path>reg add "HKLM\SYSTEM\Setup\LabConfig" /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Description>Win11 LabConfig: bypass SecureBoot check</Description>
+          <Path>reg add "HKLM\SYSTEM\Setup\LabConfig" /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Description>Win11 LabConfig: bypass RAM check</Description>
+          <Path>reg add "HKLM\SYSTEM\Setup\LabConfig" /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+
+  <!-- =========================================================== -->
+  <!-- oobeSystem pass: headless OOBE, local account, no network    -->
+  <!-- =========================================================== -->
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+      <!-- Bypass Win11 OOBE network requirement (BypassNRO) -->
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Home</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+        <!-- SkipMachineOOBE/SkipUserOOBE suppress network requirement screen -->
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+
+      <!-- Local account (no Microsoft account required) -->
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Description>NWOAS local admin</Description>
+            <DisplayName>nwoas</DisplayName>
+            <Group>Administrators</Group>
+            <Name>nwoas</Name>
+            <!--
+              Password: empty string for no password.
+              Change before production use.
+            -->
+            <Password>
+              <Value></Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+
+      <RegisteredOrganization>NWOAS</RegisteredOrganization>
+      <RegisteredOwner>nwoas</RegisteredOwner>
+      <TimeZone>UTC</TimeZone>
+      <AutoLogon>
+        <Password>
+          <Value></Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <LogonCount>1</LogonCount>
+        <Username>nwoas</Username>
+        <Enabled>true</Enabled>
+      </AutoLogon>
+    </component>
+
+    <!--
+      BypassNRO: registry method for Win11 OOBE network bypass.
+      This writes the key during FirstLogonCommands if OOBE skip above
+      is insufficient for 22H2.
+    -->
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="arm64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>BypassNRO: skip network requirement in OOBE</Description>
+          <Path>reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+
+  </settings>
+
+</unattend>
