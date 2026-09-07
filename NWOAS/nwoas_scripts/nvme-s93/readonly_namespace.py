@@ -74,7 +74,7 @@ class ReadOnlyNamespace:
         assert len(data)==BLOCK
         return Result(SUCCESS,bytes(data))
 
-    def io(self,command):
+    def io(self,command,mem=None):
         fields=self._fields(command)
         if fields is None:return Result(INVALID_FIELD)
         opcode,nsid,cdw=fields

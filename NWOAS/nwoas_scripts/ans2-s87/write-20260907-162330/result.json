@@ -1,0 +1,18 @@
+{
+  "experiment": "S96",
+  "target_lba": 56903807,
+  "pattern_roundtrip": true,
+  "restored": true,
+  "guards_unchanged": true,
+  "guards": {
+    "53838942": "ad7facb2586fc6e9",
+    "53839103": "ad7facb2586fc6e9",
+    "53839104": "f7bff6e988fafe68",
+    "56903806": "ad7facb2586fc6e9",
+    "56903808": "ad7facb2586fc6e9",
+    "59968511": "ad7facb2586fc6e9",
+    "59968630": "28fb2e385aa02352",
+    "61279343": "c71befa3f4099148"
+  },
+  "orig_sha256": "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7"
+}

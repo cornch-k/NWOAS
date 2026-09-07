@@ -1,10 +1,12 @@
-# S93, executed after D83 USB module and hv.load_raw(). HARDWARE-UNVERIFIED.
-# Guest DMA is host-copy only; storage backend has only nvme_read, never writes.
+# S93/S96, executed after D83 USB module and hv.load_raw(). Write path HARDWARE-UNVERIFIED.
+# Guest DMA is host-copy only. Storage backend: nvme_read anywhere, nvme_write/flush ONLY
+# inside WINTEST LBA 53839104-59968511 (gated here, in WindowWritableNamespace, and in m1n1 C).
+if not __debug__:raise SystemExit('S96 safety checks are asserts; refuse to run optimized')
 import sys
 from pathlib import Path
 sys.path.insert(0,'/Volumes/X31/NWOAS/nwoas_scripts/nvme-s93')
 from controller import Controller
-from readonly_namespace import ReadOnlyNamespace
+from writable_namespace import WindowWritableNamespace
 from m1n1.utils import irange
 from m1n1.hv.types import TraceMode
 
@@ -59,6 +61,20 @@ def backend(lba):
     reads+=1
     if reads<=12 or reads%128==0:hv.log(f'[S93] ANS READ lba={lba} count={reads}')
     return iface.readmem(nsbuf,4096)
+# S96: writes allowed only inside WINTEST (GPT slot3, verified S95 run-20260907-160641).
+WINTEST_FIRST,WINTEST_LAST=53839104,59968511
+writes=0
+def backend_write(lba,data):
+    global writes
+    if not WINTEST_FIRST<=lba<=WINTEST_LAST:raise ValueError('write outside WINTEST')
+    if len(data)!=4096:raise ValueError('write size')
+    iface.writemem(nsbuf,data)
+    if not p.nvme_write(1,lba,nsbuf):raise OSError('ANS2 write failed')
+    writes+=1
+    if writes<=12 or writes%128==0:hv.log(f'[S96] ANS WRITE lba={lba} count={writes}')
+def backend_flush():
+    if not p.nvme_flush(1):raise OSError('ANS2 flush failed')
+    hv.log('[S96] ANS FLUSH')
 # Confirm target identity before publishing the namespace.
 import uuid
 h=backend(1)
@@ -72,7 +88,11 @@ def log(msg):
     global log_count
     log_count+=1
     if log_count<=200 or log_count%128==0 or msg.startswith(('CFS','MMIO W','EN ','CREATE ','CMD ')):hv.log('[S93] '+msg)
-c=Controller(ReadOnlyNamespace(61279344,backend),memory,irq,log)
+import struct as _st
+gpt=backend(2)+backend(3)
+e=gpt[2*128:3*128]
+assert e[:16]==uuid.UUID('ebd0a0a2-b9e5-4433-87c0-68b6b72699c7').bytes_le and _st.unpack_from('<QQ',e,32)==(WINTEST_FIRST,WINTEST_LAST),'WINTEST GPT slot3 mismatch; refusing writable namespace'
+c=Controller(WindowWritableNamespace(61279344,backend,backend_write,backend_flush,WINTEST_FIRST,WINTEST_LAST),memory,irq,log)
 def pci_read(addr,width):
     off=addr-ECAM
     value=c.pci_read(off,width) if off<4096 else (1<<width)-1
@@ -88,4 +108,4 @@ def mmio_write(addr,value,width):
 hv.add_tracer(irange(ECAM,0x100000),'s93-nvme-ecam',TraceMode.HOOK,read=pci_read,write=pci_write)
 hv.add_tracer(irange(BAR,0x4000),'s93-nvme-bar',TraceMode.HOOK,read=mmio_read,write=mmio_write)
 hv._nwoas_nvme=(c,memory,nsbuf)
-hv.log('[S93] READ-ONLY ANS2 namespace armed: PCI1:00:00.0, INTx900, 251000193024 bytes')
+hv.log(f'[S96] ANS2 namespace armed: PCI1:00:00.0, INTx900, 251000193024 bytes, writes only LBA {WINTEST_FIRST}-{WINTEST_LAST}')

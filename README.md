@@ -22,11 +22,16 @@ Windows11 ARM64 Setup boots on the M1 Mac mini with Tahoe firmware. USB-A
 keyboard and a directly attached USB-C Magic Trackpad have user-confirmed input.
 Setup reaches disk selection after the documented single-core compatibility workaround.
 
-S93 adds a **read-only, host-mediated NVMe controller**: Windows enumerated it,
-identified the internal ANS2 SSD and completed388 real I/O reads with no I/O errors
-in the preserved snapshot. Installation, SSD writes, standalone storage operation,
-SMP, and the requested macOS/Windows dual-boot partition layout remain unfinished.
-The latest Setup disk-list UI has not yet been physically confirmed.
+S93 adds a **host-mediated NVMe controller** over the internal ANS2 SSD: Windows
+enumerated it and completed real I/O reads; the Setup disk list showing the
+internal SSD was user-confirmed (S94). In S95 the APFS container was shrunk from
+Recovery and a 25 GB test partition WINTEST was created. S96 adds a write path
+that is **restricted to the WINTEST LBA window at three layers** (m1n1 C guard,
+relay namespace, guest module); a host-side round-trip and refusal test passed,
+and Windows Setup then formatted WINTEST to NTFS through the relay
+(user-confirmed, zero out-of-window writes, about 40 KiB/s).
+Installation, standalone storage operation, SMP, throughput adequate for an
+install, and the requested macOS/Windows dual-boot layout remain unfinished.
 
 Start with the [fable5.1 handoff](NWOAS/NWOAS-HANDOFF-FABLE5.1-2026-09-07.md),
 [hardware evidence](NWOAS/nwoas_scripts/nvme-s93/hardware-evidence.json), and

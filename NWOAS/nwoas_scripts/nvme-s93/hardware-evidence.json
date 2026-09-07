@@ -11,5 +11,39 @@
   "admin_unsupported_responses": 10,
   "cfs": false,
   "physical_install_disk_selection_verified": false,
-  "storage_writes": false
+  "storage_writes": "WINTEST window only (S96)",
+  "s94_setup_disk_list_user_verified": {
+    "log": "nwoas_scripts/logs/nvme-s93-20260907-155044.uaslhM",
+    "partitions_reported": [
+      "500MB",
+      "228.3GB",
+      "5.0GB"
+    ],
+    "note": "user-reported Setup UI; read-only, no writes"
+  },
+  "s95_wintest_partition": {
+    "gpt_slot": 3,
+    "type": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+    "guid": "4684a45c-e252-4132-8a97-0576545e9a3b",
+    "start_lba": 53839104,
+    "end_lba": 59968511,
+    "block_bytes": 4096,
+    "bytes": 25106055168,
+    "verified": "ans2-s87/run-20260907-160641"
+  },
+  "s96_host_write_roundtrip": {
+    "result": "nwoas_scripts/ans2-s87/write-20260907-162330/result.json",
+    "target_lba": 56903807,
+    "pattern_roundtrip": true,
+    "restored": true,
+    "guards_unchanged": true,
+    "hv_sha256": "f63512503f6bef4a06e2b3e9155fcb5ada134043204dd0e26015b88044a5caf5",
+    "note": "single-block host-proxy write inside WINTEST only; storage_writes below refers to Windows-side writes"
+  },
+  "s96_windows_format_user_verified": {
+    "log": "nwoas_scripts/logs/nvme-s96-20260907-171249.G18GG8",
+    "setup_ui": "partition3 23.4GB total / 23.3GB free (NTFS)",
+    "throughput_KiB_s": 40,
+    "writes_outside_window": 0
+  }
 }

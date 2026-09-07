@@ -1,4 +1,5 @@
-"""S93 experimental read-only NVMe transport. No physical storage write API.
+"""S93/S96 experimental NVMe transport. Storage writes exist since S96 but only through
+WindowWritableNamespace, restricted to the WINTEST LBA window; this file itself never writes.
 PCI segment1, INTx only; bounded contiguous queues and validated PRP DMA.
 NVMe 1.3 register/command layouts: NVM Express spec and QEMU include/block/nvme.h.
 """
@@ -186,7 +187,7 @@ class Controller:
                 cmd=self.mem.read(sq.base+sq.head*64,64)
                 if len(cmd)!=64:raise ValueError('short command')
                 cid=struct.unpack_from('<H',cmd,2)[0]
-                result=self.admin(cmd) if qid==0 else self.ns.io(cmd)
+                result=self.admin(cmd) if qid==0 else self.ns.io(cmd,self.mem)
                 sq.head=(sq.head+1)%sq.size
                 if result is None:continue
                 if result.data:
@@ -200,7 +201,8 @@ class Controller:
                 self.mem.write(cq.base+cq.tail*16,entry)
                 cq.tail=(cq.tail+1)%cq.size;cq.pending+=1
                 if cq.tail==0:cq.phase^=1
-                self.log(f'CMD q={qid} op={cmd[0]:02x} cid={cid} status={result.status:x} bytes={len(result.data)}')
+                dw10,dw11=struct.unpack_from('<II',cmd,40)
+                self.log(f'CMD q={qid} op={cmd[0]:02x} cid={cid} status={result.status:x} bytes={len(result.data)}'+(f' nsid={struct.unpack_from("<I",cmd,4)[0]:x} dw10={dw10:x} dw11={dw11:x}' if result.status else ''))
                 self.update_irq()
             except (ValueError,OSError,TimeoutError) as exc:
                 self.fatal(str(exc));return

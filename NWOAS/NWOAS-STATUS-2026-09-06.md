@@ -877,3 +877,37 @@ kmutil 설치 권한은 이미 승인됐습니다. 물리적인 1TR 진입은 �
 - Actual Setup disk-list UI not yet user-verified; no storage writes, partition changes or Windows installation. S93 current host-mediated device is read-only.
 - User explicitly stopped further experiments and requested gh commit/push plus fable5.1 handoff. Existing guest/host runner PID46598/session86788 retained; do not terminate needed NVMe callbacks just to publish. No further reboot.
 - Handoff NWOAS-HANDOFF-FABLE5.1-2026-09-07.md; public export checkout /Volumes/X31/NWOAS-publish-20260907. Four companion patchsets checked against exact base indexes; original source repos/worktree states retained.
+
+### S94 (2026-09-07 ~16:00) Windows Setup disk-list UI shows internal SSD — USER VERIFIED
+
+- Prior S93 guest (PID46598) ended in a fully black display after ~3h idle; log showed no SError/CFS, only periodic SMART Get Log Page polling. Cause of black screen NOT determined (display/DCP suspected, guest itself looked alive). Log snapshot `.snapshot-s94-pre-reboot`.
+- SIGTERM 46598 → bootstrap-serial-test.sh once (NOP PASS 15:50:37) → nvme-s93-guest-test.sh once. Log `nwoas_scripts/logs/nvme-s93-20260907-155044.uaslhM`. Same code as S93 except controller.py now logs nsid/dw10/dw11 on rejected admin commands.
+- Rejected admin commands identified: Identify CNS=6 (NVM cmd-set ctrl), Identify CNS=3 nsid=1 (NS ID descriptors, asked 3×), Get Features FID 0xD0/0x0C/0x7F, Get Log Page LID 0xC1. All optional; Windows proceeds to reads regardless.
+- **User confirmed on Mac mini screen: Setup "설치 위치 선택" lists 드라이브0 파티션1 500MB / 파티션2 228.3GB / 파티션3 5.0GB, 종류 "주", 사용가능 0.0MB.** Matches real GPT (ISC / APFS container / Apple Recovery). physical_install_disk_selection_verified is now TRUE.
+- Still NOT: any storage write, partition change, Windows installation. Writes remain rejected. Do not proceed with Setup "다음/삭제/포맷" on this build.
+
+### S95 (2026-09-07 16:06) Recovery-mode APFS shrink + WINTEST partition — GPT re-verified read-only
+
+- User ran in Mac mini Recovery Terminal: `diskutil apfs resizeContainer disk0s2 220g ExFAT WINTEST 0` (~10 min). diskutil reported disk0s2 220.0GB, WINTEST 25.1GB as disk0s5. Restarted into m1n1 proxy.
+- Host: `nwoas_scripts/s95-gpt-verify.sh` (chainload S93 hv + ans2-s87/probe.py, NWOAS_ANS_EXPERIMENT=S95). Log `logs/ans2-s95-gpt-20260907-160639.log`, raw blocks `ans2-s87/run-20260907-160641`. PRIMARY_GPT_AND_BACKUP_HEADER_CRC_PASS.
+- New on-disk GPT (4096-byte LBAs), slots:
+  1 iBootSystemContainer 6–128005 (524288000 B) unchanged
+  2 APFS container 128006–53838942 (219999997952 B) — shrunk from 245107195904
+  3 **WINTEST** Microsoft Basic Data ebd0a0a2-… guid 4684a45c-e252-4132-8a97-0576545e9a3b, **LBA 53839104–59968511**, 25106055168 B
+  4 RecoveryOSContainer 59968630–61279338 (5368664064 B) unchanged (moved slot 3→4)
+- Only WINTEST LBA 53839104..59968511 is a legitimate future write target. Nothing else may be written. No writes performed yet; macOS + custom boot object intact (mini booted normally).
+
+### S96 (2026-09-07 16:23) NVMe write path, WINTEST-only — host-side hardware round-trip PASS
+
+- m1n1: new `nvme_write(nsid,lba,buf)` + proxy `P_NVME_WRITE`(0xf04). C-level guard refuses nsid!=1 or lba outside 53839104..59968511 (WINTEST). dc_cvac_range + dma_wmb before submit; TCB dma_flags BIT(1) via existing opcode&1 logic. Image `build/m1n1-s96-nvme-write.bin` sha256 f63512503f6bef4a06e2b3e9155fcb5ada134043204dd0e26015b88044a5caf5 (2129920 B).
+- Python relay: `nvme-s93/writable_namespace.py` WindowWritableNamespace (Write 0x01/Flush 0x00 inside window only; straddle → 0x182; other mutators → 0x182/INVALID_OPCODE; NSATTR write-protect cleared for CNS0). controller passes guest memory to ns.io; guest_module backend_write re-checks range and re-verifies GPT slot3 before arming. 16 unit tests PASS.
+- Opus critical review: SHIP-WITH-FIXES; applied F1 (C guard), F2 (__debug__), F5 (dc_cvac_range), F10 (cdw13 DSM hint), F12 (WRITE_ERROR 0x280), F13 (stale read-only comments), F14 (guards T±1, backup GPT). Not applied yet: F8 (DNR bit on rejections), F4 (TCB len semantics, watch if writes misbehave).
+- Hardware: `s96-write-probe.sh` → `ans2-s87/write-20260907-162330/result.json`: target LBA 56903807 (orig all-zero), pattern_roundtrip=true, restored=true, guards_unchanged=true (53838942, 53839103, 53839104, 56903806, 56903808, 59968511, 59968630, 61279343). Log `logs/ans2-s96-write-20260907-162327.log`.
+- This is ONE 4 KiB block written twice via host proxy. NOT Windows-side writes, NOT sustained throughput, NOT install. Per review F7, Windows Setup cannot complete an install on this layout (GPT/ESP/MSR writes are outside the window and refused by design); the Windows-side S96 goal is NTFS format of WINTEST from Setup.
+
+### S96 run2 (2026-09-07 17:12–17:4x) Windows Setup formatted WINTEST to NTFS through the relay — USER VERIFIED
+
+- Run1 (162531): user pressed through Setup; one Windows write to LBA 53839104 (identical ExFAT boot sector rewrite, readback sha f7bff6e9 unchanged), then Setup cancelled with 0x80070003 D:\Sources\install.swm (hypothesis: drive-letter shift after mounting WINTEST; not an NVMe error). Mini rebooted into m1n1 proxy (black screen = proxy idle, expected).
+- Run2 (171249): user chose partition 3 → 포맷. Log: sequential multi-block writes from 53839104, MFT zone ~54617005+, last logged: [cpu0] [S96] ANS WRITE lba=53839496 count=14848; Windows write commands=991; refusals/out-of-window=0; no CFS/fault. Throughput ≈40 KiB/s (host round-trip per 4 KiB block; up to 16 blocks per command).
+- **User confirmed Setup UI: partition 3 now 전체 23.4GB / 사용가능 23.3GB (NTFS).** Setup then reports Windows 11 requires ≥52 GB system drive — expected for the 25 GB test partition; install was never the goal of S96.
+- Facts: Windows-side NVMe write path works end-to-end inside the WINTEST window; nothing outside was written (C guard + relay guard; zero REFUSED lines). Not verified: sustained reliability, power-loss, throughput adequate for install.

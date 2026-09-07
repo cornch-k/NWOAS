@@ -171,3 +171,14 @@ Recovery에서 네트워크 실행 경로를 여는 작업은 필요한 시점�
 패치는 m1n1/ProjectMu뿐 아니라 변경된 MU_BASECORE와 Silicon/ARM/TIANO도 포함합니다.
 로컬 실험 이력/전체 원시 로그/비밀번호/Windows 바이너리는 이 패키지에 포함하지 않습니다.
 공개 README의 과거 "커널 handoff가 막힘" 설명은 최신 검증 상태로 수정했습니다.
+
+## 추가 인수인계 — 같은 날 저녁 S94–S96 (fable5.1 세션)
+
+- **S94**: 이전 게스트가 약 3시간 후 완전 검정 화면(원인 미확정, 로그상 게스트는 살아 있었음). SIGTERM→bootstrap 1회→S93 재실행. **사용자 확인: 설치 위치 선택 UI에 내장 SSD 드라이브0 파티션 500MB / 228.3GB / 5.0GB 표시** (ISC / APFS / Recovery와 일치).
+- **S95**: 사용자가 Recovery 터미널에서 `diskutil apfs resizeContainer disk0s2 220g ExFAT WINTEST 0` 실행(약 10분). 새 GPT(4K LBA): slot1 ISC 6–128005, slot2 APFS 128006–53838942(220GB), **slot3 WINTEST(MS Basic Data) 53839104–59968511(25.1GB)**, slot4 Recovery 59968630–61279338. 읽기 전용 재검증 `s95-gpt-verify.sh` → `ans2-s87/run-20260907-160641`. macOS·커스텀 부팅 객체 무사.
+- **S96**: 쓰기 경로. m1n1 `nvme_write`+`P_NVME_WRITE`(0xf04), **C 레벨 가드가 nsid≠1 또는 WINTEST 밖 LBA를 거부**(`nvme: REFUSED …`). Python `nvme-s93/writable_namespace.py`(WindowWritableNamespace, 창 안 Write/Flush만), `guest_module.py`가 시작 시 GPT slot3 재검증 후 무장. hv 이미지 `build/m1n1-s96-nvme-write.bin` sha256 f63512503f6bef4a06e2b3e9155fcb5ada134043204dd0e26015b88044a5caf5. Opus 비판적 리뷰(SHIP-WITH-FIXES) 반영; 미반영 = F8(거부 상태에 DNR 비트), F4(TCB len 의미).
+  - 호스트측 실기기: `s96-write-probe.sh` 1블록 왕복+복원+가드 8블록 불변 PASS(`ans2-s87/write-20260907-162330`), 음성 테스트(갭 블록·nsid2) REFUSED PASS.
+  - Windows측: run1에서 사용자가 "다음"까지 진행 → WINTEST 첫 블록 동일내용 재기록 1건 후 Setup 0x80070003 install.swm(드라이브 문자 이동 가설, NVMe 오류 아님), 재부팅→프록시(검은 화면=정상). run2에서 파티션3 "포맷" → **Windows 쓰기 명령 991건/≈14,850블록, 창 밖 0건, 사용자 확인 23.4GB/23.3GB NTFS**. Setup "52GB 이상 필요"=정상.
+  - **실측 처리량 ≈40KiB/s**(4KiB 블록마다 호스트 왕복). 설치에는 10~50배 필요.
+- 로그(비공개): `nwoas_scripts/logs/nvme-s93-20260907-155044.uaslhM`(S94), `ans2-s95-gpt-*.log`, `ans2-s96-*.log`, `nvme-s96-20260907-162531.QbjLdl`(run1), `nvme-s96-20260907-171249.G18GG8`(run2, `.snapshot-s96-format-verified` sha 1648968e…).
+- **다음 우선순위**: ①처리량(m1n1 다중블록 read/write→명령당 왕복 1회; 궁극적으로 NVMe 에뮬레이션을 EL2 C로 이동) ②전체 재배치 준비(stub/Recovery/m1n1 재설치 경로, 사용자 물리 조작 필요) ③ESP/MSR/Windows 파티션 사전 생성으로 Setup의 GPT 쓰기 회피 설계 및 실기기 확인. 게스트는 종료됨, 맥미니는 m1n1 프록시 대기.
