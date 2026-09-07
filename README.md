@@ -29,7 +29,8 @@ Recovery and a 25 GB test partition WINTEST was created. S96 adds a write path
 that is **restricted to the WINTEST LBA window at three layers** (m1n1 C guard,
 relay namespace, guest module); a host-side round-trip and refusal test passed,
 and Windows Setup then formatted WINTEST to NTFS through the relay
-(user-confirmed, zero out-of-window writes, about 40 KiB/s).
+(user-confirmed, zero out-of-window writes). S97 moves to 16-block
+commands; the same format then took about 10 s instead of 10 min (≈5.8 MB/s).
 Installation, standalone storage operation, SMP, throughput adequate for an
 install, and the requested macOS/Windows dual-boot layout remain unfinished.
 

@@ -54,24 +54,25 @@ memory=GuestMemory()
 assert p.nvme_init(),'ANS2 init failed'
 nsbuf=u.memalign(0x4000,0x10000)
 reads=0
-def backend(lba):
+def backend(lba,n=1):
     global reads
-    if not 0<=lba<61279344:raise ValueError('namespace bound')
-    if not p.nvme_read(1,lba,nsbuf):raise OSError('ANS2 read failed')
-    reads+=1
-    if reads<=12 or reads%128==0:hv.log(f'[S93] ANS READ lba={lba} count={reads}')
-    return iface.readmem(nsbuf,4096)
+    if not (1<=n<=16 and 0<=lba and lba+n<=61279344):raise ValueError('namespace bound')
+    if not p.nvme_read_n(1,lba,nsbuf,n):raise OSError('ANS2 read failed')
+    reads+=n
+    if reads<=12 or reads//128!=(reads-n)//128:hv.log(f'[S93] ANS READ lba={lba} n={n} count={reads}')
+    return iface.readmem(nsbuf,n*4096)
 # S96: writes allowed only inside WINTEST (GPT slot3, verified S95 run-20260907-160641).
 WINTEST_FIRST,WINTEST_LAST=53839104,59968511
 writes=0
 def backend_write(lba,data):
     global writes
-    if not WINTEST_FIRST<=lba<=WINTEST_LAST:raise ValueError('write outside WINTEST')
-    if len(data)!=4096:raise ValueError('write size')
+    n=len(data)//4096
+    if len(data)%4096 or not 1<=n<=16:raise ValueError('write size')
+    if not (WINTEST_FIRST<=lba and lba+n-1<=WINTEST_LAST):raise ValueError('write outside WINTEST')
     iface.writemem(nsbuf,data)
-    if not p.nvme_write(1,lba,nsbuf):raise OSError('ANS2 write failed')
-    writes+=1
-    if writes<=12 or writes%128==0:hv.log(f'[S96] ANS WRITE lba={lba} count={writes}')
+    if not p.nvme_write_n(1,lba,nsbuf,n):raise OSError('ANS2 write failed')
+    writes+=n
+    if writes<=12 or writes//128!=(writes-n)//128:hv.log(f'[S96] ANS WRITE lba={lba} n={n} count={writes}')
 def backend_flush():
     if not p.nvme_flush(1):raise OSError('ANS2 flush failed')
     hv.log('[S96] ANS FLUSH')
@@ -101,10 +102,25 @@ def pci_read(addr,width):
 def pci_write(addr,value,width):
     off=addr-ECAM
     if off<4096:log(f'PCI W {off:x}/{width}={value:x}');c.pci_write(off,value,width)
+# S97 timing: host = inside our trap handlers; guest = wall time between our handlers
+# (guest execution + IRQ delivery + ISR). Logged every 64 I/O doorbell writes.
+import time as _t
+st=dict(host=0.0,guest=0.0,traps=0,db=0,last_exit=None)
+def _enter():
+    now=_t.monotonic()
+    if st['last_exit'] is not None:st['guest']+=now-st['last_exit']
+    st['traps']+=1;return now
+def _leave(t0):
+    now=_t.monotonic();st['host']+=now-t0;st['last_exit']=now
 def mmio_read(addr,width):
-    value=c.read(addr-BAR,width);log(f'MMIO R {addr-BAR:x}/{width}={value:x}');return value
+    t0=_enter();value=c.read(addr-BAR,width);log(f'MMIO R {addr-BAR:x}/{width}={value:x}');_leave(t0);return value
 def mmio_write(addr,value,width):
-    log(f'MMIO W {addr-BAR:x}/{width}={value:x}');c.write(addr-BAR,value,width)
+    t0=_enter();off=addr-BAR;log(f'MMIO W {off:x}/{width}={value:x}');c.write(off,value,width)
+    if 0x1008<=off<0x1800 and off%8==0:
+        st['db']+=1
+        if st['db']%64==0:
+            hv.log(f"[S97] STAT iodb={st['db']} traps={st['traps']} host_ms/db={st['host']*1000/st['db']:.1f} guest_ms/db={st['guest']*1000/st['db']:.1f} traps/db={st['traps']/st['db']:.1f}")
+    _leave(t0)
 hv.add_tracer(irange(ECAM,0x100000),'s93-nvme-ecam',TraceMode.HOOK,read=pci_read,write=pci_write)
 hv.add_tracer(irange(BAR,0x4000),'s93-nvme-bar',TraceMode.HOOK,read=mmio_read,write=mmio_write)
 hv._nwoas_nvme=(c,memory,nsbuf)

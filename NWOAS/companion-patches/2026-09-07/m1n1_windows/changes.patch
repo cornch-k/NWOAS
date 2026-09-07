@@ -238,7 +238,7 @@ index 0dffcf9..20d03da 100644
          self.u.msr(SPRR_CONFIG_EL1, 1)
  
 diff --git a/proxyclient/m1n1/proxy.py b/proxyclient/m1n1/proxy.py
-index 6b8bbb1..333071e 100644
+index 6b8bbb1..a347cbd 100644
 --- a/proxyclient/m1n1/proxy.py
 +++ b/proxyclient/m1n1/proxy.py
 @@ -401,10 +401,7 @@ class UartInterface(Reloadable):
@@ -300,15 +300,17 @@ index 6b8bbb1..333071e 100644
      def readstruct(self, addr, stype):
          return stype.parse(self.readmem(addr, stype.sizeof()))
  
-@@ -641,6 +678,7 @@ class M1N1Proxy(Reloadable):
+@@ -641,6 +678,9 @@ class M1N1Proxy(Reloadable):
      P_NVME_SHUTDOWN = 0xf01
      P_NVME_READ = 0xf02
      P_NVME_FLUSH = 0xf03
 +    P_NVME_WRITE = 0xf04
++    P_NVME_READ_N = 0xf05
++    P_NVME_WRITE_N = 0xf06
  
      P_MCC_GET_CARVEOUTS = 0x1000
  
-@@ -667,7 +705,13 @@ class M1N1Proxy(Reloadable):
+@@ -667,7 +707,13 @@ class M1N1Proxy(Reloadable):
          req = struct.pack("<7Q", opcode, *args)
          if self.debug:
              print("<<<< %08x: %08x %08x %08x %08x %08x %08x"%tuple([opcode] + args))
@@ -323,12 +325,16 @@ index 6b8bbb1..333071e 100644
          if no_reply or reboot and reply is None:
              return
          ret_fmt = "q" if signed else "Q"
-@@ -1149,6 +1193,8 @@ class M1N1Proxy(Reloadable):
+@@ -1149,6 +1195,12 @@ class M1N1Proxy(Reloadable):
          return self.request(self.P_NVME_READ, nsid, lba, bfr)
      def nvme_flush(self, nsid):
          return self.request(self.P_NVME_FLUSH, nsid)
 +    def nvme_write(self, nsid, lba, bfr):
 +        return self.request(self.P_NVME_WRITE, nsid, lba, bfr)
++    def nvme_read_n(self, nsid, lba, bfr, count):
++        return self.request(self.P_NVME_READ_N, nsid, lba, bfr, count)
++    def nvme_write_n(self, nsid, lba, bfr, count):
++        return self.request(self.P_NVME_WRITE_N, nsid, lba, bfr, count)
  
      def mcc_get_carveouts(self):
          return self.request(self.P_MCC_GET_CARVEOUTS)
@@ -5279,7 +5285,7 @@ index e5c1ff9..9b978ed 100644
      // framebuffer.
      display_shutdown(DCP_SLEEP_IF_EXTERNAL);
 diff --git a/src/nvme.c b/src/nvme.c
-index c37d54f..301287e 100644
+index c37d54f..eb01994 100644
 --- a/src/nvme.c
 +++ b/src/nvme.c
 @@ -3,6 +3,7 @@
@@ -5316,65 +5322,103 @@ index c37d54f..301287e 100644
      write32(nvme_base + NVME_MAX_PEND_CMDS_CTRL,
              ((NVME_QUEUE_SIZE - 1) << 16) | (NVME_QUEUE_SIZE - 1));
      write32(nvme_base + NVMMU_NUM, NVME_QUEUE_SIZE - 1);
-@@ -544,7 +551,43 @@ bool nvme_read(u32 nsid, u64 lba, void *buffer)
-     cmd.prp1 = (u64)buffer_addr;
-     cmd.cdw10 = lba;
-     cmd.cdw11 = lba >> 32;
--    cmd.cdw12 = 1; // 4096 bytes
-+    cmd.cdw12 = 0; // S89: NVMe NLB is zero-based: one 4096-byte block.
-+
-+    return nvme_exec_command(&ioq, &cmd, NULL);
-+}
-+
+@@ -526,25 +533,74 @@ bool nvme_flush(u32 nsid)
+     return nvme_exec_command(&ioq, &cmd, NULL);
+ }
+ 
+-bool nvme_read(u32 nsid, u64 lba, void *buffer)
 +/* S96: WINTEST partition (GPT slot3, verified S95 run-20260907-160641). Nothing else on
 + * this disk is writable from this hypervisor, whatever the proxy caller asks for. */
 +#define NVME_WRITE_FIRST_LBA 53839104UL
 +#define NVME_WRITE_LAST_LBA  59968511UL
 +
-+bool nvme_write(u32 nsid, u64 lba, void *buffer)
-+{
-+    struct nvme_command cmd;
-+    u64 buffer_addr = (u64)buffer;
++/* S97: up to 16 contiguous 4 KiB blocks per command; PRP list covers pages 2..16. */
++#define NVME_MAX_BLOCKS 16
++static u64 nvme_prp_list[SZ_4K / sizeof(u64)] __attribute__((aligned(SZ_4K)));
 +
-+    if (!nvme_initialized)
++static bool nvme_rw(bool write, u32 nsid, u64 lba, void *buffer, u32 count)
+ {
+     struct nvme_command cmd;
+     u64 buffer_addr = (u64)buffer;
+ 
+     if (!nvme_initialized)
+         return false;
+-
++    if (count < 1 || count > NVME_MAX_BLOCKS)
 +        return false;
-+
-+    if (nsid != 1 || lba < NVME_WRITE_FIRST_LBA || lba > NVME_WRITE_LAST_LBA) {
-+        printf("nvme: REFUSED write outside WINTEST: nsid=%u lba=%lu\n", nsid, lba);
-+        return false;
+     /* no need for 16K alignment here since the NVME page size is 4k */
+     if (buffer_addr & (SZ_4K - 1))
+         return false;
+ 
++    if (write) {
++        if (nsid != 1 || lba < NVME_WRITE_FIRST_LBA || lba + count - 1 > NVME_WRITE_LAST_LBA) {
++            printf("nvme: REFUSED write outside WINTEST: nsid=%u lba=%lu count=%u\n", nsid, lba,
++                   count);
++            return false;
++        }
++        /* push CPU-written payload to the point of coherency before ANS2 DMA reads it */
++        dc_cvac_range(buffer, count * SZ_4K);
 +    }
 +
-+    if (buffer_addr & (SZ_4K - 1))
-+        return false;
-+
-+    /* S96: push CPU-written payload to the point of coherency before ANS2 DMA reads it. */
-+    dc_cvac_range(buffer, SZ_4K);
-+    dma_wmb();
-+
-+    memset(&cmd, 0, sizeof(cmd));
-+    cmd.opcode = NVME_CMD_WRITE;
-+    cmd.nsid = nsid;
+     memset(&cmd, 0, sizeof(cmd));
+-    cmd.opcode = NVME_CMD_READ;
++    cmd.opcode = write ? NVME_CMD_WRITE : NVME_CMD_READ;
+     cmd.nsid = nsid;
+-    cmd.prp1 = (u64)buffer_addr;
 +    cmd.prp1 = buffer_addr;
-+    cmd.cdw10 = lba;
-+    cmd.cdw11 = lba >> 32;
-+    cmd.cdw12 = 0; // zero-based NLB: one 4096-byte block
++    if (count == 2) {
++        cmd.prp2 = buffer_addr + SZ_4K;
++    } else if (count > 2) {
++        for (u32 i = 1; i < count; i++)
++            nvme_prp_list[i - 1] = buffer_addr + i * SZ_4K;
++        dc_cvac_range(nvme_prp_list, SZ_4K);
++        cmd.prp2 = (u64)nvme_prp_list;
++    }
+     cmd.cdw10 = lba;
+     cmd.cdw11 = lba >> 32;
+-    cmd.cdw12 = 1; // 4096 bytes
++    cmd.cdw12 = count - 1; // NVMe NLB is zero-based
++    dma_wmb();
  
      return nvme_exec_command(&ioq, &cmd, NULL);
  }
++
++bool nvme_read(u32 nsid, u64 lba, void *buffer)
++{
++    return nvme_rw(false, nsid, lba, buffer, 1);
++}
++
++bool nvme_write(u32 nsid, u64 lba, void *buffer)
++{
++    return nvme_rw(true, nsid, lba, buffer, 1);
++}
++
++bool nvme_read_n(u32 nsid, u64 lba, void *buffer, u32 count)
++{
++    return nvme_rw(false, nsid, lba, buffer, count);
++}
++
++bool nvme_write_n(u32 nsid, u64 lba, void *buffer, u32 count)
++{
++    return nvme_rw(true, nsid, lba, buffer, count);
++}
 diff --git a/src/nvme.h b/src/nvme.h
-index 8989a60..6185c93 100644
+index 8989a60..31b7074 100644
 --- a/src/nvme.h
 +++ b/src/nvme.h
-@@ -10,5 +10,7 @@ void nvme_shutdown(void);
+@@ -10,5 +10,10 @@ void nvme_shutdown(void);
  
  bool nvme_flush(u32 nsid);
  bool nvme_read(u32 nsid, u64 lba, void *buffer);
 +/* S96: one 4096-byte block write. Caller must bound the LBA. */
 +bool nvme_write(u32 nsid, u64 lba, void *buffer);
++/* S97: 1..16 contiguous blocks; write keeps the same WINTEST bound over the whole range. */
++bool nvme_read_n(u32 nsid, u64 lba, void *buffer, u32 count);
++bool nvme_write_n(u32 nsid, u64 lba, void *buffer, u32 count);
  
  #endif
 diff --git a/src/proxy.c b/src/proxy.c
-index 9320f5a..516dd80 100644
+index 9320f5a..97fb62a 100644
 --- a/src/proxy.c
 +++ b/src/proxy.c
 @@ -498,6 +498,11 @@ int proxy_process(ProxyRequest *request, ProxyReply *reply)
@@ -5389,18 +5433,26 @@ index 9320f5a..516dd80 100644
          case P_HV_TRACE_IRQ:
              reply->retval = hv_trace_irq(request->args[0], request->args[1], request->args[2],
                                           request->args[3]);
-@@ -607,6 +612,9 @@ int proxy_process(ProxyRequest *request, ProxyReply *reply)
+@@ -607,6 +612,17 @@ int proxy_process(ProxyRequest *request, ProxyReply *reply)
          case P_NVME_FLUSH:
              reply->retval = nvme_flush(request->args[0]);
              break;
 +        case P_NVME_WRITE:
 +            reply->retval = nvme_write(request->args[0], request->args[1], (void *)request->args[2]);
 +            break;
++        case P_NVME_READ_N:
++            reply->retval = nvme_read_n(request->args[0], request->args[1],
++                                        (void *)request->args[2], request->args[3]);
++            break;
++        case P_NVME_WRITE_N:
++            reply->retval = nvme_write_n(request->args[0], request->args[1],
++                                         (void *)request->args[2], request->args[3]);
++            break;
  
          case P_MCC_GET_CARVEOUTS:
              reply->retval = (u64)mcc_carveouts;
 diff --git a/src/proxy.h b/src/proxy.h
-index 622d13a..947aa85 100644
+index 622d13a..cc33951 100644
 --- a/src/proxy.h
 +++ b/src/proxy.h
 @@ -152,6 +152,8 @@ typedef enum {
@@ -5412,11 +5464,13 @@ index 622d13a..947aa85 100644
      P_FB_INIT = 0xd00,
      P_FB_SHUTDOWN,
      P_FB_BLIT,
-@@ -169,6 +171,7 @@ typedef enum {
+@@ -169,6 +171,9 @@ typedef enum {
      P_NVME_SHUTDOWN,
      P_NVME_READ,
      P_NVME_FLUSH,
 +    P_NVME_WRITE,
++    P_NVME_READ_N,
++    P_NVME_WRITE_N,
  
      P_MCC_GET_CARVEOUTS = 0x1000,
  

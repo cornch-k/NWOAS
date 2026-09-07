@@ -911,3 +911,12 @@ kmutil 설치 권한은 이미 승인됐습니다. 물리적인 1TR 진입은 �
 - Run2 (171249): user chose partition 3 → 포맷. Log: sequential multi-block writes from 53839104, MFT zone ~54617005+, last logged: [cpu0] [S96] ANS WRITE lba=53839496 count=14848; Windows write commands=991; refusals/out-of-window=0; no CFS/fault. Throughput ≈40 KiB/s (host round-trip per 4 KiB block; up to 16 blocks per command).
 - **User confirmed Setup UI: partition 3 now 전체 23.4GB / 사용가능 23.3GB (NTFS).** Setup then reports Windows 11 requires ≥52 GB system drive — expected for the 25 GB test partition; install was never the goal of S96.
 - Facts: Windows-side NVMe write path works end-to-end inside the WINTEST window; nothing outside was written (C guard + relay guard; zero REFUSED lines). Not verified: sustained reliability, power-loss, throughput adequate for install.
+
+### S97 (2026-09-07 17:33–17:50) Multi-block NVMe transport — format time 10 min → ~10 s (user-observed)
+
+- m1n1: `nvme_rw()` generalizes read/write to 1..16 blocks (PRP2 / PRP list in a static 4K page), proxy `P_NVME_READ_N`(0xf05)/`P_NVME_WRITE_N`(0xf06); WINTEST guard now covers `lba+count-1`. Image `build/m1n1-s97-nvme-multi.bin` sha256 8ac6097b3b03373b29e3d3178eb26c7361605cc98d26bd03ccb85035457ad3e7.
+- Host probe `ans2-s87/multi_probe_s97.py`: 16-block read == 16 singles, 2-block ok, 16-block write round-trip in WINTEST + restore + guards PASS. Proxy round trip: 1.0 ms per 4 KiB single (4.2 MB/s), 6.0 ms per 64 KiB (10.6 MB/s) → proxy transfer was never the bottleneck.
+- Relay: namespace read/write now one backend call per command; guest_module timing STAT every 64 I/O doorbells (host_ms = inside trap handlers, guest_ms = between handlers).
+- Windows run (log nvme-s97-20260907-173530.1QOhiu): Setup formatted WINTEST again; format phase ≈14 ms host + 2.5 ms guest per command, ~5 traps/command, 970 write commands / 14,848 blocks, 0 refusals. **User: format took ~10 s ("평범한 포맷 수준")** vs ~10 min in S96 → ≈5.8 MB/s effective.
+- Remaining host cost is guest-RAM copy per PRP page (3 proxy calls each). Possible next step (deferred): pass validated guest PRPs straight to ANS2 (zero-copy) → est. 20 MB/s.
+- Side observation: USB-C (D83) Magic Trackpad stopped responding mid-session; USB-A keyboard kept working. Long-run USB-C stability remains unverified (known limitation).

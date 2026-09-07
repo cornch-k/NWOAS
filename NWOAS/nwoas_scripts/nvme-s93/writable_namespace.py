@@ -52,10 +52,7 @@ class WindowWritableNamespace(ReadOnlyNamespace):
         except InvalidPRP:return Result(INVALID_FIELD)
         data=b''.join(mem.read(a,n) for a,n in spans)
         if len(data)!=nlb*BLOCK:return Result(INVALID_FIELD)
-        try:
-            for i in range(nlb):
-                lba=slba+i
-                assert self.write_first<=lba<=self.write_last
-                self.write_block(lba,data[i*BLOCK:(i+1)*BLOCK])
+        assert self.write_first<=slba and slba+nlb-1<=self.write_last
+        try:self.write_block(slba,data) # S97: one multi-block backend call
         except (OSError,TimeoutError):return Result(WRITE_ERROR)
         return Result(SUCCESS)

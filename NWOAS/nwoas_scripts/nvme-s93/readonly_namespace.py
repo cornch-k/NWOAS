@@ -89,11 +89,8 @@ class ReadOnlyNamespace:
         if cdw[2]&0x3fff0000 or any(cdw[3:]):return Result(INVALID_FIELD)
         if nlb*BLOCK>MAX_TRANSFER:return Result(INVALID_FIELD)
         if slba>=self.block_count or nlb>self.block_count-slba:return Result(LBA_RANGE)
-        blocks=[]
-        try:
-            for lba in range(slba,slba+nlb):
-                b=self.read_block(lba)
-                if not isinstance(b,bytes) or len(b)!=BLOCK:return Result(READ_ERROR)
-                blocks.append(b)
+        # S97: one backend call per command (read_block(lba, n) returns n*BLOCK bytes).
+        try:b=self.read_block(slba,nlb)
         except (OSError,TimeoutError):return Result(READ_ERROR)
-        return Result(SUCCESS,b''.join(blocks))
+        if not isinstance(b,bytes) or len(b)!=nlb*BLOCK:return Result(READ_ERROR)
+        return Result(SUCCESS,b)

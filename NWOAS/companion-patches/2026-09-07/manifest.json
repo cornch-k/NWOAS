@@ -4,7 +4,7 @@
   "upstream": "https://github.com/AppleWOA/m1n1_windows.git",
   "base_commit": "59fb54424d35fa4c6c7346201b3f2759109e13ee",
   "patch": "m1n1_windows/changes.patch",
-  "patch_sha256": "43d982cbaccabe341529705f779a71364f20d7ddbaac137f6093e36a629a9de1",
+  "patch_sha256": "f0e1d0b3b90a5a79ff1813085963f53beeccd1be64e999e4b15c45b052d821ec",
   "added_root": "m1n1_windows/added",
   "added_files": [
    "bringup_atc1.py",

@@ -6,8 +6,9 @@ FIRST,LAST=53839104,59968511
 class Test(unittest.TestCase):
  def setUp(self):
   self.m=Memory();self.level=[];self.disk={};self.flushes=0
-  def read(lba):return self.disk.get(lba,bytes([lba%256])*4096)
-  def write(lba,data):self.disk[lba]=data
+  def read(lba,n=1):return b''.join(self.disk.get(l,bytes([l%256])*4096) for l in range(lba,lba+n))
+  def write(lba,data):
+   for i in range(len(data)//4096):self.disk[lba+i]=data[i*4096:(i+1)*4096]
   def flush():self.flushes+=1
   self.c=Controller(WindowWritableNamespace(61279344,read,write,flush,FIRST,LAST),self.m,self.level.append)
   self.c.pci_write(4,6,16)

@@ -13,7 +13,7 @@ class Memory:
 class Test(unittest.TestCase):
  def setUp(self):
   self.m=Memory();self.level=[];self.reads=[]
-  def read(lba):self.reads.append(lba);return bytes([lba%256])*4096
+  def read(lba,n=1):self.reads.extend(range(lba,lba+n));return b''.join(bytes([l%256])*4096 for l in range(lba,lba+n))
   self.c=Controller(ReadOnlyNamespace(61279344,read),self.m,self.level.append)
   self.c.pci_write(4,6,16)
   self.c.write(0x24,3|(3<<16),32);self.c.write(0x28,0x1000,64);self.c.write(0x30,0x2000,64);self.c.write(0x14,1|(6<<16)|(4<<20),32)
