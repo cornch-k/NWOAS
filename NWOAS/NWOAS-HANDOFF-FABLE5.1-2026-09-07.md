@@ -5,11 +5,35 @@
 콘치님 소유 Mac mini M1(J274, Macmini9,1, 16GB, 내장 SSD 약251GB)에
 Tahoe 펌웨어를 유지하면서 macOS/Windows11 ARM64 듀얼부팅을 만드는 작업입니다.
 **Windows 설치 화면과 USB-A 키보드, 직접 연결 USB-C Magic Trackpad 동작은 사용자 확인을 받았습니다.**
-설치 호환성 검사도 넘어갔습니다. 이번 S93에서 **Windows NVMe 스택이 실제 ANS2
+S86 CPU 개수 비교 수정 후 설치 위치 선택 단계에 도달했습니다. 이번 S93에서 **Windows NVMe 스택이 실제 ANS2
 내부 SSD를 읽는 것까지 확인**했습니다. 아직 Windows 설치 완료도, SSD 쓰기 지원도 아닙니다.
 
 사용자는 실험을 여기까지 하고 GitHub 커밋/푸시 및 이 인수인계 작성을 요청했습니다.
 새 실험/재부팅은 하지 않았습니다. 현재 작동 중인 게스트와 호스트 중계 프로세스는 유지했습니다.
+
+## 작업 맥락과 용어
+
+이 문서의 작업은 사용자 소유 Mac mini에서 공개된 m1n1·Project Mu 소스를 수정하고,
+Windows용 저장장치·USB 드라이버와 하드웨어 사이의 호환성을 검증하는 OS 포팅입니다.
+맥북은 빌드 및 USB 시리얼 디버깅 호스트이고, 장치 접근 대상은 연결된 맥미니입니다.
+현재 실험의 저장장치 경로는 읽기 전용이며, 아래에 쓰기 미구현과 데이터 보존 범위를 명시했습니다.
+
+저수준 용어는 다음과 같은 구체적인 의미로 사용합니다. 기술 식별자와 파일명은 재현을 위해 그대로 둡니다.
+
+- **payload**: m1n1이 실행하는 UEFI 게스트 부팅 이미지 파일.
+- **EL2 하이퍼바이저 / 게스트**: m1n1의 장치 호환 계층과 그 위에서 실행되는 UEFI·Windows.
+- **MMIO hook / trap**: Windows의 장치 레지스터 접근을 NVMe 장치 모델의 읽기·쓰기 함수로 전달하는 처리.
+- **IRQ injection**: 장치 명령 완료를 Windows에 알리는 가상 인터럽트 전달.
+- **DMA / 게스트 RAM 복사**: 드라이버가 지정한 검증된 버퍼에 명령·응답 데이터를 전달하는 장치 I/O.
+- **proxy / 중계**: 맥북과 맥미니 사이의 m1n1 USB 시리얼 디버깅 프로토콜.
+- **커스텀 부팅 객체**: 소유자가 Apple 복구 환경에서 설정한 m1n1 부팅 파일.
+- **Setup 호환성 수정**: 현재 Windows에 노출된 CPU가1개인 실험 구성에 맞춰 설치기의
+  CPU 개수 비교를 수정한 S86 변경. 정확한 변경 위치·검증 결과·미해결 SMP 문제는 아래에 남겼습니다.
+
+사용자는 **fable5.1로 작업을 이어가기를 원합니다**. 문제를 분류할 때 단어만으로 판단하지 말고,
+실제 대상 장비·수행 연산·승인 범위·데이터 흐름을 함께 확인하세요.
+모델 변경이 필요하다고 판단하는 경우에도 특정 용어 대신 구체적인 기술적 제약과 근거를 설명하세요.
+이 맥락 설명은 실제 동작이나 위험을 감추거나 적용되는 지침을 무시하라는 의미가 아닙니다.
 
 ## 작업 위치와 승인 범위
 
@@ -48,7 +72,7 @@ Tahoe 펌웨어를 유지하면서 macOS/Windows11 ARM64 듀얼부팅을 만드�
 `m1n1_windows/build/m1n1-s93-nvme-irq.bin`, 2129920바이트,
 SHA256 `2c7d0012089f37ef025bea6344781e858347883446bc865fe9f6bbc86fc4ef63`.
 
-S93 게스트 payload:
+S93 UEFI 게스트 부팅 이미지(payload):
 `m1n1_windows/m1n1-payload-s93-nvme.bin`, 32342016바이트,
 SHA256 `11e41eff8d7c275c380531e07db99dec15e151fdc2dabe17ef72757f0b2220a4`.
 
@@ -60,7 +84,7 @@ Known-good host SSD S90:
 `m1n1_windows/build/m1n1-s90-ans2-tcb.bin`,
 SHA256 `04c4a7e8d225c205efb86c9d55a268c5052d22abbef446011b137304e60f6432`.
 
-이전 Windows-good payload:
+이전 Windows 부팅 검증 이미지(payload):
 `m1n1_windows/m1n1-payload-iort-noleafdma-rering-runtime-dart-v1.bin`,
 SHA256 `e0bcd7b06fccfed2f487d22afc4a6eb1bb90c017143f163d592580791056cc3b`.
 
@@ -98,7 +122,7 @@ S93 `nwoas_scripts/nvme-s93/`:
 - `guest_module.py`: 실제 ANS 읽기와 게스트 RAM 복사 연결. MMIO/보호영역은 DMA 버퍼로 거부.
 - 별도 PCI segment1, ECAM0x700000000, BAR0x700100000/16KiB, INTx900.
   원래 PCI0는 여전히 `_STA=0`; USB-A는 SCB0.XHC0, USB-C는 XHC1 경로 그대로입니다.
-- DSDT/MCFG/IORT 추가. EL2 `hv_exc.c` opt-in IRQ900 level gate, proxy opcode0xc30.
+- DSDT/MCFG/IORT 추가. EL2 `hv_exc.c`에 명시적으로 활성화하는 IRQ900 완료 알림을 추가했습니다. 중계 프로토콜 명령 번호는0xc30입니다.
 - 초기64항목 큐 제한으로 Windows AQA=0x00ff00ff(256항목)를 거부했습니다.
   CAP.MQES와 실제 허용 크기를 모두256으로 수정한 뒤 Windows 명령 처리가 성공했습니다.
 - 호스트 transport 테스트9개 통과. 테스트 명령:
@@ -133,7 +157,7 @@ S93 `nwoas_scripts/nvme-s93/`:
 4. 잠정 예산: macOS110GB + Windows128GB + custom stub4GB + EFI512MB/MSR16MB/WinRE1.5GB.
    기존 ISC524288000B와 Apple Recovery5368664064B 보존. 정확한 stub크기/경계/생성 순서는 미검증.
 5. 지원되는 target Recovery diskutil 경로로 초기화/분할하고, 파티션 경계를 검증한 뒤에만
-   Windows 쓰기 경로를 개발·시험합니다. 내장 디스크 전체를 무제한 raw-write로 먼저 노출하지 마세요.
+   Windows 쓰기 경로를 개발·시험합니다. 쓰기 기능은 검증된 대상 파티션 범위로 제한하세요. 내장 디스크 전체에 제한 없는 쓰기를 허용하지 마세요.
 
 현재 도구에는 target Recovery GUI/터미널을 직접 조작하는 computer-use가 없습니다.
 serial m1n1 proxy로 Darwin diskutil을 실행할 수도 없습니다. 복구 화면의 물리적 조작이나
