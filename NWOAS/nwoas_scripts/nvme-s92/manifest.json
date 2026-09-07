@@ -1,0 +1,32 @@
+{
+  "experiment": "S92",
+  "status": "HOST_COMMAND_LAYER_AND_REAL_ANS2_METADATA_READ_PASS",
+  "windows_enumeration": false,
+  "files": [
+    {
+      "path": "nwoas_scripts/nvme-s92/hardware_test.py",
+      "sha256": "d2ff93726a272aae79216abee0b4d2d62168422d65641b7eca824869d57be169",
+      "bytes": 2856
+    },
+    {
+      "path": "nwoas_scripts/nvme-s92/prp.py",
+      "sha256": "9ab5a3f10605487c0d59f4749002c64cf6d995167559227f47b8bbbe60159277",
+      "bytes": 1305
+    },
+    {
+      "path": "nwoas_scripts/nvme-s92/readonly_namespace.py",
+      "sha256": "e64e9d4c450bf0ea94dda76ccfa5dd6bfed1e8294ca28a9e865a573c3bfa3f2b",
+      "bytes": 4063
+    },
+    {
+      "path": "nwoas_scripts/nvme-s92/test_prp.py",
+      "sha256": "949b5acc3230cb7adec8646208e9200be029a10438bed3fcd402333a77f0aecf",
+      "bytes": 1191
+    },
+    {
+      "path": "nwoas_scripts/nvme-s92/test_readonly_namespace.py",
+      "sha256": "34c722f0178568c97f28c8cc8e6453705c2fefdf4406ad10f81c54ba68c5c459",
+      "bytes": 2072
+    }
+  ]
+}

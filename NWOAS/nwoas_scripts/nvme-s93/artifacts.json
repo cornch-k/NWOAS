@@ -1,0 +1,10 @@
+{
+  "m1n1_windows/build/m1n1-s93-nvme-irq.bin": {
+    "size": 2129920,
+    "sha256": "2c7d0012089f37ef025bea6344781e858347883446bc865fe9f6bbc86fc4ef63"
+  },
+  "m1n1_windows/m1n1-payload-s93-nvme.bin": {
+    "size": 32342016,
+    "sha256": "11e41eff8d7c275c380531e07db99dec15e151fdc2dabe17ef72757f0b2220a4"
+  }
+}

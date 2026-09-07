@@ -1,0 +1,11 @@
+{
+  "experiment": "S91",
+  "checkpoint_xid": 2008561,
+  "container_bytes": 245107195904,
+  "free_bytes": 34152562688,
+  "allocated_bytes": 210954633216,
+  "all_referenced_checksums_valid": true,
+  "is_resize_limit": false,
+  "writes_to_storage": false,
+  "blocks_read": 282
+}

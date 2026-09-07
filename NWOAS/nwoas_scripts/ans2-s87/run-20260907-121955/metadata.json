@@ -1,0 +1,53 @@
+{
+  "experiment": "S87",
+  "target": "ListContainer: \n    J274AP\n    Macmini9,1\n    AppleARM",
+  "writes_to_storage": false,
+  "logical_block_bytes": 4096,
+  "namespace": 1,
+  "adt": {
+    "/arm-io/ans": {
+      "compatible": "ListContainer: \n    iop,ascwrap-v4",
+      "registers": [
+        [
+          "0x277400000",
+          "0x6c000"
+        ],
+        [
+          "0x277050000",
+          "0x4000"
+        ],
+        [
+          "0x200000000",
+          "0x0"
+        ],
+        [
+          "0x27bcc0000",
+          "0x60000"
+        ],
+        [
+          "0x279000000",
+          "0x1000000"
+        ],
+        [
+          "0x27bb90000",
+          "0xc000"
+        ],
+        [
+          "0x27bd47c00",
+          "0x4000"
+        ]
+      ],
+      "interrupts": "ListContainer: \n    584\n    583\n    586\n    585\n    590"
+    },
+    "/arm-io/sart-ans": {
+      "compatible": "ListContainer: \n    sart,coastguard",
+      "registers": [
+        [
+          "0x27bc50000",
+          "0x10000"
+        ]
+      ],
+      "interrupts": "None"
+    }
+  }
+}

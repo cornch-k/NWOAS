@@ -1,0 +1,703 @@
+{
+  "schema": 1,
+  "generated_epoch": 1788748440,
+  "target": "Macmini9,1 / M1 / J274 / Tahoe mBoot-18000.121.3",
+  "serial": {
+    "device": "/dev/cu.usbmodemC07HL05SQ6NY1",
+    "baud": 115200,
+    "keep_baud": true
+  },
+  "guest_window": {
+    "base": "0x0",
+    "size": "0x100000000"
+  },
+  "safety": {
+    "macbook_user_data_modified": false,
+    "reboot_policy": "one bootstrap reboot per experiment; no hammer",
+    "ordinary_termination": "SIGTERM"
+  },
+  "artifacts": [
+    {
+      "path": "m1n1_windows/build/m1n1-d50-prio80.bin",
+      "bytes": 2097152,
+      "sha256": "7f80370b092c9bc90615fed6414025bc8f2dc5066055ef9af7574b7761de1055",
+      "role": "WHEA Arm SError fix: IRQ698 guest priority 0x80",
+      "verification": "hardware-verified-600s"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d51-prio80-iponly.bin",
+      "bytes": 2097152,
+      "sha256": "f29a72feef41dba19bdc5e01354f2763967ba169303a2bbb509a7a362325abc3",
+      "role": "empty IRQ698 storm fix: IMAN.IP-only pending",
+      "verification": "hardware-verified-600s"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d57-lateusb.bin",
+      "bytes": 2129920,
+      "sha256": "3760f5ac18706fb0d25f4660f4afa545e935b1e78b16853f1e131b7afa67abca",
+      "role": "late FL1100 ring/DCBAA/device-context probe",
+      "verification": "hardware-verified-270s"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d58-hidrings.bin",
+      "bytes": 2129920,
+      "sha256": "183a73f9eb45eaec202fab9a28ffe7f77ebdb1a35ffef84dae8e0a03a8798d76",
+      "role": "HID endpoint/transfer-ring probe",
+      "verification": "hardware-verified-330s"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d59-hidwatch.bin",
+      "bytes": 2129920,
+      "sha256": "6bb61f7a6367073397790fe1f1f668f526d9847652ae76629f0adca1b5b03277",
+      "role": "live passive physical-HID watcher",
+      "verification": "hardware-live"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d60-hidwatch-delay.bin",
+      "bytes": 2129920,
+      "sha256": "696e3de7704d4165caf1e23f55e60cd0f03bfd89f7be96112651c7dac4d14442",
+      "role": "post-HID +1/+2/+3s framebuffer sampler",
+      "verification": "staged-hardware-unverified"
+    },
+    {
+      "path": "m1n1_windows/m1n1-payload-iort-noleafdma-rering-runtime-dart-v1.bin",
+      "bytes": 32342016,
+      "sha256": "e0bcd7b06fccfed2f487d22afc4a6eb1bb90c017143f163d592580791056cc3b",
+      "role": "Project Mu Windows payload with runtime DART",
+      "verification": "hardware-verified"
+    },
+    {
+      "path": "m1n1_windows/tahoe_dcp_guest_hook.py",
+      "bytes": 9541,
+      "sha256": "e090fc99d8826743c889bf1d4b82cf309e7dadbfb16ce3510910897a7d731659",
+      "role": "Tahoe DCP 1280x720 preserved handoff hook",
+      "verification": "hardware-verified"
+    },
+    {
+      "path": "m1n1_windows/pcie_emul-exp5-evtdump.py",
+      "bytes": 3675,
+      "sha256": "51099b807269e38d734efb52ff1f8c10a4b1ed12a8d29d0c1dffc8a91f1512b0",
+      "role": "FL1100 PCIe/xHCI trap module",
+      "verification": "hardware-verified"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-guest-test.sh",
+      "bytes": 1880,
+      "sha256": "3170815ec2ea9e48f73f88ef7b47be64be2136415a73f1dc152b1d827be31cad",
+      "role": "D59 one-reboot/one-chainload 115200 harness",
+      "verification": "hardware-live"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-delay-guest-test.sh",
+      "bytes": 1878,
+      "sha256": "44e5c8eb1495f1f8eec7d110bb189dbc8eb8664a1c38ceffbed58f05aa305a71",
+      "role": "D60 delayed-framebuffer harness",
+      "verification": "staged-hardware-unverified"
+    },
+    {
+      "path": "nwoas_scripts/overnight_hidwatch_supervisor.py",
+      "bytes": 3582,
+      "sha256": "359b3ac099892e520a4964f3b62b310a1fc1ab4b059fb052bdb4e48729566852",
+      "role": "read-only live-log supervisor",
+      "verification": "host-verified"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-fbmask-20260907-032344.NK1GxR.preview.png",
+      "bytes": 1127,
+      "sha256": "ff90e550f75e6a84b8e3ad17cf0b9c3d89a0c7c6fa6ee58a46b05029589a4074",
+      "role": "decoded Windows Setup framebuffer mask",
+      "verification": "hardware-evidence"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-fbmask-20260907-032344.NK1GxR.preview-4x.png",
+      "bytes": 6065,
+      "sha256": "a023b68ed8efb88e578120b04fb1babc4cd0220fbacf7fcaf1373fdf0aca40b1",
+      "role": "decoded Windows Setup framebuffer mask 4x",
+      "verification": "hardware-evidence"
+    },
+    {
+      "path": "nwoas_scripts/verify_runtime_manifest.py",
+      "bytes": 2675,
+      "sha256": "7c1d36353c7e06394210058c6df5e2b4b871baac3db1913bf0336963cb01b994",
+      "role": "immutable runtime-manifest verifier",
+      "verification": "host-verified"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d61-hidwatch-tilebbox.bin",
+      "bytes": 2179072,
+      "sha256": "b1991c5b9555d2a336faf53f524a92f789493d8d2c3f0851eb14846eb5556182",
+      "role": "post-HID 16x16 tile-change count/bbox sampler",
+      "verification": "staged-hardware-unverified"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-tilebbox-guest-test.sh",
+      "bytes": 1886,
+      "sha256": "89c4125f86d00bea37faa0a689333dc8b7e4244bdc56fc929042b1bddc2fd9e6",
+      "role": "D61 tile-localized framebuffer harness",
+      "verification": "staged-hardware-unverified"
+    },
+    {
+      "path": "nwoas_scripts/overnight_hidwatch_journal.py",
+      "bytes": 3195,
+      "sha256": "c71bada07b3ca7d2e4d8e9367aeb90d797a7726bfc1cea72b2c40fe6f32217f8",
+      "role": "read-only elapsed/state-transition journal",
+      "verification": "host-verified"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d62-hidwatch-reportbuf.bin",
+      "bytes": 2179072,
+      "sha256": "f6477d63368ea6c87cef1db015433f9faf977a38c813579989f2092025efa4ad",
+      "role": "post-HID bounded interrupt-IN report-buffer sampler",
+      "verification": "staged-hardware-unverified"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-reportbuf-guest-test.sh",
+      "bytes": 1892,
+      "sha256": "b4971a7c4d57a7748758ea25b266273abfa6486f3934e5786f2d98cf0a51c643",
+      "role": "D62 report-buffer evidence harness",
+      "verification": "staged-hardware-unverified"
+    },
+    {
+      "path": "nwoas_scripts/verify_hidwatch_evidence.py",
+      "bytes": 4036,
+      "sha256": "d48d6c24121c09c1de1153351b03a78b5863b55bc71bee8e94ba3bd68810bbbc",
+      "role": "D59-D62 offline HID/report/tile evidence classifier",
+      "verification": "host-verified"
+    },
+    {
+      "path": "nwoas_scripts/snapshot_hidwatch_at.py",
+      "bytes": 3254,
+      "sha256": "67a45dc9be5377ca4c804b956a10118fc047ccf1e2366ae637e040eb831e31d9",
+      "role": "verified-uptime immutable live-log snapshot helper",
+      "verification": "host-verified"
+    },
+    {
+      "path": "nwoas_scripts/snapshot_hidwatch_on_terminal.py",
+      "bytes": 1954,
+      "sha256": "33de486fc9dfbd3e274660650999fa24aa83731d1c7020f91e89c4506948eac2",
+      "role": "physical-HID or guest-terminal immutable live-log snapshot helper",
+      "verification": "host-verified"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-d59-poweron-hidwatch-guest-test.sh",
+      "bytes": 1962,
+      "sha256": "7b5463f741a31228f2273fe1a503c29333f7940bbbc96799367e6f223659ef52",
+      "role": "D63 exact-D59 powered-monitor physical scanout/HID harness",
+      "verification": "host-verified"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d64-xferclean.bin",
+      "bytes": 2179072,
+      "sha256": "43874c4d0af1f2daaaeed16b90c8e953f6b3b00d20286c3261e97e9116a57e15",
+      "role": "D64 bounded endpoint transfer-ring coherence fix",
+      "verification": "host-built-hardware-unverified"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-d64-xferclean-hidwatch-guest-test.sh",
+      "bytes": 1959,
+      "sha256": "951a7a2c73115b21c46dcc0848d9b7c42b68f32dee445d9dbd5244b2a02a4e9f",
+      "role": "D64 single-bootstrap transfer-ring clean harness",
+      "verification": "host-verified"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d65-xferclean-noslot0.bin",
+      "bytes": 2179072,
+      "sha256": "e581e17b9a22e625adeb9e849f08ed42ed4ea454caf3dd45df3a63bc1954666d",
+      "role": "D65 endpoint transfer-ring clean excluding DCBAA scratchpad entry",
+      "verification": "host-built-hardware-unverified"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-d65-xferclean-noslot0-hidwatch-guest-test.sh",
+      "bytes": 1871,
+      "sha256": "4933729dad0f2cd235d0778a8cab34085b6f305da2fc91f7ea579e1ff9ed1c2f",
+      "role": "D65 single-bootstrap corrected transfer-ring clean harness",
+      "verification": "host-verified"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d66-d59lite-xferclean.bin",
+      "bytes": 2129920,
+      "sha256": "31d5925cee0adab99a19d2b5d6955ebc0ff7a9dd8eff15540798ca6db2be7efb",
+      "role": "D66 D59-size runtime with bounded endpoint transfer-ring clean",
+      "verification": "host-built-hardware-unverified"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-d66-d59lite-xferclean-hidwatch-guest-test.sh",
+      "bytes": 1965,
+      "sha256": "2a7d82e83d1c2d180c54ca66e40a9be6200e2bdda9b58880072c31f6d315f60f",
+      "role": "D66 single-bootstrap D59-size transfer-ring clean harness",
+      "verification": "host-verified"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d67-usbc-initial-phy.bin",
+      "bytes": 2129920,
+      "sha256": "32cd11528bdd5c1e73e99c31448afff511f354c708879fca4a203293e6e118a0",
+      "role": "D67 initial USB-C PHY trial: no CCS recovery",
+      "verification": "hardware-negative"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d70-usbc-hpm-index.bin",
+      "bytes": 2129920,
+      "sha256": "31faf3a63bf8374b4270a2685630b80052f7a4e2b20e489e76cf9a375597c3b3",
+      "role": "D70 HPM index correction; pre-woken PD, USB-C connected, keyboard regression",
+      "verification": "hardware-regression"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d71-i2c-enable-diagnostic.bin",
+      "bytes": 2129920,
+      "sha256": "a5794ad9e2a95a9612729a149f8f51a31b53e182c84e886a70ece73e343e1634",
+      "role": "D71 I2C enable plus USB register observer, not deployed",
+      "verification": "hardware-unverified"
+    },
+    {
+      "path": "nwoas_scripts/usbc-d68-pd-probe.py",
+      "bytes": 1963,
+      "sha256": "9c02bc719cce31d1cedd35cd2e8e7b5fb221fb9e2ff61192d0fb0ce95793fabb",
+      "role": "Read non-debug HPM state with ADT address guard",
+      "verification": "hardware-verified"
+    },
+    {
+      "path": "nwoas_scripts/usbc-d69-pd-powerup.py",
+      "bytes": 2424,
+      "sha256": "674eb3bd5ad0298ae395cf10f51f68ccc1de57eac1ebff53f151dfbc4f564474",
+      "role": "One SSPS state0 request on non-debug HPM",
+      "verification": "hardware-verified-power-state-only"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d72-usbc-gic-mask.bin",
+      "bytes": 2129920,
+      "sha256": "ceb5f2a1c97aed50c18578bafd77f4f42be2b1e3861859df2a5538da3c95eb90",
+      "role": "Guest SPI857 mask respected; physical keyboard yes, Trackpad no",
+      "verification": "hardware-diagnostic-only"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d73-usbc-hse-rings.bin",
+      "bytes": 2129920,
+      "sha256": "d0f8483dc1434183d69eec4a3e37f83cdc94263f4fe525e7e18562a604603c2b",
+      "role": "HSE first events and stale DART fault capture",
+      "verification": "hardware-diagnostic-only"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d74-usbc-hse-events.bin",
+      "bytes": 2129920,
+      "sha256": "b837648fead9247daccf9a5c031fff648c29d347930ee89aa8132cbb8111204f",
+      "role": "HSE 55 completed events, no Host Controller Event",
+      "verification": "hardware-diagnostic-only"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d75-usbc-hse-command.bin",
+      "bytes": 2129920,
+      "sha256": "31c8ccda797ac36555d0fd7d7e05d406fcc69208ad87dac8b6c33ca838ca2aa2",
+      "role": "Last/next command snapshot; hardware pending",
+      "verification": "hardware-pending"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d76-usbc-hse-endpoints.bin",
+      "bytes": 2129920,
+      "sha256": "0f5edce116793580ed6a0d548194aa18c4ac3bb6bbeb26822805ebdbc3cedaf6",
+      "role": "D76 low-IPA evidence probe"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-d76-usbc-hse-endpoints-hidwatch-guest-test.sh",
+      "bytes": 1912,
+      "sha256": "81f9d3e06be698efbab3e0807dee7a9de03914e0467c5db0a8e05ec3b31e5a01",
+      "role": "D76 guarded hardware harness"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d77-usbc-dma-window.bin",
+      "bytes": 2129920,
+      "sha256": "1f9ff8a7bf90e7e261ff824213f937d15be436b2e66fa858f5208e849cd29dae",
+      "role": "D77 USB1 guest-window DMA translation; physical input pending"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-d77-usbc-dma-window-hidwatch-guest-test.sh",
+      "bytes": 2001,
+      "sha256": "80ad6deee96ccff82f836b6c74f3b8da393d51ebb23c02ceccf7a1e600153668",
+      "role": "D77 guarded hardware harness"
+    },
+    {
+      "path": "m1n1_windows/pcie_emul-d77-usbc-dma.py",
+      "bytes": 3833,
+      "sha256": "8c5cbffe1b658abb8f6e551838f2f924c71de581f8010d921c241d950cf64aee",
+      "role": "D77 USB1 MMIO routing for DMA-start hook"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d78-usbc-dart-stride.bin",
+      "bytes": 2129920,
+      "sha256": "988bee7d8ff03bb196bbcc80d3801e0835e09c1a9c86c62b61ed23fba481adb6",
+      "role": "D78 correct USB1 DART instance stride0x80000; hardware pending"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-d78-usbc-dart-stride-hidwatch-guest-test.sh",
+      "bytes": 1991,
+      "sha256": "804d7c4d12c4a4d3f2ecf8b6b34a4b6c9c378117b31c29b4169eb12ec7118610",
+      "role": "D78 correct USB1 DART instance stride0x80000; hardware pending"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d79-usbc-descriptor.bin",
+      "bytes": 2129920,
+      "sha256": "9885cdc7761162f8554bf551df271bd636c21f19c41d9506630c951a5effbff8",
+      "role": "D79 USB-C descriptor/late snapshot diagnostics"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-d79-usbc-descriptor-hidwatch-guest-test.sh",
+      "bytes": 1994,
+      "sha256": "29ea01a50928dc2d199d9ed7990c9cdbb9c05b60c66ffb44b83fe73b79e3a17a",
+      "role": "D79 USB-C descriptor/late snapshot diagnostics"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d80-usbc-event-coherence.bin",
+      "bytes": 2129920,
+      "sha256": "1eb03f7883bd289abb89ffcef22fb1cd572dc5062cd287ba2f520a9ee5a3a0f6",
+      "role": "D80 bounded USB-C event coherence"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-d80-usbc-event-coherence-hidwatch-guest-test.sh",
+      "bytes": 2011,
+      "sha256": "9770a0c712ceafcb0d0dcb5cef399754d088f29d547601a075d39b8d39418de7",
+      "role": "D80 bounded USB-C event coherence"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d81-usbc-payload-alias.bin",
+      "bytes": 2129920,
+      "sha256": "949e6295d58a919ffabd067fc9339f26b807738314e8e96aab252bc88aa61b38",
+      "role": "D81 retain DART bypass and alias low payload pointers at slot1 doorbells"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-d81-usbc-payload-alias-hidwatch-guest-test.sh",
+      "bytes": 1998,
+      "sha256": "fe4305439518cb6b67f60b3eedf77a857fc3e807f6944b8f3f54e357b6abad6f",
+      "role": "D81 retain DART bypass and alias low payload pointers at slot1 doorbells"
+    },
+    {
+      "path": "m1n1_windows/pcie_emul-d81-usbc-payload.py",
+      "bytes": 3838,
+      "sha256": "ee1027d1c868114fb09bafbdb19b50b312b2c3fc456ee3f9309ccbcfa9f07f64",
+      "role": "D81 retain DART bypass and alias low payload pointers at slot1 doorbells"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d82-usbc-link-walk.bin",
+      "bytes": 2129920,
+      "sha256": "5abe7e3eebe08032a4c5f9fa9548cdc15cc1f6c3ed92f51f98d2d41f6fd3a131",
+      "role": "D82 linked USB1 transfer ring alias traversal; hardware pending"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-d82-usbc-link-walk-hidwatch-guest-test.sh",
+      "bytes": 1991,
+      "sha256": "8174d7d5b7396549e7f3f537e4e1cce3ac4dd03c641162c1d85e0923b1609a98",
+      "role": "D82 linked USB1 transfer ring alias traversal; hardware pending"
+    },
+    {
+      "path": "m1n1_windows/build/m1n1-d83-usbc-live-segment.bin",
+      "bytes": 2129920,
+      "sha256": "a5fc89874e62a51158183e38cfbcc232fd5031f75f9a908119995d6bde2f3906",
+      "role": "D83 track last live linked segment after Windows retires old ring"
+    },
+    {
+      "path": "nwoas_scripts/tahoe-dcp-d83-usbc-live-segment-hidwatch-guest-test.sh",
+      "bytes": 2001,
+      "sha256": "7c340f5d5e4792d09f5b63993e58d3e02edae4803e41d6e9f5581ed8d656e700",
+      "role": "D83 track last live linked segment after Windows retires old ring"
+    }
+  ],
+  "evidence_logs": [
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-whea-cper-20260907-022952.6AVCxr",
+      "bytes": 218628,
+      "sha256": "9ee80a22154f2950560138647443d7e24f31d3d3b11b111bd28fd48fd73367b2",
+      "claim": "WHEA CPER ESR/FAR root-cause capture"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-prio80-20260907-023617.ko5vas",
+      "bytes": 275598,
+      "sha256": "b39646be8e4d527a1eda063528e15ac38d978106bcec3ac08ec4fa5ba86e108e",
+      "claim": "IRQ698 priority fix positive run"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-20260907-024848.ARUhcc",
+      "bytes": 275109,
+      "sha256": "cdbad6e07e8c3610f1c261f9a9291f3144731306aa7e915a99442435898a3d58",
+      "claim": "IMAN.IP-only IRQ fix positive run"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-fbmask-20260907-032344.NK1GxR",
+      "bytes": 269046,
+      "sha256": "53a908ca30b44336b2bd39bffbddb886a59e150358ade5aa04a43c7eedb2bc12",
+      "claim": "Windows Setup scanout proof"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-lateusb-20260907-033349.hyV9bA",
+      "bytes": 271315,
+      "sha256": "1bcadb35da84516716d6570d9c1bef0195879e8694b31127d5834bba400e0e5c",
+      "claim": "FL1100 storage+HID enumeration proof"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-hidrings-20260907-034231.cqAXte",
+      "bytes": 278671,
+      "sha256": "56113e1abd51f8c7dcccafe725cb1bcad73a9bc009c02e2e9020e2a6ce753be2",
+      "claim": "HID receive-queue proof"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-20260907-035048.CHOGAO.snapshot-20260907-042317",
+      "bytes": 442062,
+      "sha256": "52ef66a6a4ffc0ba0da345df96775650acec003dd3da543557882aa8c852cfa0",
+      "claim": "D59 live watcher immutable snapshot at manifest generation"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-20260907-035048.CHOGAO.snapshot-20260907-0552-2h",
+      "bytes": 985902,
+      "sha256": "b2235a4d129727524b528029ced791cb9329f1d52639ca6f89b210fa8fac2d7e",
+      "claim": "D59 two-hour WHEA-free live watcher snapshot"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-20260907-035048.CHOGAO.snapshot-20260907-0652-3h",
+      "bytes": 1340924,
+      "sha256": "579d0ac327a8a883c773865eca62b8e03a2de6c355f8e55636660d6993cf28f8",
+      "claim": "D59 three-hour WHEA-free live watcher snapshot"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-20260907-035048.CHOGAO.snapshot-20260907-3h30m",
+      "bytes": 1513242,
+      "sha256": "ebb0e086842ecf7155605431873b286ec7d8f3aff878d57021ec242fc1d9d2f9",
+      "claim": "D59 three-and-a-half-hour WHEA-free live watcher snapshot"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-20260907-035048.CHOGAO.snapshot-20260907-4h",
+      "bytes": 1694988,
+      "sha256": "b656898169c0901cae0be9794847202d9748eece4ec8c7d1423d9f6559b63cee",
+      "claim": "D59 four-hour WHEA-free live watcher snapshot"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-20260907-035048.CHOGAO.snapshot-20260907-4h30m",
+      "bytes": 1875425,
+      "sha256": "9c9cc90b20e8e6b754556bae1765e456607aa327e3bc8fe900c6a152707af66c",
+      "claim": "D59 four-and-a-half-hour WHEA-free live watcher snapshot"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-20260907-035048.CHOGAO.snapshot-20260907-5h",
+      "bytes": 2057437,
+      "sha256": "b0f0e9889f410bd614accf0e8da2b5a32144ac6ee93eb55bec9c8da811a546a8",
+      "claim": "D59 five-hour WHEA-free live watcher snapshot"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-20260907-035048.CHOGAO.snapshot-20260907-5h30m",
+      "bytes": 2237571,
+      "sha256": "4488db17efe1a1114531fe7756a51c2aab2f6ff63a75a05990e6755b75e10545",
+      "claim": "D59 five-and-a-half-hour WHEA-free live watcher snapshot"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-reportbuf-20260907-092313.jv20YK",
+      "bytes": 67234,
+      "sha256": "4c46015232a0c196174e0f9bbc4368d864f42871e091ec25df2a54dbfb9973b3",
+      "claim": "D62 power-on-sink run: DCP hotplug/reapply success followed by Project Mu early PC=-1 failure"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-fl32-runtime-dart-iponly-hidwatch-reportbuf-20260907-092313.jv20YK.dcp.state.json",
+      "bytes": 321,
+      "sha256": "833de7e46273ddaacb558f7f8ea77b78c68392cfde1fbfa0ecc16dc6912626f1",
+      "claim": "D62 DCP hotplug-cycle and 720p mode/swap state"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d59-poweron-hidwatch-20260907-092903.DWCLJc",
+      "bytes": 278558,
+      "sha256": "7f0ce9647c739f81fe8339b5b2510bcefe74842298d0af8513b49b63edfa13c8",
+      "claim": "D63 physical Windows Setup plus keyboard report-buffer data without HID completion"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d64-xferclean-hidwatch-20260907-093957.1LF41Q",
+      "bytes": 259859,
+      "sha256": "f852ba97ded134a860b8856a45653d190de820247e77646dd081363fdc6e0aed",
+      "claim": "D64 physical Setup and Space HID buffer, no completion; scratchpad traversal defect identified"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d65-xferclean-noslot0-hidwatch-20260907-094709.R5C2XY",
+      "bytes": 67804,
+      "sha256": "5c102d4ed9cff22d6275c1a9ee0dfb62aaa6edf9cf8d3c6625b1648be9a9b72b",
+      "claim": "D65 corrected slot traversal; Project Mu PC=-1 before fix execution"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d66-d59lite-xferclean-hidwatch-20260907-095242.RJeiD6.snapshot-physical-keyboard",
+      "bytes": 270478,
+      "sha256": "8adea934d65231087a4989561de8f746fa08ee6d736ae50876d8aea673fec9c3",
+      "claim": "D66 controller-authored physical keyboard HID completion; four slot2 DCI3 events, UI Enter observed"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d66-d59lite-xferclean-hidwatch-20260907-095242.RJeiD6.snapshot-physical-keyboard.verdict.json",
+      "bytes": 850,
+      "sha256": "606d02a61a586f3e916c17b270d7179aeea433014b4fca0058bb7aca7c89b1a2",
+      "claim": "Independent D66 HID evidence classification: PHYSICAL_HID_COMPLETION, no guest errors"
+    },
+    {
+      "path": "nwoas_scripts/logs/usbc-d68-pd-probe-resume2.log",
+      "bytes": 424,
+      "sha256": "b1f270bdc5b2267a24bdb2f2b1b62ec9fbbaafa6e7db142d81c6b050883bf9d6",
+      "claim": "PD initially power state7, disconnected"
+    },
+    {
+      "path": "nwoas_scripts/logs/usbc-d69-pd-powerup.log",
+      "bytes": 457,
+      "sha256": "678bf6f824f076ed373f8221928638777b7e073758740273b2d858976d543504",
+      "claim": "SSPS ACK and power state0"
+    },
+    {
+      "path": "nwoas_scripts/logs/usbc-d69-after-settle.log",
+      "bytes": 424,
+      "sha256": "5d0ab4455b15a43bf9b9d4d5ccb27d5eaabe42514c62bf37eaf7f01d9b5b9ffe",
+      "claim": "PD physical attachment after SSPS"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d67-usbc-initial-phy-hidwatch-20260907-103614.3fhVQg.snapshot-end",
+      "bytes": 203066,
+      "sha256": "5aff5cefc24a0da05da7151566f5376d55f40d88ddce0350974b09b813c19d7f",
+      "claim": "D67 PHY ret0 but no CCS"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d70-usbc-hpm-index-hidwatch-20260907-104134.vEFJbu.snapshot-keyboard-regression",
+      "bytes": 190588,
+      "sha256": "7ea615555863ab92c3e0d6e3f0babc5b8c1a56f9d97d2759a01f98e1a34300fd",
+      "claim": "D70 USB-C CCS1 IMAN.IP1 persistent; user keyboard regression"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d71-i2c-enable-diagnostic-hidwatch-20260907-105022.iV1hqo.snapshot-input-fail",
+      "bytes": 186706,
+      "sha256": "dde4d0c10ac54dfbdaf35328498c6129771b201752a9d7b27f1a3dd65e407aeb",
+      "claim": "D71 immutable USB-C diagnostic evidence; input not fixed"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d72-usbc-gic-mask-hidwatch-20260907-105228.qG583x.snapshot-keyboard-ok",
+      "bytes": 205310,
+      "sha256": "2c110ce5238d3c2bd43131f05aabe9480cb0716a0750510f39ff3a73a47444fb",
+      "claim": "D72 immutable USB-C diagnostic evidence; input not fixed"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d73-usbc-hse-rings-hidwatch-20260907-105534.Zvv9zD.snapshot-hse",
+      "bytes": 201351,
+      "sha256": "0c4c1e9197ffac1825ec59955b4d90bc28c03b3c6d39ddebbedc068b0bb33207",
+      "claim": "D73 immutable USB-C diagnostic evidence; input not fixed"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d74-usbc-hse-events-hidwatch-20260907-110020.HgHL8x.snapshot-hse",
+      "bytes": 204357,
+      "sha256": "a5a91e1346e749964e252a228f34c5678008076c480a417404c47bea1a885c27",
+      "claim": "D74 immutable USB-C diagnostic evidence; input not fixed"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d75-usbc-hse-command-hidwatch-20260907-110304.p8jVfG.snapshot-hse",
+      "bytes": 205146,
+      "sha256": "c6df2deb1be284605903ead45a9ae36c9477c80bd2b5d341b01b7cc66ba34ef6",
+      "claim": "D75 immutable HSE diagnostic capture"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d76-usbc-hse-endpoints-hidwatch-20260907-110537.ZJoBVj.snapshot-hse",
+      "bytes": 247713,
+      "sha256": "b7ac31c457da5f8817e28f60499def98e15125516e56499ab2efe9ef3759b21a",
+      "claim": "D76 immutable HSE diagnostic capture"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d77-usbc-dma-window-hidwatch-20260907-110900.bYbXIb.snapshot-hse",
+      "bytes": 208135,
+      "sha256": "db0e10afce2f414c057ccc37c7d082537610df7e24518472dacdbee41933f096",
+      "claim": "D77 negative: wrong DART stride; second instance was not programmed"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d78-usbc-dart-stride-hidwatch-20260907-111132.xMeASA.snapshot-no-hse",
+      "bytes": 248465,
+      "sha256": "5a9de03f0dca5017618ace3cd5c464d54722f7ebdf67f4d018933fbc3cda00c2",
+      "claim": "D78 no USB-C HSE after correct DMA mapping; user keyboard yes Trackpad no"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d79-usbc-descriptor-hidwatch-20260907-111543.RxWqWt.snapshot-no-posting",
+      "bytes": 252636,
+      "sha256": "25507d5ddf9ae0f95d9377e21cbe8e05aaf8e805c5aeccba72e60f542af2267a",
+      "claim": "D79 healthy HSE0 but guest event ring zero; transport unresolved"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d80-usbc-event-coherence-hidwatch-20260907-112013.wIddF5.snapshot-no-posting",
+      "bytes": 254205,
+      "sha256": "d7b1fbe1fa85a25ab27068792016d7aa37721d5f72cd1f122f93167247bcba63",
+      "claim": "D80 ERST clean negative; USB-C posting absent"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d81-usbc-payload-alias-hidwatch-20260907-112431.3H45Vx.snapshot-first-cursor",
+      "bytes": 253681,
+      "sha256": "b524a4b1adae01929947bbf59661b7dddfa1a5b76cdc30840b15c970bd29a7b0",
+      "claim": "D81 brief physical Trackpad cursor movement and EP7 CC13 completions, then HSE"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d82-usbc-link-walk-hidwatch-20260907-112829.ku0Mqo.snapshot-retired-ring",
+      "bytes": 214485,
+      "sha256": "11b80f8457f34f372a3d8ba41af8918322652ad95eb20afa1efda7c399e2bf9a",
+      "claim": "D82 segment1 reached, original segment retired, then HSE"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d83-usbc-live-segment-hidwatch-20260907-113132.MRpxIf.snapshot-physical-cursor",
+      "bytes": 218164,
+      "sha256": "4304d3a000a56b17c39f8a4b495bf491393ee9aa89cad3ea1a46a605debb60da",
+      "claim": "D83 physical cursor validation and source preservation"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d83-usbc-live-segment-hidwatch-20260907-113132.MRpxIf.snapshot-physical-cursor.verdict.json",
+      "bytes": 453,
+      "sha256": "51f9aba873d547909cfa6f68a00a708cdc280daf06682121c80ea20bdc7acb39",
+      "claim": "D83 physical cursor validation and source preservation"
+    },
+    {
+      "path": "nwoas_scripts/logs/d83-source-snapshot.tar.gz",
+      "bytes": 104384,
+      "sha256": "31f58fa2690c1b2e0a9322aa54f3c8b0fad19e05a210cc4fd2a563abe86ad708",
+      "claim": "D83 physical cursor validation and source preservation"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d83-usbc-live-segment-hidwatch-20260907-114950.jDAmwi",
+      "bytes": 69220,
+      "sha256": "34e5cc494548a9145ea2c9bae4d39b1be844444f3271efd10c28ba12f5a6b4b3",
+      "claim": "S84 initial attempt failed before Windows: Project Mu PC ffffffffffffffff ESR8a000000, self-reset; no Setup execution evidence"
+    },
+    {
+      "path": "nwoas_scripts/logs/tahoe-dcp-d83-usbc-live-segment-hidwatch-20260907-115049.FyPfss",
+      "bytes": 199815,
+      "sha256": "7314fd13b02ac1e3cd1a2d40ec09b280aeda0cabf8a9db1c3b3d75203cd97853",
+      "claim": "Windows kernel and USB-C event progression, then serial disconnect after 60s; user reports unattend ProductKey error; no bypass success"
+    }
+  ],
+  "live_state_snapshot": {
+    "updated_epoch": 1788753334,
+    "experiment": "S93 depth256",
+    "verdict": "WINDOWS_NVME_IDENTIFY_AND_REAL_ANS2_READ_PASS",
+    "windows_internal_ssd_visible": null,
+    "partition_changes": false,
+    "windows_requested_gb": 128,
+    "apfs_allocated_bytes": 210954633216,
+    "apfs_free_bytes": 34152562688,
+    "requested_windows_128gb_currently_fits": false,
+    "windows_nvme_reads_verified": true
+  },
+  "completion": {
+    "windows_setup_scanout": true,
+    "whea_fix_stable": true,
+    "fl1100_storage_enumerated": true,
+    "fl1100_hid_enumerated": true,
+    "windows_hid_receive_queues_armed": true,
+    "physical_hid_report_observed": true,
+    "physical_cursor_movement_observed": true,
+    "physical_hdmi_color_bars_observed": true,
+    "physical_windows_setup_observed": true,
+    "physical_keyboard_report_buffer_observed": true,
+    "physical_keyboard_ui_response_observed": true,
+    "usbc_physical_connection_observed": true,
+    "usbc_input_verified": true,
+    "usbc_brief_cursor_movement_observed": true,
+    "usbc_input_stable": true,
+    "usbc_input_validation_scope": "User confirms normal cursor motion under D83; short-run validation, slot1 directly attached Trackpad only; no hub/hotplug/long-run claim",
+    "windows_setup_hardware_block_cleared": true,
+    "internal_ssd_visible_to_windows": null,
+    "ans2_host_gpt_read_verified": true,
+    "windows_nvme_internal_ssd_reads_verified": true,
+    "windows_internal_ssd_installation_verified": false
+  },
+  "live_monitor": {
+    "state": "Windows guest live; S93 host NVMe callbacks required. User requested stopping experiments and publishing handoff; no further reboots.",
+    "session": 86788,
+    "pid": 46598,
+    "mutable_log": "nwoas_scripts/logs/nvme-s93-20260907-125315.KyzBAI"
+  }
+}

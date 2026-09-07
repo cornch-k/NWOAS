@@ -1,0 +1,54 @@
+#
+#  Copyright (c) 2025, NWOAS contributors.  All rights reserved.
+#
+#  Module Name:
+#    FbDumpDxe.inf
+#
+#  Abstract:
+#    DXE driver that registers a ResetSystem notification callback to RLE-dump
+#    the GOP framebuffer to the Apple UART serial port.
+#
+#    Used to capture Windows Boot Manager error screens (painted to GOP only,
+#    not forwarded to the UART) so the 0xc000XXXX stop code can be decoded from
+#    the m1n1 serial log.
+#
+#    Depends on:
+#      - EFI_GRAPHICS_OUTPUT_PROTOCOL  (installed by SimpleFbDxe)
+#      - EFI_RESET_NOTIFICATION_PROTOCOL (installed by ResetSystemRuntimeDxe)
+#
+#  Environment:
+#    UEFI Driver Execution Environment (DXE)
+#
+#  License:
+#    SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+
+[Defines]
+  INF_VERSION                    = 0x0001001c
+  BASE_NAME                      = FbDumpDxe
+  FILE_GUID                      = 7E3A1F09-D82B-47C5-BB0E-A6F914253D8C
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = FbDumpDxeInitialize
+
+[Sources]
+  FbDumpDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+
+[LibraryClasses]
+  BaseLib
+  DebugLib
+  PrintLib
+  SerialPortLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid     ## CONSUMES
+  gEfiResetNotificationProtocolGuid  ## CONSUMES
+
+[Depex]
+  gEfiGraphicsOutputProtocolGuid AND gEfiResetNotificationProtocolGuid

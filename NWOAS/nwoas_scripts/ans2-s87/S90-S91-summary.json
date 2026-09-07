@@ -1,0 +1,7 @@
+{
+  "probe_result": "nwoas_scripts/ans2-s87/space-20260907-122535/result.json",
+  "nvme_source_sha256": "209ff8d686f08cc2394dee867f1e34a458d21b72ad9b99ec26e8adb5b8acf07c",
+  "runtime_sha256": "04c4a7e8d225c205efb86c9d55a268c5052d22abbef446011b137304e60f6432",
+  "upstream_reference": "https://github.com/AsahiLinux/m1n1/blob/main/src/nvme.c",
+  "status": "host SSD reads verified; Windows storage NOT implemented; NO disk changes"
+}

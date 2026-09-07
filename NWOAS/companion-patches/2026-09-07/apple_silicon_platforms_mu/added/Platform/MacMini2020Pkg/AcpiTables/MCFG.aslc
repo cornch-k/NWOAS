@@ -1,0 +1,52 @@
+/** @file
+ * NWOAS: MCFG.aslc  --  PCI Express Memory-Mapped Configuration Space (ECAM) description
+ *                       for Mac mini (J274 / Apple T8103, M1).
+ *
+ * ARM64 Windows REQUIRES an MCFG table to enumerate PCIe: without it pci.sys has no way to
+ * reach ECAM config space, so the Apple PCIe (apcie) root -- and everything behind it
+ * (FL1100 USB-A @ bus2/dev0, Broadcom Ethernet, Wi-Fi) -- is never enumerated. This table,
+ * together with the PNP0A08 root bridge added to DSDT.asl, exposes the root complex.
+ *
+ * IORT is DELIBERATELY NOT provided (no static/dynamic instance in the tree): with no
+ * RID->ITS mapping, ARM64 Windows cannot build an MSI domain and falls back to line-based
+ * interrupts (_PRT / INTx). Apple PCIe MSI is a fixed-doorbell/AIC scheme (not a GICv3 ITS),
+ * which Windows cannot drive; INTx (which m1n1's vGIC can inject via the port AIC SPI) is
+ * the viable path.
+ *
+ * Values verified against apple-j274.dtb (pcie@690000000 reg[config], bus-range <0 3>) and
+ * T810XFamilyPkg.dsc.inc (PcdPciExpressBaseAddress = 0x690000000, BarSize 16MB).
+ *   ECAM base = 0x690000000, aperture 16MB = 16 buses. EndBusNumber MUST stay <= 0x0F.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause-Patent
+ */
+
+#include <Library/AcpiLib.h>
+#include <IndustryStandard/Acpi64.h>
+#include <IndustryStandard/MemoryMappedConfigurationSpaceAccessTable.h>
+#include <Acpi/AcpiHeader.h>
+
+#pragma pack(1)
+typedef struct {
+  EFI_ACPI_MEMORY_MAPPED_CONFIGURATION_BASE_ADDRESS_TABLE_HEADER                         Header;
+  EFI_ACPI_MEMORY_MAPPED_ENHANCED_CONFIGURATION_SPACE_BASE_ADDRESS_ALLOCATION_STRUCTURE  Segment[2];
+} NWOAS_MCFG_TABLE;
+#pragma pack()
+
+NWOAS_MCFG_TABLE Mcfg = {
+  {
+    __ACPI_HEADER (
+      EFI_ACPI_6_4_PCI_EXPRESS_MEMORY_MAPPED_CONFIGURATION_SPACE_BASE_ADDRESS_DESCRIPTION_TABLE_SIGNATURE,
+      NWOAS_MCFG_TABLE,
+      EFI_ACPI_MEMORY_MAPPED_CONFIGURATION_SPACE_ACCESS_TABLE_REVISION
+    ),
+    0                                    // UINT64 Reserved (MCFG header)
+  },
+  {
+    //  BaseAddress             SegGrp   StartBus  EndBus  Reserved
+    { 0x0000000690000000ULL,    0x0000,  0x00,     0x03,   0x00000000 },
+    { 0x0000000700000000ULL,    0x0001,  0x00,     0x00,   0x00000000 }
+  }
+};
+
+// Prevent the optimizer from stripping the table (same idiom as FADT.aslc).
+VOID* CONST ReferenceAcpiTable = &Mcfg;

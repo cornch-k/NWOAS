@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "experiment": "S85-ProductKey-interactive",
+  "files": [
+    {
+      "path": "NWOAS-S84.TAG",
+      "sha256": "d97091dd5f04f53c121e714a91875dd59a45d63990aa39588b4c8d3a189f38a2",
+      "bytes": 28
+    },
+    {
+      "path": "SCRIPTS/COLLECT11.CMD",
+      "sha256": "364cdbcdf3717d0d91bc12b2ae77d780b6790531605912fa91a85fd3fb5ed870",
+      "bytes": 1421
+    },
+    {
+      "path": "SCRIPTS/FIX11.CMD",
+      "sha256": "d98a802c9bca5d83e85b1aa20f3c3fb1958aef5a8f71bf802b05bf23a11ac670",
+      "bytes": 3205
+    },
+    {
+      "path": "SCRIPTS/RETRY11.CMD",
+      "sha256": "6ea7ca8ea1257dd16dd2559e9dd8a961e3c67d43ab4443d3e3f5be8c8b509c78",
+      "bytes": 988
+    },
+    {
+      "path": "SCRIPTS/WATCH11.CMD",
+      "sha256": "7ce34aa560c2a92f088787536a6c58e018df0a8b6b0e12d4008678b2b377d28d",
+      "bytes": 1153
+    },
+    {
+      "path": "SCRIPTS/interactive.xml",
+      "sha256": "addac45108c3dff6adcd0bf5fa9bbbfc11e0d9505e313e33374dd7bd433d7c73",
+      "bytes": 1928
+    },
+    {
+      "path": "SCRIPTS/setup-idle.vbs",
+      "sha256": "242d3ec2c1754c827f05d7d0786447fa2e2fe9076600636c9cd1e6c478dccf7f",
+      "bytes": 651
+    },
+    {
+      "path": "autounattend.xml",
+      "sha256": "addac45108c3dff6adcd0bf5fa9bbbfc11e0d9505e313e33374dd7bd433d7c73",
+      "bytes": 1928
+    }
+  ],
+  "media_marker": "S84 marker retained for existing diagnostic scripts"
+}

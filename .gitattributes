@@ -1,0 +1,4 @@
+# Preserve exact upstream patch/source bytes, including their whitespace.
+NWOAS/companion-patches/** -text -whitespace
+# Setup package hashes cover the original CRLF bytes.
+NWOAS/nwoas_scripts/setup-repair/** -text whitespace=trailing-space,space-before-tab,cr-at-eol

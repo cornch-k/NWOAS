@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+import sys, pathlib, traceback, os, signal
+sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
+
+import argparse, pathlib
+from io import BytesIO
+
+def volumespec(s):
+    return tuple(s.split(":", 2))
+
+parser = argparse.ArgumentParser(description='Run a Mach-O payload under the hypervisor')
+parser.add_argument('-s', '--symbols', type=pathlib.Path)
+parser.add_argument('-m', '--script', type=pathlib.Path, action='append', default=[])
+parser.add_argument('--pre-init-script', type=pathlib.Path, action='append', default=[],
+                    help='Run an HV script before hv.init()')
+parser.add_argument('-c', '--command', action="append", default=[])
+parser.add_argument('-S', '--shell', action="store_true")
+parser.add_argument('-e', '--hook-exceptions', action="store_true")
+parser.add_argument('-d', '--debug-xnu', action="store_true")
+parser.add_argument('-l', '--logfile', type=pathlib.Path)
+parser.add_argument('-C', '--cpus', default=None)
+parser.add_argument('-r', '--raw', action="store_true")
+parser.add_argument('-E', '--entry-point', action="store", type=int, help="Entry point for the raw image", default=0x800)
+parser.add_argument('-a', '--append-payload', type=pathlib.Path, action="append", default=[])
+parser.add_argument('--fbout', type=pathlib.Path, required=True,
+                    help='Write a raw BGRA snapshot when SIGINT interrupts the guest')
+parser.add_argument('--snapshot-after', type=float, default=180.0,
+                    help='Interrupt hv.start and snapshot after this many seconds')
+parser.add_argument('-v', '--volume', type=volumespec, action='append',
+                    help='Attach a 9P virtio device for file export to the guest. The argument is a host path to the '
+                         'exported tree, joined by colon (\':\') with a tag under which the tree will be advertised '
+                         'on the guest side.')
+parser.add_argument('payload', type=pathlib.Path)
+parser.add_argument('boot_args', default=[], nargs="*")
+args = parser.parse_args()
+
+from m1n1.proxy import *
+from m1n1.proxyutils import *
+from m1n1.utils import *
+from m1n1.shell import run_shell
+from m1n1.hv import HV
+from m1n1.hv.virtio import Virtio9PTransport
+from m1n1.hw.pmu import PMU
+
+iface = UartInterface()
+p = M1N1Proxy(iface, debug=False)
+bootstrap_port(iface, p)
+u = ProxyUtils(p, heap_size = 768 * 1024 * 1024)
+
+hv = HV(iface, p, u)
+
+hv.hook_exceptions = args.hook_exceptions
+
+for i in args.pre_init_script:
+    hv.run_script(i)
+
+hv.init()
+
+if args.cpus:
+    avail = [i.name for i in hv.adt["/cpus"]]
+    want = set(f"cpu{i}" for i in args.cpus)
+    for cpu in avail:
+        if cpu in want:
+            continue
+        try:
+            del hv.adt[f"/cpus/{cpu}"]
+            print(f"Disabled {cpu}")
+        except KeyError:
+            continue
+
+if args.debug_xnu:
+    hv.adt["chosen"].debug_enabled = 1
+
+if args.volume:
+    for path, tag in args.volume:
+        hv.attach_virtio(Virtio9PTransport(root=path, tag=tag))
+
+if args.logfile:
+    hv.set_logfile(args.logfile.open("w"))
+
+if len(args.boot_args) > 0:
+    boot_args = " ".join(args.boot_args)
+    hv.set_bootargs(boot_args)
+
+symfile = None
+if args.symbols:
+    symfile = args.symbols.open("rb")
+
+payload = args.payload.open("rb")
+
+if args.append_payload:
+    concat = BytesIO()
+    concat.write(payload.read())
+    for part in args.append_payload:
+        concat.write(part.open("rb").read())
+    concat.seek(0)
+    payload = concat
+
+if args.raw:
+    hv.load_raw(payload.read(), args.entry_point)
+else:
+    hv.load_macho(payload, symfile=symfile)
+
+PMU(u).reset_panic_counter()
+
+for i in args.script:
+    try:
+        hv.run_script(i)
+    except:
+        traceback.print_exc()
+        args.shell = True
+
+for i in args.command:
+    try:
+        hv.run_code(i)
+    except:
+        traceback.print_exc()
+        args.shell = True
+
+if args.shell:
+    run_shell(hv.shell_locals, "Entering hypervisor shell. Type ^D to start the guest.")
+
+class SnapshotRequested(Exception):
+    pass
+
+
+def request_snapshot(_signum, _frame):
+    raise SnapshotRequested()
+
+
+signal.signal(signal.SIGALRM, request_snapshot)
+signal.setitimer(signal.ITIMER_REAL, args.snapshot_after)
+try:
+    hv.start()
+except (KeyboardInterrupt, SnapshotRequested):
+    signal.setitimer(signal.ITIMER_REAL, 0)
+    video = hv.u.ba.video
+    base = int(os.environ.get("NWOAS_FB_BASE", str(video.base)), 0)
+    stride = int(video.stride)
+    height = int(video.height)
+    size = stride * height
+    print(f"[fbsnapshot] trigger: reading base={base:#x} stride={stride} "
+          f"height={height} size={size}")
+    data = iface.readmem(base, size)
+    args.fbout.parent.mkdir(parents=True, exist_ok=True)
+    args.fbout.write_bytes(data)
+    nonzero = sum(byte != 0 for byte in data)
+    print(f"[fbsnapshot] wrote={args.fbout} bytes={len(data)} nonzero={nonzero}")
+    raise SystemExit(0)
+
+print("[fbsnapshot] guest exited before snapshot request")

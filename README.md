@@ -16,8 +16,22 @@ Apple Boot ROM -> iBoot -> m1n1 (EL2 hypervisor, vGIC)
   -> loader-to-kernel handoff
 ```
 
-The current frontier is the loader-to-kernel handoff step, blocked on
-vGIC interrupt/maintenance-interrupt handling.
+## Current status — 2026-09-07
+
+Windows11 ARM64 Setup boots on the M1 Mac mini with Tahoe firmware. USB-A
+keyboard and a directly attached USB-C Magic Trackpad have user-confirmed input.
+Setup reaches disk selection after the documented single-core compatibility workaround.
+
+S93 adds a **read-only, host-mediated NVMe controller**: Windows enumerated it,
+identified the internal ANS2 SSD and completed388 real I/O reads with no I/O errors
+in the preserved snapshot. Installation, SSD writes, standalone storage operation,
+SMP, and the requested macOS/Windows dual-boot partition layout remain unfinished.
+The latest Setup disk-list UI has not yet been physically confirmed.
+
+Start with the [fable5.1 handoff](NWOAS/NWOAS-HANDOFF-FABLE5.1-2026-09-07.md),
+[hardware evidence](NWOAS/nwoas_scripts/nvme-s93/hardware-evidence.json), and
+[companion source patches](NWOAS/companion-patches/2026-09-07/README.md).
+Build success alone is never treated as hardware success.
 
 ## Layout
 
@@ -28,7 +42,8 @@ vGIC interrupt/maintenance-interrupt handling.
   device's DFU/serial console over USB-C (see below).
 
 Two larger companion components this project builds on are maintained as
-their own repositories rather than duplicated here:
+their own repositories. This snapshot includes pinned-base patches and additional
+source files for local modifications (including modified submodules):
 
 - [AppleWOA/apple_silicon_platforms_mu](https://github.com/AppleWOA/apple_silicon_platforms_mu) — Project Mu-based UEFI firmware for Apple Silicon
 - [AppleWOA/m1n1_windows](https://github.com/AppleWOA/m1n1_windows) — a fork of [m1n1](https://github.com/AsahiLinux/m1n1) adapted for Windows boot
@@ -55,6 +70,7 @@ licensed under Apache-2.0:
 
 ## Note
 
-`autounattend*.xml` files use a placeholder Windows account password
-(`CHANGE_ME_BEFORE_USE`) — set your own before using them to install
-Windows.
+Historical root `NWOAS/autounattend.xml` contains automatic disk-wipe directives;
+do not reuse it for the current dual-boot work. The current guarded Setup package
+is under `NWOAS/nwoas_scripts/setup-repair/`. No Windows binaries or modified
+installation images are included in this update.

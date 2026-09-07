@@ -2,9 +2,7 @@
 .env
 .env.*
 
-# Markdown notes — root README.md is the only one kept
-*.md
-!/README.md
+# Public handoff and experiment documentation are versioned.
 
 # Build artifacts / caches
 build/
@@ -18,3 +16,16 @@ __pycache__/
 # Agent / orchestration scratch
 .claude/
 .superpowers/
+
+# Private runtime material (new files only; historic tracked assets unaffected)
+**/logs/
+**/venv/
+**/.venv*/
+*.wim
+*.swm
+*.iso
+*.ipsw
+*.dmp
+*.bgra
+*.pcap
+*.pcapng

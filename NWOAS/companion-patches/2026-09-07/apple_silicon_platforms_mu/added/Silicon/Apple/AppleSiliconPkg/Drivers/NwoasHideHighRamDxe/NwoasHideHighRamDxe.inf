@@ -1,0 +1,56 @@
+#
+#  Copyright (c) 2026, AppleWOA authors. All rights reserved.
+#
+#  Module Name:
+#    NwoasHideHighRamDxe.inf
+#
+#  Abstract:
+#    NWOAS workaround driver: at ReadyToBoot, reserves (hides from the OS)
+#    all EfiConventionalMemory at or above NWOAS_HIDE_BASE (4GB), forcing
+#    Windows to allocate its xHCI DMA common buffer from the sub-4GB
+#    window that the 32-bit-addressing-only FL1100 xHCI can reach.
+#    UEFI itself keeps full RAM visibility up until this last
+#    firmware-owned instant.
+#
+#  Environment:
+#    UEFI Driver Execution Environment (DXE)
+#
+#  License:
+#    SPDX-License-Identifier: (BSD-2-Clause-Patent OR MIT)
+#
+#
+
+[Defines]
+  INF_VERSION                    = 0x0001001c
+  BASE_NAME                      = NwoasHideHighRamDxe
+  FILE_GUID                      = e04c6800-14de-4b47-8fb7-100160b25752
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = NwoasHideHighRamDxeInitialize
+
+[Sources]
+  NwoasHideHighRamDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ArmPkg/ArmPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  MemoryAllocationLib
+  DebugLib
+  BaseLib
+  PcdLib
+  AppleDTLib
+
+[Guids]
+  gEfiEventReadyToBootGuid                        ## CONSUMES ## EVENT ## ReadyToBoot Event Group
+
+[Pcd]
+  gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer  # NWOAS: BootArgs (phys_base/mem_size) for cross-check logging
+
+[Depex]
+  TRUE

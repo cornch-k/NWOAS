@@ -1,0 +1,15 @@
+{
+  "experiment": "S92",
+  "result": "COMMAND_LAYER_REAL_GPT_READ_PASS",
+  "reads": [
+    0,
+    1,
+    61279343
+  ],
+  "namespace_blocks": 61279344,
+  "disk_bytes": 251000193024,
+  "gpt_header_sha256": "75a6eb35f540477f1c67f5e52a55041a3ec50969d9ca492b3711fecaf1c89551",
+  "write_requests_rejected_without_backend_access": true,
+  "windows_driver_test": false,
+  "pci_mmio_interrupts_connected": false
+}

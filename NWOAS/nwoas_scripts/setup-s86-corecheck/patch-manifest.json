@@ -1,0 +1,70 @@
+{
+  "experiment": "S86",
+  "original_sha256": "5368c4f724a56f89c7cb907bc4580ef6884ede01e7d19a3f063e8344b1de7189",
+  "patched_sha256": "969b606fa99191efa42a6e29ebd5d3a77ed220025e3f604d9061ea06c02ace21",
+  "bytes": 3005776,
+  "patches": [
+    {
+      "rva": "0x8ec5c",
+      "offset": "0x8e05c",
+      "before": "bf0a0071",
+      "after": "bf060071",
+      "disassembly": "cmp w21, #1"
+    },
+    {
+      "rva": "0x8ec64",
+      "offset": "0x8e064",
+      "before": "bf0a0071",
+      "after": "bf060071",
+      "disassembly": "cmp w21, #1"
+    },
+    {
+      "rva": "0x8ec80",
+      "offset": "0x8e080",
+      "before": "44008052",
+      "after": "24008052",
+      "disassembly": "mov w4, #1"
+    },
+    {
+      "rva": "0x8ecd0",
+      "offset": "0x8e0d0",
+      "before": "bf0a0071",
+      "after": "bf060071",
+      "disassembly": "cmp w21, #1"
+    }
+  ],
+  "pe_checksum": "0x2df88d",
+  "signature": "Authenticode signature no longer valid after research patch; loader acceptance unverified",
+  "boundary_cases": [
+    {
+      "cores": 0,
+      "original": false,
+      "patched": false
+    },
+    {
+      "cores": 1,
+      "original": false,
+      "patched": true
+    },
+    {
+      "cores": 2,
+      "original": true,
+      "patched": true
+    },
+    {
+      "cores": 8,
+      "original": true,
+      "patched": true
+    }
+  ],
+  "hardware_result": "UNVERIFIED",
+  "original/boot.wim": {
+    "sha256": "e5e74dc5960e647d0944e34c505aaa5a89e3b5d4c808dbef4ef6eeaceedbda2b",
+    "bytes": 591364208
+  },
+  "patched/boot.wim": {
+    "sha256": "78154ccf7cfe3758292d5c8fc92334bdfb1fb6d4bc8ef56a990f5c72909e7caf",
+    "bytes": 593795314
+  },
+  "wim_verify": "PASS both indexes complete data verification"
+}

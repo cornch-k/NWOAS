@@ -1,0 +1,1981 @@
+diff --git a/Platform/MacMini2020Pkg/AcpiTables/DSDT.asl b/Platform/MacMini2020Pkg/AcpiTables/DSDT.asl
+index 65494ce..9dbebd6 100644
+--- a/Platform/MacMini2020Pkg/AcpiTables/DSDT.asl
++++ b/Platform/MacMini2020Pkg/AcpiTables/DSDT.asl
+@@ -102,6 +102,37 @@
+             },
+         })
+ 
++        // S93 isolated software NVMe root. Physical PCI0 remains hidden.
++        Device (NVP0) {
++            Name (_HID, EisaId ("PNP0A08"))
++            Name (_CID, EisaId ("PNP0A03"))
++            Name (_SEG, One)
++            Name (_BBN, Zero)
++            Name (_UID, One)
++            Name (_CCA, One)
++            Method (_STA) { Return (0x0F) }
++            Name (_CRS, ResourceTemplate () {
++                WordBusNumber (ResourceProducer, MinFixed, MaxFixed, PosDecode,
++                    0, 0, 0, 0, 1)
++                QWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
++                    NonCacheable, ReadWrite, 0,
++                    0x700100000, 0x700103FFF, 0, 0x4000)
++            })
++            Name (_PRT, Package () {
++                Package () { 0x0000FFFF, 0, 0, 900 }
++            })
++            Method (_OSC, 4) {
++                CreateDWordField (Arg3, 0, STAT)
++                If (LEqual (Arg0, ToUUID ("33DB4D5B-1FF7-401C-9657-7441C03DD766"))) {
++                    CreateDWordField (Arg3, 8, CTRL)
++                    Store (Zero, CTRL)
++                    Or (STAT, 0x10, STAT)
++                } Else { Or (STAT, 0x04, STAT) }
++                Return (Arg3)
++            }
++            Device (NVME) { Name (_ADR, Zero) }
++        }
++
+         Device (XHC1) {
+             Name (_HID, "PNP0D15")
+             Name (_UID, One)
+@@ -134,6 +165,26 @@
+             }
+         }
+ 
++        //
++        // NWOAS develop-ahead (overnight, hardware-UNVERIFIED): Apple Silicon display
++        // PnP stub. On ARM SoC there is no PCIe GPU for Windows PnP to enumerate, so the
++        // inbox BasicDisplay (BDD) WDDM driver never loads and there is no desktop. BDD
++        // inherits the linear framebuffer from the UEFI GOP (via winload, NOT from ACPI
++        // _CRS), so this node needs NO memory resource -- it exists only to give PnP a
++        // device to match. ACTION STILL NEEDED on hardware: ship a companion stub INF
++        // binding ACPI\APPL0100 -> basicdisplay.sys; without it Windows marks this an
++        // "unknown device" (harmless) and BDD does not load. (Sources: MS BasicDisplay
++        // docs, UEFI-requirements-for-WoA. iasl-parsed; BDD load NOT verified.)
++        //
++        Device (DISP) {
++            Name (_HID, "APPL0100")
++            Name (_UID, Zero)
++
++            Method (_STA) {
++                Return (0xF)
++            }
++        }
++
+         Device(COM0) {
+             Name(_HID, "APPL8900") // naming it APPL8900 since the Samsung based UART was used since the 8900
+             Name(_UID, Zero)
+@@ -160,14 +211,249 @@
+             }
+         }
+ 
+-        // Device(PCI0) {
+-        //     Name (_HID, EISAID ("PNP0A08")) // PCI Express Root Bridge
+-        //     Name (_CID, EISAID ("PNP0A03")) // Compatible PCI Root Bridge
+-        //     Name (_SEG, Zero) // PCI Segment Group number
+-        //     Name (_BBN, Zero) // PCI Base Bus Number
+-        //     Name (_ADR, Zero)
+-        //     Name (_UID, "PCI0")
+-        // }
++        //
++        // NWOAS Stage 1: Apple PCIe (apcie) root bridge. Exposes the root complex so ARM64
++        // Windows enumerates the PCIe devices (FL1100 USB-A @ bus2/dev0, Ethernet, Wi-Fi).
++        // Requires the new MCFG.aslc (ECAM @ 0x690000000). IORT is intentionally omitted so
++        // Windows falls back to line interrupts (INTx via _PRT), not MSI/ITS (Apple has no ITS).
++        // NOTE: this Stage-1 change deliberately does NOT include the port INTx unmask (that is
++        // a separate AppleSiliconPciPlatformDxe.c change staged AFTER an interrupt-storm fix in
++        // m1n1). Stage 1 tests ONLY enumeration + ECAM-probe safety, with no interrupt armed.
++        // Topology/values verified against apple-j274.dtb pcie@690000000.
++        //
++        //
++        // NWOAS Stage 3: PCI0 is now HIDDEN (_STA=0). Stage-2 diagnosis proved Windows
++        // enumerates this root fine (bridges CMD=0x0407, leaf BARs+INTx assigned, USBXHCI
++        // loaded) but never STARTS leaf devices (CMD stays 0), systematically -- and even if
++        // it did, Windows has no Apple DART driver and the PCIe DARTs have no bypass + only
++        // 32-bit IOVA, so pci.sys-owned DMA could never work. The xHCI is instead exposed as
++        // an ACPI platform device (SCB0/XHC0 PNP0D10 below, RPi4-proven path) with a _DMA
++        // window the UEFI DART driver installs at ExitBootServices. Keep the full PCI0
++        // definition for reference / easy revert.
++        //
++        Device (PCI0) {
++            Name (_HID, EISAID ("PNP0A08"))   // PCI Express Root Bridge
++            Name (_CID, EISAID ("PNP0A03"))   // Compatible PCI Root Bridge
++            Name (_SEG, Zero)                 // Segment 0 (matches MCFG PciSegmentGroupNumber)
++            Name (_BBN, Zero)                 // Root bus number 0 (matches MCFG StartBusNumber)
++            Name (_UID, Zero)
++            Name (_CCA, One)                  // ARM64: cache-coherent DMA (DTB dma-coherent).
++            Method (_STA) { Return (Zero) }   // NWOAS Stage 3: hidden (was 0x0F in Stage 1)
++
++            // ---- Root-bus apertures. ECAM/config is delivered via MCFG, not here. ----
++            Name (_CRS, ResourceTemplate () {
++                // Bus numbers 0..3 (DTB bus-range <0 3>)
++                WordBusNumber (ResourceProducer, MinFixed, MaxFixed, PosDecode,
++                    0x0000,               // Granularity
++                    0x0000,               // Min (bus 0)
++                    0x0003,               // Max (bus 3)
++                    0x0000,               // Translation
++                    0x0004)               // Length (4 buses)
++
++                // 32-bit non-prefetchable: PCI 0xC0000000 -> CPU 0x6C0000000 (TRA 0x600000000), 1GB.
++                // QWordMemory is mandatory (translation is 64-bit).
++                QWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
++                    NonCacheable, ReadWrite,
++                    0x0000000000000000,   // Granularity
++                    0x00000000C0000000,   // Min (PCI side)
++                    0x00000000FFFFFFFF,   // Max (PCI side)
++                    0x0000000600000000,   // Translation (CpuAddress - PciAddress)
++                    0x0000000040000000)   // Length (1 GB)
++
++                // 64-bit prefetchable: PCI 0x6A0000000 -> CPU 0x6A0000000 (TRA 0), 512MB.
++                QWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
++                    Prefetchable, ReadWrite,
++                    0x0000000000000000,   // Granularity
++                    0x00000006A0000000,   // Min (PCI == CPU)
++                    0x00000006BFFFFFFF,   // Max
++                    0x0000000000000000,   // Translation (identity)
++                    0x0000000020000000)   // Length (512 MB)
++                // ARM: no PCI I/O space (DTB ranges has no I/O entry).
++            })
++
++            // ---- _OSC: grant NO native control. m1n1/UEFI does not service AER/PME/hotplug,
++            //      and we want INTx-only (no MSI). Prevents Windows enabling unsupported features. ----
++            Method (_OSC, 4) {
++                CreateDWordField (Arg3, 0, CDW1)
++                If (LEqual (Arg0, ToUUID ("33DB4D5B-1FF7-401C-9657-7441C03DD766"))) {
++                    CreateDWordField (Arg3, 8, CDW3)
++                    Store (Zero, CDW3)                        // grant no native control
++                    If (LNotEqual (Arg1, One)) { Or (CDW1, 0x08, CDW1) }  // unknown revision
++                    Or (CDW1, 0x10, CDW1)                     // capabilities were masked
++                    Return (Arg3)
++                } Else {
++                    Or (CDW1, 0x04, CDW1)                     // unrecognized UUID
++                    Return (Arg3)
++                }
++            }
++
++            // ---- INTx routing. Each Apple port has a DEDICATED aggregate AIC line (not a PCI
++            //      swizzle), so per-bridge _PRT is required. GSIV = raw AIC hwirq (m1n1 vGIC maps
++            //      GIC SPI N <-> AIC N 1:1). port0=695, port1(FL1100)=698, port2=701 (DTB). ----
++            Name (_PRT, Package () {
++                Package () { 0x0000FFFF, 0, 0, 695 },   // bus0 dev0 = port0 bridge
++                Package () { 0x0001FFFF, 0, 0, 698 },   // bus0 dev1 = port1 bridge (FL1100 path)
++                Package () { 0x0002FFFF, 0, 0, 701 },   // bus0 dev2 = port2 bridge
++            })
++
++            // port0 bridge (bus0/dev0) -> secondary bus1 (Wi-Fi/BT), AIC 695
++            Device (P2P0) {
++                Name (_ADR, 0x00000000)
++                Name (_PRT, Package () {
++                    Package () { 0x0000FFFF, 0, 0, 695 },
++                    Package () { 0x0000FFFF, 1, 0, 695 },
++                    Package () { 0x0000FFFF, 2, 0, 695 },
++                    Package () { 0x0000FFFF, 3, 0, 695 },
++                })
++            }
++            // port1 bridge (bus0/dev1) -> secondary bus2 (FL1100 USB-A, VID 0x1b73), AIC 698
++            Device (P2P1) {
++                Name (_ADR, 0x00010000)
++                Name (_PRT, Package () {
++                    Package () { 0x0000FFFF, 0, 0, 698 },   // FL1100 INTA -> AIC 698
++                    Package () { 0x0000FFFF, 1, 0, 698 },
++                    Package () { 0x0000FFFF, 2, 0, 698 },
++                    Package () { 0x0000FFFF, 3, 0, 698 },
++                })
++            }
++            // port2 bridge (bus0/dev2) -> secondary bus3 (Ethernet BCM57762), AIC 701
++            Device (P2P2) {
++                Name (_ADR, 0x00020000)
++                Name (_PRT, Package () {
++                    Package () { 0x0000FFFF, 0, 0, 701 },
++                    Package () { 0x0000FFFF, 1, 0, 701 },
++                    Package () { 0x0000FFFF, 2, 0, 701 },
++                    Package () { 0x0000FFFF, 3, 0, 701 },
++                })
++            }
++        }
++
++        //
++        // NWOAS Stage 3: FL1100 xHCI as an ACPI PLATFORM device (RPi4-proven path,
++        // bypasses pci.sys entirely -- see PCI0 comment above for why).
++        //  - UEFI leaves the FL1100 BAR at PCI 0xC0000000 = CPU 0x6C0000000 and the
++        //    DART EBS hook forces bridge+leaf COMMAND on at ExitBootServices, so the
++        //    controller is live at a FIXED address when Windows takes over.
++        //  - Interrupt 698 = the port1 INTx aggregate AIC line (level-high), routed by
++        //    m1n1's vGIC as SPI 698; the port INTx unmask (Stage 2 UEFI change) is live.
++        //  - _DMA (on the ACPI0004 container, as on RPi4): device DMA addresses
++        //    [0, 0xF0000000) translate to CPU [0x8_0000_0000, 0x8_F000_0000) -- the
++        //    exact window the DART EBS hook installs. Windows bounce-buffers all DMA
++        //    into this range; the DART translates it back. (PCIe DARTs: no bypass,
++        //    32-bit IOVA -> a declared window is the only workable shape.)
++        //
++        Device (SCB0) {
++            Name (_HID, "ACPI0004")           // generic container (RPi4 pattern)
++            Name (_UID, 0x10)
++            Name (_CCA, Zero)                 // NWOAS §3.2: Zero (non-coherent) -- CORRECT/truthful. The apcie
++                                              // DART path is proven NON-coherent (AppleDartIoMmuDxe.c:828-834
++                                              // winload checksum-mismatch, :896-906 polled event-ring timeout ->
++                                              // UEFI allocates rings WC). _CCA=1 was TESTED 2026-07-11 and gave
++                                              // DCBAAP=0 SAME as _CCA=0 -> cacheability is NOT the DCBAAP=0 gate
++                                              // (rules out the cache-type hypothesis; the wall is the DMA
++                                              // adapter/enrollment path or window PFN adoption, not _CCA).
++
++            Method (_STA) { Return (0x0F) }
++            //
++            // NWOAS Stage 3 FIX (root cause): an ACPI0004 container that carries _DMA MUST also
++            // produce, via a ResourceProducer _CRS, the MMIO window its children consume (ACPI 6.x
++            // module-device rule; RPi4's SCB0 does exactly this). WITHOUT this, Windows' ACPI
++            // resource arbiter cannot assign XHC0's ResourceConsumer BAR -> USBXHCI never receives
++            // a CmResourceTypeMemory descriptor -> never MmMapIoSpace / EvtDevicePrepareHardware
++            // (so USBCMD.RS stays 0, xHCI regs untouched) -- while the GIC-arbitrated interrupt
++            // still connects (SPI 698). That was the exact observed symptom (stage3-late.log).
++            //
++            Name (_CRS, ResourceTemplate () {
++                QWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
++                    NonCacheable, ReadWrite,
++                    0x0000000000000000,       // Granularity
++                    0x00000006C0000000,       // Min  (== XHC0 BAR base)
++                    0x00000006C000FFFF,       // Max  (+64KB)
++                    0x0000000000000000,       // Translation (no MMIO translation)
++                    0x0000000000010000,       // Length 64KB
++                    , , , AddressRangeMemory, TypeStatic)
++            })
++            // NWOAS Stage 3 DMA FIX: the whole 32-bit device window must land inside real guest RAM
++            // (common buffers are NOT bounce-buffered; they must be allocatable at a valid device
++            // address). Guest RAM = 0x8_3d0f8000..0xb_e1000000, so base the 4GB window at the
++            // 1GB-aligned 0x8_40000000 (just inside RAM) -> CPU 0x8_40000000..0x9_40000000, all RAM.
++            // device = CPU - _TRA (ACPI: CPU = device + _TRA). DART EBS hook maps the same transform.
++            Name (_DMA, ResourceTemplate () {
++                QWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
++                    NonCacheable, ReadWrite,
++                    0x0000000000000000,       // Granularity
++                    0x0000000000000000,       // Min: base 0 (unchanged)
++                    0x0000000BFFFFFFFF,       // Max: NWOAS WIDE-DART -- 48GB ceiling so Windows' DMA-adapter can
++                                              // allocate the DCBAA in normal HIGH RAM (the apcie DART now
++                                              // identity-maps [phys_base, backing); the T8020 DART is 36-bit
++                                              // capable). Generous Max is safe: Windows only allocates where RAM
++                                              // exists ([phys_base, backing)), all of which the DART maps.
++                                              // A/B revert: Max -> 0x00000000FFFFFFFF, Length -> 0x0000000100000000.
++                    0x0000000000000000,       // Translation: _TRA=0 (device == CPU)
++                    0x0000000C00000000,       // Length: 48GB (NWOAS WIDE-DART; Max-Min+1 == 0xC00000000)
++                    , , , AddressRangeMemory, TypeStatic)
++            })
++            Device (XHC0) {
++                Name (_HID, "PNP0D10")        // xHCI-compliant controller (USBXHCI.SYS binds)
++                Name (_UID, Zero)
++                Name (_CCA, Zero)             // NWOAS §3.2: Zero (non-coherent, truthful). _CCA=1 tested 2026-07-11 = DCBAAP=0 same, refuted.
++                Method (_STA) { Return (0x0F) }
++                //
++                // NWOAS Stage 3: _INI (RPi4 xHCI ships this). At ACPI namespace init -- earlier
++                // than our ExitBootServices DART hook -- force the FL1100 PCI Command register to
++                // MSE|BME (0x6). Config space (ECAM bus2 dev0 = 0x690200000) is guest-accessible
++                // (only the BAR MMIO faults), so this AML write works. Completes the RPi4 clone.
++                //
++                Method (_INI, 0, Serialized) {
++                    OperationRegion (PCFG, SystemMemory, 0x0000000690200000, 0x8)
++                    Field (PCFG, WordAcc, NoLock, Preserve) {
++                        VNID, 16,
++                        DVID, 16,
++                        CMND, 16
++                    }
++                    Store (0x0006, CMND)   // Memory Space Enable | Bus Master Enable
++                }
++                Name (_CRS, ResourceTemplate () {
++                    QWordMemory (ResourceConsumer, PosDecode, MinFixed, MaxFixed,
++                        NonCacheable, ReadWrite,
++                        0x0000000000000000,   // Granularity
++                        0x00000006C0000000,   // Min: FL1100 BAR0 (fixed, UEFI-assigned)
++                        0x00000006C000FFFF,   // Max: +64KB
++                        0x0000000000000000,   // Translation
++                        0x0000000000010000,   // Length 64KB
++                        , , , AddressRangeMemory, TypeStatic)
++                    Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { 698 }
++                })
++                //
++                // NWOAS §3.2 (2026-07-11 night): leaf XHC0 _DMA REMOVED to match RPi4 exactly.
++                // RPi4's working Windows-ARM64 xHCI carries _DMA ONLY on the SCB0 ACPI0004
++                // container (Xhci.asl), NOT on the PNP0D10 leaf; the child inherits it. NWOAS had
++                // added a redundant leaf _DMA (48GB) as a workaround, but with the new IORT Named
++                // Component (\_SB_.SCB0.XHC0) also carrying XHC0's DMA metadata, the double
++                // specification is a structural divergence from the proven RPi4 shape and a
++                // suspected reason Windows fails to build a functional DMA adapter (DCBAAP=0 with
++                // IORT present). SCB0's container _DMA (48GB, above) remains and is inherited.
++                // A/B revert: restore the `Name (_DMA, ...)` block here (git/backup).
++                //
++                // NWOAS Stage 3: USB _DSM (RPi4 ships this for the VL805). Function 6 forces the
++                // USBXHCI stack to use 32-bit MMIO register access. An xHCI behind a PCIe bridge
++                // (like the FL1100 here, and the VL805 on RPi4) can return wrong data on 64-bit
++                // MMIO reads of its capability/operational registers, which makes USBXHCI reject /
++                // fail to initialize the controller. UUID + function meanings per Microsoft's
++                // "USB Device-Specific Method (_DSM)" doc.
++                //
++                Name (DSMU, ToUUID ("ce2ee385-00e6-48cb-9f05-2edb927c4899"))
++                Method (_DSM, 4, Serialized) {
++                    If (LEqual (Arg0, DSMU)) {
++                        Switch (ToInteger (Arg2)) {
++                            Case (0) { Return (Buffer () { 0x41 }) }  // functions 0 and 6 supported
++                            Case (6) { Return (Buffer () { 0x01 }) }  // require 32-bit register access
++                        }
++                    }
++                    Return (Buffer () { 0x00 })
++                }
++            }
++        }
+ 
+         //
+         // T8101/T8103 *only* have 1 CPU die, ever, so everything in this node will comprise
+diff --git a/Platform/MacMini2020Pkg/AcpiTables/DeviceAcpiTables.inf b/Platform/MacMini2020Pkg/AcpiTables/DeviceAcpiTables.inf
+index d12395c..646ae1a 100644
+--- a/Platform/MacMini2020Pkg/AcpiTables/DeviceAcpiTables.inf
++++ b/Platform/MacMini2020Pkg/AcpiTables/DeviceAcpiTables.inf
+@@ -17,9 +17,23 @@
+   VERSION_STRING                 = 1.0
+ 
+ [Sources]
+-  DBG2.aslc
++  # NWOAS: DBG2 removed — it advertised the S5L debug UART @0x235200000 to Windows, and
++  # bootmgfw's direct access to it triggers an Apple L2C/IMPDEF bus error in the m1n1 hv
++  # (infinite fault loop -> watchdog reset). DBG2 is an optional debug-port table; Windows
++  # boots fine without it. (Serial debug for the OS would need a hv-emulated UART instead.)
++  # DBG2.aslc
+   DSDT.asl
+   FADT.aslc
++  # NWOAS Stage 1: PCIe ECAM (segment 0, bus 0-3 @ 0x690000000) so ARM64 Windows enumerates
++  # the Apple PCIe root (FL1100 USB / Ethernet / Wi-Fi). IORT intentionally OMITTED -> Windows
++  # falls back to line interrupts (_PRT INTx), which m1n1 can inject; it cannot drive Apple MSI.
++  MCFG.aslc
++  # NWOAS §3.2: IORT with ONE Named Component node for \_SB.SCB0.XHC0 (the synthetic
++  # ACPI0004/PNP0D10 xHCI). NumIdMappings=0, no ITS-Group/SMMU node -> supplies the
++  # per-device DMA-master metadata Windows ARM64 needs to build a functional DMA adapter
++  # (so AllocateCommonBuffer/DCBAA succeeds) WITHOUT creating any MSI/ITS domain (INTx via
++  # _PRT/_CRS preserved). Mirrors RPi4's Iort.aslc that pairs with the same DSDT pattern.
++  IORT.aslc
+ 
+ [Packages]
+   ArmPkg/ArmPkg.dec
+diff --git a/Platform/MacMini2020Pkg/MacMini2020.dsc b/Platform/MacMini2020Pkg/MacMini2020.dsc
+index 6bcdd57..16f10a7 100644
+--- a/Platform/MacMini2020Pkg/MacMini2020.dsc
++++ b/Platform/MacMini2020Pkg/MacMini2020.dsc
+@@ -32,7 +32,7 @@
+   SKUID_IDENTIFIER               = DEFAULT
+   FLASH_DEFINITION               = MacMini2020Pkg/MacMini2020.fdf
+   SECURE_BOOT_ENABLE             = FALSE #disable secure boot for now
+-  AIC_BUILD                      = TRUE #AIC build enabled by default, change to false if you want to use a vGIC
++  AIC_BUILD                      = FALSE #NWOAS: vGIC build (m1n1 EL2 hypervisor provides the vGIC)
+   NETWORK_TLS_ENABLE             = TRUE
+ 
+ 
+@@ -47,6 +47,12 @@
+   gAppleSiliconPkgTokenSpaceGuid.PcdSmbiosSystemSku|"Mac Mini (Mac9,1)"
+   gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumDwc3Controllers|2 # M1 Max case is hardcoded for now.
+   gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumDwc3Darts|4 # M1 Max case is hardcoded for now.
++  # NWOAS stage-8: the BootManager does a WARM RESET when MemoryTypeInformation changes
++  # (BmMisc.c BmSetMemoryTypeInformationVariable). On real HW this self-corrects on the
++  # 2nd boot via the persisted NVRAM variable, but under the m1n1 tethered hv the reset
++  # ends the run (no persisted store / no reboot) -> boot stops right at Ready-To-Boot.
++  # Disable the reset so the BootManager proceeds straight to launching boot options.
++  gEfiMdeModulePkgTokenSpaceGuid.PcdResetOnMemoryTypeInformationChange|FALSE
+   #will be changed later on, default values
+   # gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferWidth|1920
+   # gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferHeight|1080
+diff --git a/Platform/MacMini2020Pkg/MacMini2020.fdf b/Platform/MacMini2020Pkg/MacMini2020.fdf
+index bf50d13..984ae45 100644
+--- a/Platform/MacMini2020Pkg/MacMini2020.fdf
++++ b/Platform/MacMini2020Pkg/MacMini2020.fdf
+@@ -125,6 +125,7 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
+   INF EmbeddedPkg/RealTimeClockRuntimeDxe/RealTimeClockRuntimeDxe.inf
+   INF EmbeddedPkg/MetronomeDxe/MetronomeDxe.inf
+   INF AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.inf
++  INF AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf
+ 
+   INF MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
+ !if $(SECURE_BOOT_ENABLE) == TRUE
+@@ -147,13 +148,17 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
+   INF MdeModulePkg/Universal/WatchdogTimerDxe/WatchdogTimer.inf
+ 
+   INF AppleSiliconPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf
++  INF AppleSiliconPkg/Drivers/FbDumpDxe/FbDumpDxe.inf
+ 
+   #
+   # PCIe Support (required to bring up USB-A among other fun stuff)
+   #
+-  #INF ArmPkg/Drivers/ArmPciCpuIo2Dxe/ArmPciCpuIo2Dxe.inf
+-  #INF MdeModulePkg/Bus/Pci/PciHostBridgeDxe/PciHostBridgeDxe.inf
+-  #INF MdeModulePkg/Bus/Pci/PciBusDxe/PciBusDxe.inf
++  # NWOAS: re-enabled to bring up the USB-A xHCI (ASMedia ASM2214A) behind PCIe pci@1,0,
++  # so a USB-A install drive can boot (the USB-C/CD321x path is dead by Apple design --
++  # M1 is sink pre-OS). Apple host-bridge lib is already wired in AppleSiliconPkg.dsc.inc.
++  INF ArmPkg/Drivers/ArmPciCpuIo2Dxe/ArmPciCpuIo2Dxe.inf
++  INF MdeModulePkg/Bus/Pci/PciHostBridgeDxe/PciHostBridgeDxe.inf
++  INF MdeModulePkg/Bus/Pci/PciBusDxe/PciBusDxe.inf
+   INF MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceDxe.inf
+ 
+   #NVMe Support
+@@ -172,10 +177,15 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
+ 
+   INF AppleSiliconPkg/Drivers/AppleEmbeddedGpioControllerDxe/AppleEmbeddedGpioControllerDxe.inf
+   #
+-  # PCIe support is disabled for now.
++  # NWOAS: PCIe DEVICE bring-up + ASM2214A firmware. m1n1's pcie_init (via -m pcie_init.py)
++  # brings up the controller + root ports, but NOT the downstream device links (retest4:
++  # root ports visible, no devices behind them) -- those need this driver's per-port
++  # PERST/REFCLK/LTSSM. The firmware-helper then uploads the ASM2214A firmware (now the
++  # REAL 0x18000-byte blob extracted from the macOS kernelcache) so it becomes a working
++  # xHCI that XhciDxe can bind.
+   #
+-  #INF AppleSiliconPkg/Drivers/AppleSiliconPciPlatformDxe/AppleSiliconPciPlatformDxe.inf
+-  #INF AppleSiliconPkg/Drivers/AppleBootTimeEmbeddedFirmwareHelperDxe/AppleBootTimeEmbeddedFirmwareHelperDxe.inf
++  INF AppleSiliconPkg/Drivers/AppleSiliconPciPlatformDxe/AppleSiliconPciPlatformDxe.inf
++  INF AppleSiliconPkg/Drivers/AppleBootTimeEmbeddedFirmwareHelperDxe/AppleBootTimeEmbeddedFirmwareHelperDxe.inf
+ 
+   #
+   # DWC3 bringup module.
+diff --git a/Platform/MacMini2020Pkg/PlatformBuild.py b/Platform/MacMini2020Pkg/PlatformBuild.py
+index 2a526dc..feed8a7 100644
+--- a/Platform/MacMini2020Pkg/PlatformBuild.py
++++ b/Platform/MacMini2020Pkg/PlatformBuild.py
+@@ -33,7 +33,7 @@ class CommonPlatform():
+     PackagesSupported = ("MacMini2020Pkg",)
+     ArchSupported = ("AARCH64",)
+     TargetsSupported = ("DEBUG", "RELEASE", "NOOPT")
+-    Scopes = ('MacMini2020', 'gcc_aarch64_linux', 'edk2-build', 'cibuild')
++    Scopes = ('MacMini2020', 'gcc_aarch64_linux', 'edk2-build', 'cibuild', 'global-nix')
+     WorkspaceRoot = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+     PackagesPath = ("Platform", "MU_BASECORE", "Common/MU", "Common/TIANO", "Common/MU_OEM_SAMPLE", "Silicon/ARM/TIANO", "Silicon/Apple", "Common/MU_DFCI", "mu_feature_debugger")
+ 
+diff --git a/Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc b/Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc
+index 57f2120..0da8c1f 100644
+--- a/Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc
++++ b/Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc
+@@ -73,7 +73,14 @@
+   gAppleSiliconPkgTokenSpaceGuid.PcdUIApplicationFile|{ 0x8A, 0x70, 0x42, 0x40, 0x2D, 0x0F, 0x23, 0x48, 0xAC, 0x60, 0x0D, 0x77, 0xB3, 0x11, 0x18, 0x89 }
+ 
+   #EFI debug settings
+-  gEfiMdePkgTokenSpaceGuid.PcdDebugPropertyMask|0x2f
++  # NWOAS stage-8: was 0x2f (DEADLOOP bit 0x20 set) -> every failed ASSERT() in this DEBUG
++  # build hangs forever in CpuDeadLoop. run20 confirmed the "loader->kernel handoff hang" is
++  # exactly such a hang: winload's SetVariable path trips a chain of ASSERTs in
++  # MuVarPolicyFoundationDxe that never occur on the platforms this UEFI was authored for.
++  # Clear DEADLOOP (and BREAKPOINT 0x10) so ASSERTs still PRINT but return and let boot
++  # continue: 0x2f & ~0x30 = 0x0f (ASSERT+PRINT+CODE+CLEAR_MEMORY kept). Crash-prone asserts
++  # that are followed by a NULL deref are handled with targeted lib fixes (e.g. CompareGuid).
++  gEfiMdePkgTokenSpaceGuid.PcdDebugPropertyMask|0x0f
+   gEfiMdePkgTokenSpaceGuid.PcdDebugPrintErrorLevel|0xFFFFFF4F
+   gEfiMdePkgTokenSpaceGuid.PcdUefiLibMaxPrintBufferSize|320
+   gEfiMdePkgTokenSpaceGuid.PcdReportStatusCodePropertyMask|0xff
+@@ -595,6 +602,7 @@
+ !endif
+   MdeModulePkg/Core/RuntimeDxe/RuntimeDxe.inf
+   AppleSiliconPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf
++  AppleSiliconPkg/Drivers/FbDumpDxe/FbDumpDxe.inf
+   MdeModulePkg/Universal/WatchdogTimerDxe/WatchdogTimer.inf
+   MdeModulePkg/Universal/CapsuleRuntimeDxe/CapsuleRuntimeDxe.inf
+   EmbeddedPkg/EmbeddedMonotonicCounter/EmbeddedMonotonicCounter.inf
+@@ -605,6 +613,7 @@
+   }
+   EmbeddedPkg/MetronomeDxe/MetronomeDxe.inf
+   AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.inf
++  AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf
+ 
+   # Fake Variable Services
+   MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
+@@ -725,11 +734,26 @@
+   # PCI support
+   #
+   ArmPkg/Drivers/ArmPciCpuIo2Dxe/ArmPciCpuIo2Dxe.inf
+-  MdeModulePkg/Bus/Pci/PciHostBridgeDxe/PciHostBridgeDxe.inf
++  #
++  # NWOAS: give the PCI RootBridge the REAL IoMmuLib (default is IoMmuLibNull, which
++  # always reports "no IoMmu" so RootBridgeIo.Map hands out raw >4GB physical addresses
++  # that the USB-A FL1100 controller cannot reach). The real IoMmuLib routes DMA through
++  # the installed EDKII_IOMMU_PROTOCOL (our AppleDartIoMmuDxe), giving <4GB IOVAs that the
++  # apcie DART translates to the >4GB buffers. Scoped to this module so the IoMmu Depex is
++  # not forced onto every DmaLib consumer.
++  #
++  MdeModulePkg/Bus/Pci/PciHostBridgeDxe/PciHostBridgeDxe.inf {
++    <LibraryClasses>
++      IoMmuLib|MdeModulePkg/Library/IoMmuLib/IoMmuLib.inf
++  }
+   MdeModulePkg/Bus/Pci/PciBusDxe/PciBusDxe.inf
+   MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceDxe.inf
+   #
+   # Temporary hack: disable PCIe support while debugging why the ASMedia controller isn't working
+   #
+   AppleSiliconPkg/Drivers/AppleSiliconPciPlatformDxe/AppleSiliconPciPlatformDxe.inf
++  # NWOAS: build the ASM2214A firmware-helper so its code path is compile-verified. It
++  # only enters the FV when MacMini2020.fdf enables it (Stage 2), which the user does
++  # after dropping in the real XhciFirmwareBlob.h (asahi-fwextract on the mini's macOS).
++  AppleSiliconPkg/Drivers/AppleBootTimeEmbeddedFirmwareHelperDxe/AppleBootTimeEmbeddedFirmwareHelperDxe.inf
+   AppleSiliconPkg/Drivers/AppleEmbeddedGpioControllerDxe/AppleEmbeddedGpioControllerDxe.inf
+\ No newline at end of file
+diff --git a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleBootTimeEmbeddedFirmwareHelperDxe/AppleBootTimeEmbeddedFirmwareHelperDxe.c b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleBootTimeEmbeddedFirmwareHelperDxe/AppleBootTimeEmbeddedFirmwareHelperDxe.c
+index b1c0894..a57c56f 100644
+--- a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleBootTimeEmbeddedFirmwareHelperDxe/AppleBootTimeEmbeddedFirmwareHelperDxe.c
++++ b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleBootTimeEmbeddedFirmwareHelperDxe/AppleBootTimeEmbeddedFirmwareHelperDxe.c
+@@ -523,6 +523,19 @@ STATIC EFI_STATUS EFIAPI AppleBootTimeEmbeddedFirmwareDriverBindingSupported(
+     UsbFirmwareLoadSuccessful = TRUE;
+     goto CloseProtocolAndExit;
+   }
++  //
++  // NWOAS: refuse to upload a stub/short blob. The ASM2214A firmware is exactly 0x18000
++  // bytes; XhciFirmwareBlob.h ships as a 2-byte BUILD STUB until the real firmware is
++  // extracted from the mini's macOS. Uploading garbage would wedge the controller, so
++  // skip the upload (leaving it in ROM mode) rather than corrupt it.
++  //
++  if (ARRAY_SIZE(XhciFirmwareBlob) < 0x18000) {
++    DEBUG((DEBUG_ERROR, "%a - XhciFirmwareBlob is %u bytes (build stub); expected 0x18000 - "
++           "skipping upload. Provide the real ASM2214A firmware (asahi-fwextract).\n",
++           __FUNCTION__, (UINT32)ARRAY_SIZE(XhciFirmwareBlob)));
++    UsbFirmwareLoadSuccessful = FALSE;
++    goto CloseProtocolAndExit;
++  }
+   DEBUG((DEBUG_INFO, "%a - uploading XHCI controller firmware\n", __FUNCTION__));
+   AppleAsmediaLoadFirmware(PciIoProtocol, XhciFirmwareBlob, ARRAY_SIZE(XhciFirmwareBlob), &UsbFirmwareLoadSuccessful);
+   //
+diff --git a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c
+index 3d15a23..c0e6a2d 100644
+--- a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c
++++ b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c
+@@ -39,6 +39,7 @@
+ #include <Library/PrintLib.h>
+ #include <Library/PcdLib.h>
+ #include <Library/DxeServicesLib.h>
++#include <Library/DxeServicesTableLib.h>   // NWOAS EXP-5 5c: gDS->SetMemorySpaceAttributes (UC rings)
+ #include <Library/TimerLib.h>
+ #include <Library/AppleDTLib.h>
+ 
+@@ -46,8 +47,88 @@
+ 
+ #include <Drivers/AppleDartIoMmuDxe.h>
+ 
++//
++// NWOAS: compile-time gate for the DMACOV DMA-coverage instrumentation (per-16KB-page FNV
++// hashing + golden binary search + periodic logging, ~162KB embedded GoldenHashes.h). Set to
++// 1 to re-enable it; 0 removes it entirely at compile time (no Unmap hot-path latency, smaller
++// FV image) for the 22H2 USB tests where the 25H2-derived golden set is irrelevant anyway.
++//
++#define NWOAS_DMACOV 0
++
++//
++// NWOAS EXP-5 §4.3 toggle: window-aware DART Map translation (see AppleDartIoMmuMapReal).
++//   1 = full 5c: a per-Map host buffer that falls in the low DMA window is translated to the real
++//       backing PA (mApcieBackingPa). REQUIRED for Method A, where the low window is the only
++//       Conventional pool, so UEFI-boot DMA buffers allocate inside the window and must be
++//       translated (identity would DMA into raw sub-4GB void -> BAR abort).
++//   0 = 5c-pre: identity Map (stock behaviour), so the orchestrator can test Method-A boot-ability
++//       in isolation before enabling the translation.
++//
++#define NWOAS_DART_WINDOW_AWARE 1
++
++//
++// NWOAS WIDE-DART (§3.2 minimal wide-DART, additive to the [0,4GB) window):
++//   1 = ALSO identity-map the advertised HIGH guest RAM [phys_base, mApcieBackingPa) in the apcie
++//       DART so Windows can place the xHCI DCBAA (and other common buffers) in normal high RAM.
++//       The T8020-class apcie DART is 36-bit (64GB) capable (m1n1 dart8020: L0_OFF=36, L1_OFF=25,
++//       L2_OFF=14, 2048 PTEs/table) -- it is NOT 32-bit-capped -- and all guest RAM (<64GB) fits in
++//       TTBR0. The device presents that high PA as an IOVA and the DART identity-translates it, so no
++//       fragile sub-4GB window is needed for the DCBAA. PURELY ADDITIVE: the [0,4GB) window (bootmgfw
++//       low RAM), the hv map_hw alias, the MemoryInit window HOB, and the per-Map path all stay.
++//   0 = original window-only behavior (A/B revert).
++//
++#ifndef NWOAS_WIDE_DART
++#define NWOAS_WIDE_DART 1
++#endif
++
++#if NWOAS_DMACOV
++#include "GoldenHashes.h"  // NWOAS DIAG: sorted golden boot.wim 16KB-page FNV hashes (embedded)
++#endif
++
+ APPLE_DART_INFO DartInfo[FixedPcdGet32(PcdAppleNumDwc3Controllers) * 2];
+ 
++//
++// NWOAS B-2: per-mapping record so Unmap can do the post-DMA cache invalidate.
++// A device-write buffer must be invalidated AFTER the DMA so the CPU reads the
++// device's fresh data instead of stale/speculative cache lines.
++//
++typedef struct {
++  VOID                   *HostAddress;
++  UINTN                   NumberOfBytes;
++  EDKII_IOMMU_OPERATION   Operation;
++  VOID                   *Bounce;      // NWOAS EXP-5: window bounce buffer for out-of-window DMA (NULL if none)
++  VOID                   *OrigHost;    // NWOAS EXP-5: caller's original out-of-window host (copy-back target)
++  UINTN                   BouncePages; // NWOAS EXP-5: bounce page count (for FreeAlignedPages)
++} APCIE_MAP_INFO;
++
++#if NWOAS_DMACOV
++//
++// NWOAS DIAG: per-16KB-page FNV-1a hash of large device->host DMA buffers, logged in Unmap.
++// Compare run-to-run (determinism) and vs a host golden of boot.wim (DMA fidelity) to localize
++// the winload.efi 0xc0000221 corruption: DART-translation-corrupt vs post-DMA/RAMDisk-placement.
++//
++STATIC UINTN  mCovMaps  = 0;
++STATIC UINTN  mNotFound = 0;
++STATIC UINT8  mCov[(GOLDEN_N + 7) / 8];
++STATIC UINT32 FnvPage16k (CONST UINT8 *p) {
++  UINT32 h = 2166136261u;
++  UINTN  i;
++  for (i = 0; i < 0x4000; i++) { h = (h ^ p[i]) * 16777619u; }
++  return h;
++}
++// Binary-search the golden set; mark the page covered, else count + log the not-found hash.
++STATIC VOID CoverGoldenPage (UINT32 h) {
++  INTN lo = 0, hi = (INTN)GOLDEN_N - 1;
++  while (lo <= hi) {
++    INTN mid = (lo + hi) / 2;
++    if (mGolden[mid] == h) { mCov[mid >> 3] |= (UINT8)(1u << (mid & 7)); return; }
++    if (mGolden[mid] < h) { lo = mid + 1; } else { hi = mid - 1; }
++  }
++  mNotFound++;
++  if (mNotFound <= 32) { DEBUG ((DEBUG_ERROR, "HVLOG: DMANF #%d h=%08x\n", (UINT32)mNotFound, h)); }
++}
++#endif // NWOAS_DMACOV
++
+ // STATIC
+ // PHYSICAL_ADDRESS
+ // HostToDeviceAddress (
+@@ -87,8 +168,8 @@ STATIC EFI_STATUS EFIAPI AppleDartIoMmuSetAttribute (
+ //   EFI_SUCCESS - mapped the range successfully.
+ //
+ 
+-STATIC EFI_STATUS EFIAPI AppleDartIoMmuMap(
+-    IN EDKII_IOMMU_PROTOCOL *This, 
++EFI_STATUS EFIAPI AppleDartIoMmuMap(
++    IN EDKII_IOMMU_PROTOCOL *This,
+     IN EDKII_IOMMU_OPERATION Operation, 
+     IN VOID *HostAddress, 
+     IN OUT UINTN *NumberOfBytes, 
+@@ -210,7 +291,64 @@ STATIC EFI_STATUS EFIAPI AppleDartIoMmuUnmap(IN EDKII_IOMMU_PROTOCOL *This, IN V
+ 
+     // DartInfo->TlbFlush((VOID *)DartInfo);
+     // FreeAlignedPages((VOID *)DmaVirtAddr, PhysSize);
+-    
++
++    //
++    // NWOAS B-2: post-DMA cache invalidate. For a device-write buffer the device wrote
++    // fresh data to RAM while the CPU may hold stale/speculative cache lines; invalidate
++    // them so the CPU reads the device data. This is the decisive missing step for the
++    // boot.wim corruption -> winload.efi 0xc0000221.
++    //
++    {
++      APCIE_MAP_INFO *Info = (APCIE_MAP_INFO *)Mapping;
++      if (Info == NULL) {
++        return EFI_SUCCESS;  // not-ready / bypass path stored no mapping
++      }
++      switch (Info->Operation) {
++        case EdkiiIoMmuOperationBusMasterRead:
++        case EdkiiIoMmuOperationBusMasterRead64:
++          break;  // device only read the buffer; CPU cache is still valid
++        default:  // BusMasterWrite / BusMasterCommonBuffer (+64)
++          InvalidateDataCacheRange (Info->HostAddress, Info->NumberOfBytes);
++          break;
++      }
++#if NWOAS_DART_BOUNCE_OOW
++      if (Info->Bounce != NULL) {
++        // NWOAS EXP-5: this Map was bounced through a window buffer. For a device-write the (just
++        // cache-invalidated) bounce now holds the device's data -> copy it back to the caller's
++        // original out-of-window buffer. Device-reads need no copy-back. Then free the bounce.
++        if (Info->Operation == EdkiiIoMmuOperationBusMasterWrite ||
++            Info->Operation == EdkiiIoMmuOperationBusMasterWrite64) {
++          CopyMem (Info->OrigHost, Info->HostAddress, Info->NumberOfBytes);
++        }
++        FreeAlignedPages (Info->Bounce, Info->BouncePages);
++      }
++#endif
++#if NWOAS_DMACOV
++      //
++      // NWOAS DIAG: hash each 16KB page of large device-write buffers (the boot.wim reads),
++      // 8 hashes per serial line: "HVLOG: DMAH s=<seq> o=<pageoffset> h0..h7".
++      //
++      if ((Info->Operation == EdkiiIoMmuOperationBusMasterWrite ||
++           Info->Operation == EdkiiIoMmuOperationBusMasterWrite64) &&
++          Info->NumberOfBytes >= 0x10000) {
++        UINTN nPg = Info->NumberOfBytes / 0x4000;
++        UINTN pg;
++        for (pg = 0; pg < nPg; pg++) {
++          CoverGoldenPage (FnvPage16k ((CONST UINT8 *)Info->HostAddress + pg * 0x4000));
++        }
++        mCovMaps++;
++        if ((mCovMaps % 100) == 0) {
++          UINTN cov = 0, gi;
++          for (gi = 0; gi < GOLDEN_N; gi++) {
++            if ((mCov[gi >> 3] & (1u << (gi & 7))) != 0) { cov++; }
++          }
++          DEBUG ((DEBUG_ERROR, "HVLOG: DMACOV covered=%d/%d notfound=%d maps=%d\n",
++                  (UINT32)cov, (UINT32)GOLDEN_N, (UINT32)mNotFound, (UINT32)mCovMaps));
++        }
++      }
++#endif // NWOAS_DMACOV
++      FreePool (Info);
++    }
+     return EFI_SUCCESS;
+ }
+ 
+@@ -222,8 +360,8 @@ STATIC EFI_STATUS EFIAPI AppleDartIoMmuUnmap(IN EDKII_IOMMU_PROTOCOL *This, IN V
+ //   EFI_SUCCESS - allocated the buffer successfully.
+ //
+ 
+-STATIC EFI_STATUS EFIAPI AppleDartIoMmuAllocateBuffer (
+-    IN EDKII_IOMMU_PROTOCOL *This, 
++EFI_STATUS EFIAPI AppleDartIoMmuAllocateBuffer (
++    IN EDKII_IOMMU_PROTOCOL *This,
+     IN EFI_ALLOCATE_TYPE Type, 
+     IN EFI_MEMORY_TYPE MemoryType, 
+     IN UINTN Pages, 
+@@ -284,12 +422,605 @@ STATIC EFI_STATUS EFIAPI AppleDartIoMmuFreeBuffer (
+     return EFI_SUCCESS;
+ }
+ 
++// ============================================================================
++// NWOAS: PCIe (apcie) DART IOMMU translation for the USB-A xHCI (Fresco Logic
++// FL1100). The stock driver only sets the DWC3 (USB-C) DARTs to bypass and never
++// finished the PCIe path -- but PCIe DARTs do NOT support bypass, so USB-A DMA
++// needs real IOVA->PA translation. We set up one shared flat page table over a
++// <4GB IOVA aperture, point all three apcie DARTs' streams at it, and translate
++// on Map(). Page-table format per m1n1 dart8020 / Corellium apple-dart.
++// ============================================================================
++#define NUM_APCIE_DARTS   3
++STATIC CONST UINT64 mApcieDartBase[NUM_APCIE_DARTS] = {
++  0x681008000ULL, 0x682008000ULL, 0x683008000ULL
++};
++STATIC UINT64  *mApcieL1        = NULL;
++STATIC UINT64  *mApcieL2        = NULL;               // flat L2 covering [0, 4GB)
++STATIC UINT64   mApcieIovaNext  = 0x00100000ULL;      // bump allocator, 16KB-aligned
++STATIC BOOLEAN  mApcieDartReady = FALSE;
++
++// NWOAS EXP-5 DART STATIC WINDOW fix (2026-07-10): 5-agent analysis + HW logs ruled out geometry
++// (backing VERIFIED), skew, DART fault (ERR=0), WC coherence (m1n1 HCR_EL2.FWB=0 so guest WC wins,
++// ring is truly uncached), and IOVA exhaustion (33% used) as the cause of the EXP-5 UEFI xHCI read
++// stall. The remaining difference from the working no-EXP-5 path: EXP-5 uses the DYNAMIC per-Map
++// path (bump-alloc + L2 write) 41k times with the per-Map DART TLB flush deliberately DROPPED
++// (see the B-1a comment) on the assumption "fresh IOVA never reused -> no stale TLB entry" -- an
++// assumption that may not hold for the Apple t8020 DART (walk/prefetch cache). FIX: install the
++// SAME static full-window L2 map the EBS handler installs, but at BOOT (SetupApcieDarts), and have
++// Map() return the window IPA directly for window buffers -- no per-transfer L2 write / TLB churn,
++// exactly like the working no-EXP-5 static DART. 1 = static window ON (fix); 0 = prior dynamic path.
++// (Set to 0: mapping the FULL 4GB IOVA to live RAM removed the unmapped-IOVA safety net, so a
++//  stray device DMA during UEFI boot corrupted guest RAM -> deterministic UEFI wedge at
++//  0x235200010 before bootmgfw, 3/3 on HW. Kept gated-off as reference.)
++#define NWOAS_DART_STATIC_WINDOW 0
++#if NWOAS_DART_STATIC_WINDOW
++STATIC BOOLEAN  mApcieStaticWindow = FALSE;
++#endif
++
++// NWOAS EXP-5 DART per-Map TLB flush (2026-07-10): the canonical Asahi/m1n1 DART driver
++// (m1n1 src/dart.c dart_map_flags:565) calls tlb_invalidate() after EVERY map -- the t8020 DART
++// REQUIRES a TLB flush on map. Cache-cleaning the new PTE to RAM is NOT enough: the DART's own
++// TLB / page-table-walk cache must be invalidated (dma_wmb + STREAM_SELECT + STREAM_COMMAND
++// INVALIDATE) for the hardware to pick up the freshly written L2 entry. AppleDartIoMmuDxe dropped
++// this per-Map flush for latency (the "B-1a" comment's "fresh IOVA never needs a flush" assumption
++// is wrong per the canonical driver). Re-add it (gated, keeps the SAFE sparse map) to fix the EXP-5
++// UEFI xHCI read stall: without the flush the DART can translate this fresh IOVA from a stale
++// entry, so the FL1100's completion DMA lands at the wrong PA and the CPU never sees the event.
++// 1 = per-Map DART TLB flush ON (fix); 0 = prior (dropped-flush) behavior.
++#define NWOAS_DART_PERMAP_FLUSH 1
++
++// NWOAS EXP-5 DART BOUNCE (2026-07-10): the real EXP-5 read-stall root = FL1100 HSE (controller
++// memory-access error) when it DMAs to an OUT-OF-WINDOW buffer. HW proof: the HSE-triggering
++// buffer (0xAE0FC8000) sits in Method A's Reserved high-RAM region [0x83D14C000,0xAE0FCC000)
++// (MEMMAP type=0), NOT in the low window, so it is identity-mapped to a high PA the FL1100 cannot
++// reach -> HSE -> halt. (no-EXP-5 has no such per-Map path.) FIX: for a transient (non-CommonBuffer)
++// transfer whose host buffer is outside the window, allocate a WINDOW bounce buffer (Conventional,
++// DART-reachable via backing), copy caller->bounce for device-reads, map the bounce, and copy
++// bounce->caller on Unmap for device-writes. CommonBuffers must already be window (AllocateBuffer).
++// 1 = bounce ON; 0 = prior (identity out-of-window -> HSE).
++// ROOT (v30 OOW dump): the out-of-window DMA buffers are UEFI STACK locals -- the stack sits at
++// [SystemMemoryTop-128KB, SystemMemoryTop) which, under Method A, is the Reserved region just below
++// the window backing, so small stack DMA buffers are un-reachable by the FL1100 (HSE). v28 bounce cut
++// HSE 414->7 (right direction) but "Unable to boot": suspected a short device-write leaving the
++// bounce tail as garbage that Unmap copied back -> FS-metadata corruption. v31: pre-copy BOTH
++// directions (below) so the bounce always mirrors the caller before the transfer.
++// v31 (pre-copy both dirs) STILL failed: bounce covers all OOW buffers yet breaks enumeration
++// (persistent xHCI structs on the stack need a STABLE address, not a fresh per-Map bounce). Reverted
++// to 0 (v26 baseline). Real fix = relocate the UEFI stack into the window (see exp5-hse-root memory).
++#define NWOAS_DART_BOUNCE_OOW 0
++
++// NWOAS EXP-5: the per-Map "NWOAS MAP host=..." log fires thousands of times per boot -> massive
++// serial traffic that slows the boot and worsens the flaky S5L-UART poll wedge (0x235200010).
++// Off by default; flip to 1 only when debugging the Map path.
++#define NWOAS_MAP_VERBOSE 0
++
++//
++// NWOAS Stage 3 / EXP-5: the low DMA-alias window, shared by all four consumers (hv map_hw alias /
++// MemoryInitPeiLib HOB / this DART's EBS static window / DSDT _DMA). IOVA == device address
++// (DSDT _TRA = 0). Declared HERE, ahead of AppleDartIoMmuMapReal, so the EXP-5 §4.3 window-aware
++// per-Map translation inside that function can reference them. base + size is pinned to
++// 0x100000000 (window top == 4GB) so a 32-bit device can reach the whole window.
++//
++#define APCIE_WIN_IOVA_BASE 0x0000000000000000ULL   // low IOVA == NWOAS_DMA_WIN_BASE (EXP-5 5c-v7: base 0x20000000 -> 0, whole sub-4GB)
++#define APCIE_WIN_SIZE      0x0000000100000000ULL    // 4GB (EXP-5 5c-v7: 0xE0000000 -> 0x100000000; base+size == 0x100000000)
++
++//
++// NWOAS memory/DMA fix: low DMA-window DART backing PA, computed ONCE at DXE init from BootArgs
++// (phys_base + mem_size - APCIE_WIN_SIZE) so it equals the m1n1 hv map_hw alias (pcie_emul.py) and
++// the AdtParser carve-out, NOT PcdSystemMemoryBase+PcdSystemMemorySize which THIS module reads
++// UNPATCHED (see the long comment at the DXE-init computation site). Cached because the
++// ExitBootServices handler may run after the boot_args copy at PcdBootArgsPointer (0x840000000,
++// unreserved conventional RAM) has been reclaimed by the Windows loader's RAMDisk allocations.
++//
++STATIC UINT64   mApcieBackingPa = 0;
++
++#define APCIE_IOVA_END    0xF0000000ULL
++#define APCIE_L2_ENTRIES  (SIZE_4GB / DART_PAGE_SIZE)               // 256K
++#define APCIE_L2_BYTES    (APCIE_L2_ENTRIES * sizeof(UINT64))       // 2MB
++#define APCIE_L1_ENTRIES  (APCIE_L2_BYTES / DART_PAGE_SIZE)         // 128
++#define APCIE_PTE_FLAGS   0x3ULL                                    // VALID | SP_PROT_DIS
++#define APCIE_PTE_SP_END  (((UINT64)0xfff) << 40)
++#define APCIE_L2_PAGE(pa) (((pa) & ~(UINT64)DART_PAGE_MASK) | APCIE_PTE_FLAGS | APCIE_PTE_SP_END)
++
++#if NWOAS_WIDE_DART
++//
++// NWOAS WIDE-DART geometry (T8020-class apcie DART; verified vs m1n1 dart8020.py L1_OFF=25/L2_OFF=14/
++// IDX_BITS=11). The existing flat L2 (APCIE_L2_ENTRIES) covers ONLY L1[0..APCIE_L1_ENTRIES-1] =
++// IOVA[0,4GB). The high-RAM identity map uses SEPARATE, freshly allocated 16KB L2 tables wired into
++// the ALREADY-allocated single-page L1 (mApcieL1 holds APCIE_L1_TABLE_ENTRIES=2048 entries -> the
++// full 64GB TTBR0 span), at L1 indices [phys_base>>25 .. (backing-1)>>25] (~1053..1393 on 16GB).
++//
++#define APCIE_L1_SHIFT         25                                   // IOVA L1 index = (iova >> 25) & 0x7FF; each L1 entry spans 32MB
++#define APCIE_L2_SHIFT         14                                   // IOVA L2 index = (iova >> 14) & 0x7FF; 16KB pages
++#define APCIE_L1_TABLE_ENTRIES (DART_PAGE_SIZE / sizeof(UINT64))    // 2048 entries in the 16KB L1 page (and per L2 table)
++#define APCIE_LX_MASK          (APCIE_L1_TABLE_ENTRIES - 1)         // 0x7FF
++
++STATIC UINT64  mWideDartPhysBase = 0;     // advertised guest RAM base (boot_args phys_base), low bound of the identity range
++STATIC UINT64 *mWideDartL2       = NULL;   // contiguous block of high-RAM identity L2 tables (mWideDartTables * 16KB)
++STATIC UINTN   mWideDartL1Lo     = 0;      // first L1 index of the high range (== phys_base >> 25)
++STATIC UINTN   mWideDartL1Hi     = 0;      // last  L1 index of the high range (== (backing-1) >> 25)
++STATIC UINTN   mWideDartTables   = 0;      // number of 16KB L2 tables allocated (== L1Hi - L1Lo + 1)
++#endif // NWOAS_WIDE_DART
++
++STATIC VOID ApcieDartFlushAll(VOID) {
++  UINTN d;
++  __asm__ volatile ("dsb sy");
++  for (d = 0; d < NUM_APCIE_DARTS; d++) {
++    MmioWrite32(mApcieDartBase[d] + DART_T8020_TLB_SIDMASK, 0xFFFF);
++    MmioWrite32(mApcieDartBase[d] + DART_T8020_TLB_CMD, DART_T8020_TLB_CMD_FLUSH);
++    while ((MmioRead32(mApcieDartBase[d] + DART_T8020_TLB_CMD) & DART_T8020_TLB_CMD_BUSY) != 0) {
++      continue;
++    }
++  }
++}
++
++// NWOAS EXP-5 diag (2026-07-10): the FL1100 HSE-halts under EXP-5 on DMA to an OUT-OF-WINDOW
++// (high-physical) buffer at ~0xAE0FC8000 (identity-mapped, unreachable). Dump the EFI memory map
++// ONCE to learn what that region's Type is (Conventional=window-leak / Reserved / Runtime / etc.),
++// so we fix the right thing instead of guessing again. Logs only entries near the target + high RAM.
++STATIC BOOLEAN mNwoasMemMapDumped = FALSE;
++STATIC VOID NwoasDumpMemMapOnce(EFI_PHYSICAL_ADDRESS Target) {
++  EFI_STATUS              St;
++  UINTN                   MapSize = 0, MapKey = 0, DescSize = 0, i, Count;
++  UINT32                  DescVer = 0;
++  EFI_MEMORY_DESCRIPTOR  *Map = NULL, *Desc;
++
++  if (mNwoasMemMapDumped) return;
++  mNwoasMemMapDumped = TRUE;
++
++  St = gBS->GetMemoryMap(&MapSize, NULL, &MapKey, &DescSize, &DescVer);
++  if (DescSize == 0) return;
++  MapSize += 16 * DescSize;
++  Map = AllocatePool(MapSize);
++  if (Map == NULL) return;
++  St = gBS->GetMemoryMap(&MapSize, Map, &MapKey, &DescSize, &DescVer);
++  if (EFI_ERROR(St)) { FreePool(Map); return; }
++
++  Count = MapSize / DescSize;
++  DEBUG((DEBUG_ERROR, "HVLOG: NWOAS MEMMAP dump begin (%u entries) target=0x%lx\n", (UINT32)Count, (UINT64)Target));
++  Desc = Map;
++  for (i = 0; i < Count; i++) {
++    EFI_PHYSICAL_ADDRESS s = Desc->PhysicalStart;
++    EFI_PHYSICAL_ADDRESS e = s + LShiftU64(Desc->NumberOfPages, 12);
++    BOOLEAN hit = (Target >= s && Target < e);
++    if (hit || (s >= 0xA00000000ULL && s < 0xC00000000ULL)) {
++      DEBUG((DEBUG_ERROR, "HVLOG: NWOAS MEMMAP type=%u start=0x%lx pages=0x%lx attr=0x%lx%s\n",
++             (UINT32)Desc->Type, (UINT64)s, (UINT64)Desc->NumberOfPages, (UINT64)Desc->Attribute,
++             hit ? " <== TARGET" : ""));
++    }
++    Desc = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)Desc + DescSize);
++  }
++  DEBUG((DEBUG_ERROR, "HVLOG: NWOAS MEMMAP dump end\n"));
++  FreePool(Map);
++}
++
++STATIC VOID SetupApcieDarts(VOID) {
++  UINTN  d, sid, i;
++  UINT64 l1phys, l2phys, base;
++
++  // NWOAS S6-D43: these tables remain the live hardware page tables after
++  // ExitBootServices.  Boot-services allocations become ordinary Windows RAM
++  // and D42 proved that Windows reclaimed/zeroed low-L2 entries while the DART
++  // TTBR still pointed here.  Runtime allocations stay reserved in the OS
++  // memory map, preserving both the low window and high identity mappings.
++  mApcieL2 = AllocateAlignedRuntimePages(EFI_SIZE_TO_PAGES(APCIE_L2_BYTES), DART_PAGE_SIZE);
++  mApcieL1 = AllocateAlignedRuntimePages(EFI_SIZE_TO_PAGES(DART_PAGE_SIZE), DART_PAGE_SIZE);
++  if (mApcieL2 == NULL || mApcieL1 == NULL) {
++    DEBUG((DEBUG_ERROR, "SetupApcieDarts: page-table allocation failed\n"));
++    return;
++  }
++  ZeroMem(mApcieL2, APCIE_L2_BYTES);
++  ZeroMem(mApcieL1, DART_PAGE_SIZE);
++
++  //
++  // ★ NWOAS EXP-5 5c ROOT-CAUSE FIX: the DART's OWN page tables (L1/L2) and the TTBR/L1 pointers
++  // must be given to the DART hardware as REAL host PAs. Under Method A the DXE pool is the low
++  // DMA window (an m1n1 hv map_hw ALIAS: window IPA != host PA), so mApcieL1/mApcieL2 land at
++  // window IPAs. The DART hardware reads its tables via the programmed address AS A HOST PA -- so a
++  // raw window-IPA TTBR/L1 makes the DART walk garbage -> every device DMA fails (xHCI USBSTS.HSE,
++  // controller stays halted, Enable Slot times out; observed 5c). §4.3 only translates DATA buffer
++  // addresses, NOT the DART's own structure addresses -- THIS was the gap. 5a/5b worked because the
++  // tables were in identity RAM (window IPA == host PA). Translate window IPA -> backing PA here,
++  // exactly as §4.3 / the EBS static window do. Backing computed locally from boot_args (mApcieBackingPa
++  // may not be set yet at DART-init); non-window (identity) allocations pass through unchanged.
++  //
++  {
++    struct boot_args *NwoasBA = (struct boot_args *)FixedPcdGet64 (PcdBootArgsPointer);
++    UINT64 NwoasBacking = ((NwoasBA->phys_base >= 0x800000000ULL) && (NwoasBA->mem_size > APCIE_WIN_SIZE))
++                          ? (NwoasBA->phys_base + NwoasBA->mem_size - APCIE_WIN_SIZE) : 0;
++    #define NWOAS_WIN2BACK(a) \
++      ( (NwoasBacking != 0 && (UINT64)(a) >= APCIE_WIN_IOVA_BASE && \
++         (UINT64)(a) < APCIE_WIN_IOVA_BASE + APCIE_WIN_SIZE) \
++        ? (NwoasBacking + ((UINT64)(a) - APCIE_WIN_IOVA_BASE)) : (UINT64)(a) )
++
++    // Each L1 entry points to one 16KB chunk of the flat L2 table -- as a REAL host PA.
++    l2phys = NWOAS_WIN2BACK((UINT64)(UINTN)mApcieL2);
++    for (i = 0; i < APCIE_L1_ENTRIES; i++) {
++      mApcieL1[i] = (l2phys & ~(UINT64)DART_PAGE_MASK) | APCIE_PTE_FLAGS;
++      l2phys += DART_PAGE_SIZE;
++    }
++#if NWOAS_WIDE_DART
++    //
++    // NWOAS WIDE-DART: ALLOCATE the high-RAM identity L2 tables and WIRE the L1 pointers HERE (DXE
++    // init -- allocation is legal now; the EBS callback must not allocate). The tables are zeroed so
++    // the high IOVA range stays UNMAPPED during UEFI boot (nothing DMAs to high IOVA before handoff:
++    // XhciDxe uses bump IOVAs < APCIE_IOVA_END, the window uses IOVA[0,4GB)); the identity PTEs are
++    // filled at ExitBootServices so the map is live exactly when Windows takes over. This is fully
++    // additive: it touches only L1[phys_base>>25 .. (backing-1)>>25], never the flat-L2 window L1[0..127].
++    //
++    if (NwoasBacking != 0) {
++      mWideDartPhysBase = NwoasBA->phys_base;                       // low bound; backing already in mApcieBackingPa
++      UINTN L1Lo = (UINTN)(mWideDartPhysBase >> APCIE_L1_SHIFT);
++      UINTN L1Hi = (UINTN)((NwoasBacking - 1) >> APCIE_L1_SHIFT);
++      if (L1Lo < APCIE_L1_ENTRIES) {
++        L1Lo = APCIE_L1_ENTRIES;                                    // never overlap the flat-L2 window L1[0..127]
++      }
++      if (L1Hi >= APCIE_L1_TABLE_ENTRIES) {
++        L1Hi = APCIE_L1_TABLE_ENTRIES - 1;                          // clamp to the 2048-entry L1 page / 64GB TTBR0 span
++      }
++      if (L1Hi >= L1Lo) {
++        UINTN NTables = L1Hi - L1Lo + 1;
++        mWideDartL2 = AllocateAlignedRuntimePages(EFI_SIZE_TO_PAGES(NTables * DART_PAGE_SIZE), DART_PAGE_SIZE);
++        if (mWideDartL2 != NULL) {
++          ZeroMem(mWideDartL2, NTables * DART_PAGE_SIZE);           // all-invalid until the EBS identity fill
++          UINT64 t2phys = NWOAS_WIN2BACK((UINT64)(UINTN)mWideDartL2);  // real host PA of the table block (passthrough when >4GB)
++          for (UINTN li = L1Lo; li <= L1Hi; li++) {
++            mApcieL1[li] = (t2phys & ~(UINT64)DART_PAGE_MASK) | APCIE_PTE_FLAGS;
++            t2phys += DART_PAGE_SIZE;
++          }
++          // Flush the freshly zeroed tables to the RAM the DART reads (the L1 page itself is flushed by
++          // the WriteBackInvalidate below, which covers all 2048 entries including the ones set here).
++          WriteBackInvalidateDataCacheRange((VOID *)mWideDartL2, NTables * DART_PAGE_SIZE);
++          mWideDartL1Lo   = L1Lo;
++          mWideDartL1Hi   = L1Hi;
++          mWideDartTables = NTables;
++          DEBUG((DEBUG_ERROR, "HVLOG: NWOAS WIDE-DART reserved L1[%u..%u] tables=%u l2base=0x%lx phys_base=0x%lx backing=0x%lx\n",
++                 (UINT32)L1Lo, (UINT32)L1Hi, (UINT32)NTables, (UINT64)(UINTN)mWideDartL2, mWideDartPhysBase, NwoasBacking));
++        } else {
++          DEBUG((DEBUG_ERROR, "HVLOG: NWOAS WIDE-DART L2 alloc FAILED (%u tables) -- wide map disabled, window-only\n",
++                 (UINT32)NTables));
++        }
++      } else {
++        DEBUG((DEBUG_ERROR, "HVLOG: NWOAS WIDE-DART empty high range (L1Lo=%u L1Hi=%u) -- skipped\n",
++               (UINT32)L1Lo, (UINT32)L1Hi));
++      }
++    }
++#endif // NWOAS_WIDE_DART
++#if NWOAS_DART_STATIC_WINDOW
++    // NWOAS EXP-5 fix: pre-fill the flat L2 with the STATIC full-window map NOW (boot), the same
++    // IOVA[0,4GB) -> backing[0,4GB) map the EBS handler installs at ExitBootServices. Then the
++    // UEFI xHCI read uses a static DART (like the working no-EXP-5 path) and Map() returns the
++    // window IPA directly -- no dynamic per-Map L2 write / TLB churn -> no stale-translation loss.
++    // Only installs when the low DMA window is real (Method A boot: NwoasBacking != 0).
++    if (NwoasBacking != 0) {
++      UINTN Bi  = (UINTN)(APCIE_WIN_IOVA_BASE / DART_PAGE_SIZE);
++      UINTN Cnt = (UINTN)(APCIE_WIN_SIZE / DART_PAGE_SIZE);
++      UINTN k;
++      for (k = 0; k < Cnt; k++) {
++        mApcieL2[Bi + k] = APCIE_L2_PAGE(NwoasBacking + (UINT64)k * DART_PAGE_SIZE);
++      }
++      mApcieStaticWindow = TRUE;
++      DEBUG ((DEBUG_ERROR, "HVLOG: NWOAS DART BOOT static window IOVA 0x%lx..0x%lx -> backing 0x%lx (%u entries)\n",
++              APCIE_WIN_IOVA_BASE, APCIE_WIN_IOVA_BASE + APCIE_WIN_SIZE, NwoasBacking, (UINT32)Cnt));
++    }
++#endif
++    // Flush the CPU's writes (done via the window-IPA alias) out to the backing RAM the DART reads.
++    WriteBackInvalidateDataCacheRange((VOID *)mApcieL1, DART_PAGE_SIZE);
++    WriteBackInvalidateDataCacheRange((VOID *)mApcieL2, APCIE_L2_BYTES);
++
++    l1phys = NWOAS_WIN2BACK((UINT64)(UINTN)mApcieL1);   // TTBR gets the backing PA, not the window IPA
++    DEBUG ((DEBUG_ERROR, "HVLOG: NWOAS DART tables backing=0x%lx L1 ipa=0x%lx->phys=0x%lx L2 ipa=0x%lx->phys=0x%lx\n",
++            NwoasBacking, (UINT64)(UINTN)mApcieL1, l1phys, (UINT64)(UINTN)mApcieL2, NWOAS_WIN2BACK((UINT64)(UINTN)mApcieL2)));
++    #undef NWOAS_WIN2BACK
++  }
++  for (d = 0; d < NUM_APCIE_DARTS; d++) {
++    base = mApcieDartBase[d];
++    for (sid = 0; sid < 16; sid++) {
++      MmioWrite32(base + DART_T8020_TCR_BASE + 4 * sid, 0);
++    }
++    for (sid = 0; sid < 16; sid++) {
++      for (i = 0; i < 4; i++) {
++        MmioWrite32(base + DART_T8020_TTBR_BASE + 16 * sid + 4 * i, 0);
++      }
++    }
++    // <4GB IOVA -> only TTBR[sid][0] is used; point it at the shared L1.
++    for (sid = 0; sid < 16; sid++) {
++      MmioWrite32(base + DART_T8020_TTBR_BASE + 16 * sid,
++                  (UINT32)((l1phys >> DART_TTBR_SHIFT) | DART_T8020_TTBR_VALID));
++    }
++    MmioWrite32(base + DART_T8020_SID_ENABLE, 0xFFFF);
++    for (sid = 0; sid < 16; sid++) {
++      MmioWrite32(base + DART_T8020_TCR_BASE + 4 * sid, DART_T8020_TCR_TRANSLATE_ENABLE);
++    }
++  }
++  ApcieDartFlushAll();
++  mApcieDartReady = TRUE;
++  DEBUG((DEBUG_ERROR, "HVLOG: SetupApcieDarts DONE ready=1 runtime-reserved=1 L1=0x%llx L2=0x%llx\n",
++         l1phys, (UINT64)(UINTN)mApcieL2));
++}
++
++STATIC EFI_STATUS EFIAPI AppleDartIoMmuMapReal(
++    IN EDKII_IOMMU_PROTOCOL *This,
++    IN EDKII_IOMMU_OPERATION Operation,
++    IN VOID *HostAddress,
++    IN OUT UINTN *NumberOfBytes,
++    OUT EFI_PHYSICAL_ADDRESS *DeviceAddress,
++    OUT VOID **Mapping
++    )
++{
++  UINT64 Host, Pa, Off, Iova;
++  UINTN  Size, NumPages, i, BaseIdx;
++  STATIC BOOLEAN sFirstMap = TRUE;
++
++  if (sFirstMap) {
++    sFirstMap = FALSE;
++    DEBUG((DEBUG_ERROR, "HVLOG: DartMap FIRST ready=%d Host=0x%llx bytes=0x%llx op=%d\n",
++           mApcieDartReady, (UINT64)(UINTN)HostAddress, (UINT64)*NumberOfBytes, Operation));
++  }
++
++  if (!mApcieDartReady) {
++    *DeviceAddress = (EFI_PHYSICAL_ADDRESS)(UINTN)HostAddress;
++    *Mapping = NULL;
++    return EFI_SUCCESS;
++  }
++
++  //
++  // NWOAS B-0: on every Map, sample the 3 apcie DART error-status registers. If a prior
++  // transfer's DMA faulted in the DART, ERR is sticky (W1C); we catch + log + clear it here.
++  // This is the decisive eval signal on the USB-bulk-stall frontier: DART ERR set (with an
++  // IOVA in the failing transfer's range) => DMA/DART fault; ERR clear => DART innocent, the
++  // stall is an FL1100/USB bulk-IN data-stage wedge (fix xHCI-side, not the IOMMU).
++  //
++  {
++    UINTN  d;
++    UINT32 Err;
++    for (d = 0; d < NUM_APCIE_DARTS; d++) {
++      Err = MmioRead32(mApcieDartBase[d] + DART_T8020_ERROR);
++      // Only a REAL fault sets the FLAG bit (bit31). The idle status register reads a constant
++      // non-zero value (e.g. 0x0F000400) with FLAG clear — do NOT log that (it would flood the
++      // serial and slow the boot). Log + clear only when FLAG is set.
++      if ((Err & 0x80000000U) != 0) {
++        UINT32 Lo = MmioRead32(mApcieDartBase[d] + DART_T8020_ERROR_ADDR_LO);
++        UINT32 Hi = MmioRead32(mApcieDartBase[d] + DART_T8020_ERROR_ADDR_HI);
++        DEBUG((DEBUG_ERROR, "HVLOG: DART%d ERR=0x%08x IOVA=0x%x%08x\n", (UINT32)d, Err, Hi, Lo));
++        MmioWrite32(mApcieDartBase[d] + DART_T8020_ERROR, Err);
++      }
++    }
++  }
++
++  Host = (UINT64)(UINTN)HostAddress;
++#if NWOAS_DART_BOUNCE_OOW
++  //
++  // NWOAS EXP-5 fix: if the caller's buffer is OUTSIDE the low window (a Reserved/high-RAM address the
++  // FL1100 cannot reach -> HSE), transparently bounce it through a WINDOW buffer that the DART maps to
++  // the backing RAM. CommonBuffers are excluded (they are shared and must already be window-allocated
++  // via AllocateBuffer). The redirect below makes all downstream translate/cache/DeviceAddress logic
++  // operate on the bounce; Unmap copies the bounce back to the caller for device-writes and frees it.
++  //
++  VOID  *NwoasBounce   = NULL;
++  VOID  *NwoasOrigHost = HostAddress;
++  UINTN  NwoasBncPages = 0;
++  {
++    UINT64  HB       = Host & ~(UINT64)DART_PAGE_MASK;
++    BOOLEAN InWin    = (HB >= APCIE_WIN_IOVA_BASE) && (HB < APCIE_WIN_IOVA_BASE + APCIE_WIN_SIZE);
++    BOOLEAN IsCommon = (Operation == EdkiiIoMmuOperationBusMasterCommonBuffer ||
++                        Operation == EdkiiIoMmuOperationBusMasterCommonBuffer64);
++    if (mApcieDartReady && (mApcieBackingPa != 0) && !InWin && !IsCommon) {
++      UINT64 Boff = Host - HB;
++      NwoasBncPages = (UINTN)((Boff + (UINT64)*NumberOfBytes + DART_PAGE_MASK) / DART_PAGE_SIZE);
++      NwoasBounce   = AllocateAlignedPages (NwoasBncPages, DART_PAGE_SIZE);
++      if (NwoasBounce != NULL) {
++        UINT64 BB = (UINT64)(UINTN)NwoasBounce;
++        if (BB < APCIE_WIN_IOVA_BASE || BB >= APCIE_WIN_IOVA_BASE + APCIE_WIN_SIZE) {
++          FreeAlignedPages (NwoasBounce, NwoasBncPages);   // bounce itself not in window -> useless
++          NwoasBounce = NULL;
++          DEBUG ((DEBUG_ERROR, "HVLOG: NWOAS BOUNCE alloc out-of-window 0x%lx -- skip\n", BB));
++        } else {
++          VOID *Bh = (VOID *)((UINT8 *)NwoasBounce + Boff);
++          // Mirror the caller's current bytes into the bounce for BOTH directions: device-reads need
++          // the payload; device-writes need it too so a short/partial device write leaves the un-written
++          // tail equal to the caller's original (Unmap copies the whole bounce back) -- otherwise the
++          // tail would be garbage and corrupt e.g. FS-metadata reads into small stack buffers.
++          CopyMem (Bh, NwoasOrigHost, *NumberOfBytes);
++          HostAddress = Bh;                 // redirect translate/cache/DeviceAddr to the DART-reachable bounce
++          Host        = (UINT64)(UINTN)Bh;
++        }
++      }
++    }
++  }
++#endif
++#if NWOAS_DART_WINDOW_AWARE
++  //
++  // NWOAS EXP-5 §4.3 (REQUIRED prerequisite for Method A): when this Map's host buffer falls in the
++  // low DMA window, translate to the real backing PA (== hv map_hw alias == the EBS static window)
++  // instead of identity. Under Method A the window is the ONLY Conventional pool, so UEFI-boot DMA
++  // buffers (e.g. XhciDxe reading boot.wim) allocate INSIDE the window; without this the DART would
++  // map a raw sub-4GB void IPA and the device would DMA into nothing -> BAR abort / corruption.
++  // mApcieBackingPa is DXE-init-computed from boot_args, the same value the EBS static window uses,
++  // so boot-time (per-Map) and Windows-time (static) translations resolve to the same physical RAM.
++  //
++  {
++    UINT64 HostBase = Host & ~(UINT64)DART_PAGE_MASK;
++    if ((HostBase >= APCIE_WIN_IOVA_BASE) &&
++        (HostBase <  APCIE_WIN_IOVA_BASE + APCIE_WIN_SIZE)) {
++      Pa = mApcieBackingPa + (HostBase - APCIE_WIN_IOVA_BASE);   // window IPA -> real backing PA
++    } else {
++      Pa = HostBase;                                             // high RAM: identity (unchanged)
++      NwoasDumpMemMapOnce(HostBase);   // NWOAS diag: what IS this out-of-window buffer? (HSE root)
++      {
++        // NWOAS diag: dump the out-of-window (HSE-triggering) buffer's first 32 bytes + size + op ONCE,
++        // to identify what it is (USB descriptor / xHCI context / disk data) and hence who allocates it.
++        STATIC BOOLEAN NwoasOowLogged = FALSE;
++        if (!NwoasOowLogged) {
++          CONST UINT64 *W = (CONST UINT64 *)(UINTN)(Host & ~7ULL);
++          NwoasOowLogged = TRUE;
++          DEBUG ((DEBUG_ERROR, "HVLOG: NWOAS OOW host=0x%lx bytes=0x%lx op=%u w0=0x%lx w1=0x%lx w2=0x%lx w3=0x%lx\n",
++                  (UINT64)Host, (UINT64)*NumberOfBytes, (UINT32)Operation, W[0], W[1], W[2], W[3]));
++        }
++      }
++    }
++    Off = Host - HostBase;
++  }
++#else
++  // NWOAS EXP-5 5c-pre: window-aware translation OFF (identity Map), to isolate Method-A boot-ability.
++  Pa   = Host & ~(UINT64)DART_PAGE_MASK;
++  Off  = Host - Pa;
++#endif
++  Size = *NumberOfBytes + (UINTN)Off;
++  NumPages = (Size + DART_PAGE_MASK) / DART_PAGE_SIZE;
++
++#if NWOAS_DART_STATIC_WINDOW
++  if (mApcieStaticWindow &&
++      ((Host & ~(UINT64)DART_PAGE_MASK) >= APCIE_WIN_IOVA_BASE) &&
++      ((Host & ~(UINT64)DART_PAGE_MASK) <  APCIE_WIN_IOVA_BASE + APCIE_WIN_SIZE)) {
++    // NWOAS EXP-5 fix: the boot-installed static full-window map already maps IOVA(windowIPA)->backing.
++    // Device address == window IPA (DSDT _TRA=0) -> *DeviceAddress = Iova+Off = HostAddress. Skip the
++    // dynamic bump-alloc + L2 write + (dropped) TLB flush entirely -> no stale DART translation, so the
++    // FL1100's completion write lands where the CPU polls (matches the working no-EXP-5 static DART).
++    Iova = Host & ~(UINT64)DART_PAGE_MASK;
++  } else
++#endif
++  {
++    if ((mApcieIovaNext + (UINT64)NumPages * DART_PAGE_SIZE) > APCIE_IOVA_END) {
++      DEBUG((DEBUG_ERROR, "AppleDartIoMmuMapReal: IOVA aperture exhausted\n"));
++      return EFI_OUT_OF_RESOURCES;
++    }
++    Iova = mApcieIovaNext;
++    mApcieIovaNext += (UINT64)NumPages * DART_PAGE_SIZE;
++
++    BaseIdx = (UINTN)(Iova / DART_PAGE_SIZE);
++    for (i = 0; i < NumPages; i++) {
++      mApcieL2[BaseIdx + i] = APCIE_L2_PAGE(Pa + (UINT64)i * DART_PAGE_SIZE);
++      WriteBackInvalidateDataCacheRange((VOID *)&mApcieL2[BaseIdx + i], sizeof(UINT64));
++    }
++#if NWOAS_DART_PERMAP_FLUSH
++    // NWOAS EXP-5 fix: invalidate the DART TLB so the hardware picks up the L2 PTE we just wrote,
++    // exactly as the canonical Asahi/m1n1 driver does after every dart_map_flags (src/dart.c:565).
++    // The WriteBackInvalidateDataCacheRange above only guarantees the PTE is in RAM; the DART's own
++    // TLB/walk cache still needs this invalidate. ApcieDartFlushAll = dma-barrier + all-SID INVALIDATE
++    // on all 3 apcie DARTs + BUSY-poll (same op the T8020 STREAM_COMMAND path performs).
++    ApcieDartFlushAll();
++#endif
++  }
++  //
++  // NWOAS B-1a: NO per-Map DART TLB flush. The IOVA is freshly bump-allocated and never
++  // reused, so the DART TLB holds no stale entry for it; the L2 write + cache-clean above are
++  // sufficient for a TLB-miss walk to see the new mapping. Under the hv every DART register
++  // access is a synchronous trap-emulate, so a per-Map flush (SIDMASK+CMD writes + a BUSY
++  // poll x3 DARTs) was ~tens of emulated MMIO ops per transfer buffer — a large latency that
++  // can push a bulk transfer past its timeout. Dropping it is both correct and much faster.
++  //
++
++  //
++  // NWOAS B-2: DMA data-buffer cache maintenance. The M1 apcie DART path is not cache-
++  // coherent for the EL1 guest under m1n1's EL2 stage-2 (Asahi bare-metal's pcie0
++  // dma-coherent does not carry into the guest S2). Without this the CPU reads stale
++  // cache lines instead of the device's DMA'd data -> a few corrupted bytes in the 707MB
++  // boot.wim -> winload.efi STATUS_IMAGE_CHECKSUM_MISMATCH (0xc0000221). Clean before a
++  // device-read; clean+invalidate before a device-write (drop dirty lines); the post-DMA
++  // invalidate for a device-write happens in Unmap.
++  //
++  switch (Operation) {
++    case EdkiiIoMmuOperationBusMasterRead:
++    case EdkiiIoMmuOperationBusMasterRead64:
++      WriteBackDataCacheRange (HostAddress, *NumberOfBytes);
++      break;
++    default:  // BusMasterWrite / BusMasterCommonBuffer (+64)
++      WriteBackInvalidateDataCacheRange (HostAddress, *NumberOfBytes);
++      break;
++  }
++
++  {
++    APCIE_MAP_INFO *Info = AllocatePool (sizeof (APCIE_MAP_INFO));
++    if (Info != NULL) {
++      Info->HostAddress   = HostAddress;
++      Info->NumberOfBytes = *NumberOfBytes;
++      Info->Operation     = Operation;
++#if NWOAS_DART_BOUNCE_OOW
++      Info->Bounce        = NwoasBounce;
++      Info->OrigHost      = NwoasOrigHost;
++      Info->BouncePages   = NwoasBncPages;
++#else
++      Info->Bounce        = NULL;
++      Info->OrigHost      = NULL;
++      Info->BouncePages   = 0;
++#endif
++    }
++    *Mapping = Info;
++  }
++
++  *DeviceAddress = (EFI_PHYSICAL_ADDRESS)(Iova + Off);
++  // NWOAS EXP-5 5c diagnostic: log every DART Map so we can see how XhciDxe's rings (CMD/EVENT/
++  // DCBAA) are mapped under Method A -- host buffer (window IPA), the device IOVA handed back, the
++  // backing PA it resolves to, the op, and size. Enable-Slot times out under Method A, so this
++  // shows whether the ring IOVA/PA are sensible (and whether they collide with the static window).
++#if NWOAS_MAP_VERBOSE
++  DEBUG((DEBUG_ERROR, "HVLOG: NWOAS MAP host=0x%lx dev(iova+off)=0x%lx pa=0x%lx op=%u np=%u\n",
++         (UINT64)(UINTN)HostAddress, (UINT64)*DeviceAddress, (UINT64)Pa,
++         (UINT32)Operation, (UINT32)NumPages));
++#endif
++  return EFI_SUCCESS;
++}
++
++STATIC EFI_STATUS EFIAPI AppleDartIoMmuAllocateBufferReal(
++    IN EDKII_IOMMU_PROTOCOL *This,
++    IN EFI_ALLOCATE_TYPE Type,
++    IN EFI_MEMORY_TYPE MemoryType,
++    IN UINTN Pages,
++    IN OUT VOID **HostAddress,
++    IN UINT64 Attributes
++    )
++{
++  VOID *Buf;
++  if (MemoryType == EfiRuntimeServicesData) {
++    Buf = AllocateAlignedRuntimePages(Pages, DART_PAGE_SIZE);
++  } else {
++    Buf = AllocateAlignedPages(Pages, DART_PAGE_SIZE);
++  }
++  if (Buf == NULL) {
++    return EFI_OUT_OF_RESOURCES;
++  }
++  //
++  // NWOAS EXP-5 5c (non-coherent DMA fix): this IOMMU AllocateBuffer path serves ONLY xHCI COMMON
++  // buffers (DCBAA / command ring / event ring / device contexts) -- NOT bulk data (boot.wim uses
++  // BusMasterRead/Write with Map/Unmap coherence). Under Method A those rings live in the low DMA
++  // window (an m1n1 hv map_hw alias), and the apcie DART DMA is NOT cache-coherent for the EL1 guest
++  // under the EL2 stage-2 (AppleDartIoMmuMapReal B-2). For a POLLED event ring (mapped once, never
++  // Unmapped) the one-shot Map cache-clean is not enough: the CPU polls STALE cache and never sees
++  // the device's completion event -> "Enable Slot: Time out" (observed exp5c-v3, DART ERR=0 so the
++  // device DMA itself succeeds). Mapping these ring buffers uncacheable makes CPU polls hit RAM
++  // directly -> coherent. hv map_hw uses PTE_MEMATTR_UNCHANGED, so the stage-1 UC set here is the
++  // effective type. Rings are tiny, so the UC cost is negligible; bulk data stays cacheable.
++  {
++    // EFI_MEMORY_UC is Unsupported on this window (GCD capabilities from the MemoryInitPeiLib
++    // resource attributes include WRITE_COMBINEABLE/WRITE_THROUGH/WRITE_BACK but NOT UNCACHEABLE).
++    // EFI_MEMORY_WC (write-combining = non-cacheable Normal) IS in the capabilities and makes reads
++    // uncached -> the CPU's event-ring poll hits RAM instead of stale cache.
++    EFI_STATUS AttrStatus = gDS->SetMemorySpaceAttributes (
++                              (EFI_PHYSICAL_ADDRESS)(UINTN)Buf,
++                              EFI_PAGES_TO_SIZE (Pages),
++                              EFI_MEMORY_WC
++                              );
++    if (EFI_ERROR (AttrStatus)) {
++      // Non-fatal: keep the (cacheable) buffer rather than failing the allocation; log so a run
++      // that still times out points here.
++      DEBUG ((DEBUG_ERROR, "HVLOG: NWOAS AllocBuffer WC set FAILED %r @0x%lx pages=%u (cacheable, may be stale)\n",
++              AttrStatus, (UINT64)(UINTN)Buf, (UINT32)Pages));
++    } else {
++      DEBUG ((DEBUG_ERROR, "HVLOG: NWOAS AllocBuffer WC @0x%lx pages=%u (ring buffer non-cacheable for DMA coherence)\n",
++              (UINT64)(UINTN)Buf, (UINT32)Pages));
++    }
++  }
++  *HostAddress = Buf;
++  return EFI_SUCCESS;
++}
++
+ EDKII_IOMMU_PROTOCOL mAppleDartIoMmuProtocol = {
+     EDKII_IOMMU_PROTOCOL_REVISION,
+     AppleDartIoMmuSetAttribute,
+-    AppleDartIoMmuMap,
++    AppleDartIoMmuMapReal,
+     AppleDartIoMmuUnmap,
+-    AppleDartIoMmuAllocateBuffer,
++    AppleDartIoMmuAllocateBufferReal,
+     AppleDartIoMmuFreeBuffer,
+ };
+ 
+@@ -314,7 +1045,143 @@ STATIC VOID AppleDartT8110TlbFlush(VOID *DartInformation) {
+     }
+ }
+ 
+-EFI_STATUS EFIAPI 
++// ============================================================================
++// NWOAS Stage 3 (platform-xHCI handoff): at ExitBootServices, convert the apcie
++// DART translation from UEFI's per-Map() bump allocations to ONE STATIC OFFSET
++// WINDOW:
++//     IOVA [0x00000000, 0xF0000000)  ->  PA [0x8_0000_0000, 0x8_F000_0000)
++// This matches the _DMA declaration on the SCB0 container (XHC0 PNP0D10 platform
++// device) in DSDT: Windows has no Apple DART driver, but it DOES honor _DMA on an
++// ACPI-enumerated device's container -- it computes device-visible addresses as
++// (CPU PA - 0x800000000) and bounce-buffers anything outside the window into it
++// (RPi4 ships exactly this pattern for its 3GB xHCI DMA limit). The DART then
++// translates those device addresses back to PA. PCIe DARTs have no bypass mode
++// and only a 32-bit IOVA, so a full-RAM identity map is impossible -- a declared
++// window + _DMA is the only architecture that works without a Windows DART driver.
++//
++// EBS-callback rules respected: NO memory allocation, NO protocol use; only
++// writes into the already-allocated flat L2, cache maintenance, and MMIO.
++//
++// Order matters:
++//   1) HALT the xHCI first: UEFI-era rings hold old bump-allocator IOVAs; after
++//      the remap those would resolve into PA 0x800000000+ (m1n1/EL2 lives just
++//      above there) and a stale DMA write could scribble on the hypervisor.
++//   2) Rewrite + clean the L2, TLB-flush all three port DARTs.
++//   3) Force the leaf + bridge COMMAND registers on (MEM+BM, INTx enabled):
++//      the PCI root is hidden from Windows (PCI0._STA=0) so pci.sys will never
++//      enable decode itself; the platform XHC0 needs the path pre-enabled.
++// ============================================================================
++// APCIE_WIN_IOVA_BASE / APCIE_WIN_SIZE were moved UP to the top static block (the EXP-5 §4.3
++// window-aware Map translation, which precedes this section, needs them). backing PA =
++// RAM top - APCIE_WIN_SIZE, computed once at DXE init into mApcieBackingPa (also moved up).
++#define APCIE_ECAM_BASE     0x690000000ULL
++#define FL1100_XHCI_BAR_CPU 0x6C0000000ULL
++
++STATIC EFI_EVENT mApcieEbsEvent = NULL;
++
++// mApcieBackingPa (the low DMA-window DART backing PA, computed at DXE init) is now declared UP in
++// the top static block so the EXP-5 §4.3 window-aware per-Map translation can reference it.
++
++STATIC BOOLEAN mApcieWindowDone = FALSE;
++STATIC VOID EFIAPI ApcieDartExitBootServicesHandler(IN EFI_EVENT Event, IN VOID *Context) {
++  UINTN  i;
++
++  // Run once. (Isolation run showed this event fires many times -- ExitBootServices retries
++  // during Windows loader memory-map churn -- and we must not re-touch hardware each time.)
++  // mApcieBackingPa==0 defense-in-depth: DXE init always sets it non-zero (computed or PCD
++  // fallback) before this handler is even registered, so 0 is unreachable via normal flow --
++  // but if a future refactor moved the compute, skipping the window install (leaving the DART
++  // unmapped) is far safer than programming a PTE that translates the low window onto PA 0.
++  if (mApcieWindowDone || !mApcieDartReady || mApcieL2 == NULL || mApcieBackingPa == 0) {
++    return;
++  }
++  mApcieWindowDone = TRUE;
++
++  // NWOAS Stage 3 FIX: the xHCI-halt step (reading the FL1100 BAR 0x6C0000000 here) was
++  // REMOVED -- at ExitBootServices that BAR read raised an L2C data abort (FAR=0x6C0000000)
++  // that blocked the kernel handoff (isolation: DSDT+no-op-hook boots, DSDT+full-hook did
++  // not, abort FAR == this BAR). Windows' XHC0 driver issues HCRST on start, so stale UEFI
++  // rings are cleared there; the controller is already idle, so no rogue DMA in the gap.
++  // Do NOT touch the FL1100 BAR in this handler.
++
++  // (1) Rewrite the flat L2: map IOVA [APCIE_WIN_IOVA_BASE, +APCIE_WIN_SIZE) to the aliased-RAM
++  //     backing (top APCIE_WIN_SIZE of RAM). This is the SAME physical range the m1n1 hv aliases
++  //     to the low IPA window and that the memory-map excludes from advertised RAM (EarlySetup
++  //     subtracts APCIE_WIN_SIZE from PcdSystemMemorySize so MemoryInitPeiLib advertises RAM only
++  //     up to this backing base; the ReserveMemoryRegion punch is intentionally disabled). IOVA ==
++  //     device address (DSDT _DMA _TRA=0). All other IOVA entries stay unmapped.
++  {
++    // NWOAS memory/DMA fix: use the BootArgs-derived backing computed at DXE init, NOT
++    // PcdSystemMemoryBase+PcdSystemMemorySize. Those two PCDs are PcdsPatchableInModule, i.e. each
++    // linked module carries its OWN copy: PrePi/ModuleEntryPoint.S passes the addresses of PrePi's
++    // copies to EarlySetup(), which patches them to (phys_base, mem_size-0x20000000); PrePi's
++    // MemoryInitPeiLib then advertises RAM only up to phys_base+mem_size-0x20000000 and carves the
++    // top 512MB slice out. But THIS driver is a separate module whose copies stay at the static
++    // defaults (0x800000000 + 0x200000000 = 0xa00000000). 0xa00000000 is inside the RAM handed to
++    // Windows -- a LIVE page, not the carved backing slice -- so the old PcdGet64 sum made the xHCI
++    // DART translate the low IPA window onto live Windows RAM while the hv aliased that same window
++    // onto phys_base+mem_size-0x20000000: the DMA-corruption root cause. mApcieBackingPa was computed
++    // at DXE init as phys_base+mem_size-APCIE_WIN_SIZE, matching the hv map_hw alias (pcie_emul.py)
++    // and the AdtParser invariant (the four consumers: hv alias / MemoryInitPeiLib HOB / this DART
++    // window / DSDT _DMA all point at the same carved backing PA).
++    UINT64 Backing = mApcieBackingPa;
++    UINTN  BaseIdx = (UINTN)(APCIE_WIN_IOVA_BASE / DART_PAGE_SIZE);
++    UINTN  Count   = (UINTN)(APCIE_WIN_SIZE / DART_PAGE_SIZE);
++    for (i = 0; i < APCIE_L2_ENTRIES; i++) {
++      mApcieL2[i] = 0;
++    }
++    for (i = 0; i < Count; i++) {
++      mApcieL2[BaseIdx + i] = APCIE_L2_PAGE(Backing + (UINT64)i * DART_PAGE_SIZE);
++    }
++    DEBUG ((DEBUG_ERROR, "HVLOG: NWOAS DART IOVA 0x%lx..0x%lx -> backing PA 0x%lx\n",
++            APCIE_WIN_IOVA_BASE, APCIE_WIN_IOVA_BASE + APCIE_WIN_SIZE, Backing));
++  }
++#if NWOAS_WIDE_DART
++  //
++  // NWOAS WIDE-DART: fill the high-RAM IDENTITY PTEs (IOVA == PA) into the L2 tables reserved at DXE
++  // init, for every 16KB page in the advertised high guest RAM [phys_base, mApcieBackingPa). Windows'
++  // usbxhci places the DCBAA in this high RAM and programs DCBAAP with the PA; the FL1100 presents that
++  // PA as an IOVA and the DART identity-translates it. EBS-legal: writes into ALREADY-allocated tables
++  // only, no allocation / no protocol use. The window map above (flat L2, L1[0..127]) is untouched;
++  // these high L1 entries [mWideDartL1Lo..mWideDartL1Hi] were wired at DXE init and are not re-zeroed.
++  //
++  if ((mWideDartL2 != NULL) && (mWideDartPhysBase != 0) && (mApcieBackingPa > mWideDartPhysBase)) {
++    UINT64 Pa;
++    UINTN  Filled = 0;
++    for (Pa = mWideDartPhysBase; Pa < mApcieBackingPa; Pa += DART_PAGE_SIZE) {
++      UINTN Li    = (UINTN)((Pa >> APCIE_L1_SHIFT) & APCIE_LX_MASK);
++      UINTN L2Idx = (UINTN)((Pa >> APCIE_L2_SHIFT) & APCIE_LX_MASK);
++      if ((Li < mWideDartL1Lo) || (Li > mWideDartL1Hi)) {
++        continue;   // outside the reserved tables (defensive; range was clamped at DXE init)
++      }
++      mWideDartL2[(Li - mWideDartL1Lo) * APCIE_L1_TABLE_ENTRIES + L2Idx] = APCIE_L2_PAGE(Pa);
++      Filled++;
++    }
++    WriteBackInvalidateDataCacheRange((VOID *)mWideDartL2, mWideDartTables * DART_PAGE_SIZE);
++    DEBUG((DEBUG_ERROR, "HVLOG: NWOAS WIDE-DART identity [0x%lx..0x%lx] L1[%u..%u] tables=%u ptes=%u\n",
++           mWideDartPhysBase, mApcieBackingPa, (UINT32)mWideDartL1Lo, (UINT32)mWideDartL1Hi,
++           (UINT32)mWideDartTables, (UINT32)Filled));
++  } else {
++    DEBUG((DEBUG_ERROR, "HVLOG: NWOAS WIDE-DART skip (l2=%p physbase=0x%lx backing=0x%lx)\n",
++           mWideDartL2, mWideDartPhysBase, mApcieBackingPa));
++  }
++#endif // NWOAS_WIDE_DART
++  WriteBackInvalidateDataCacheRange((VOID *)mApcieL2, APCIE_L2_BYTES);
++  ApcieDartFlushAll();
++
++  // (2) Pre-enable decode on the (Windows-hidden) PCI path: bridges bus0 dev0/1/2
++  //     and the FL1100 leaf bus2 dev0. CMD is 16-bit at +4 (avoid W1C on STATUS).
++  //     ECAM (0x690...) only -- NOT the device BAR -- so no L2C fault here.
++  MmioOr16(APCIE_ECAM_BASE + (0ULL << 15) + 4, 0x0006);          // bridge port0
++  MmioOr16(APCIE_ECAM_BASE + (1ULL << 15) + 4, 0x0006);          // bridge port1 (FL1100 path)
++  MmioOr16(APCIE_ECAM_BASE + (2ULL << 15) + 4, 0x0006);          // bridge port2
++  MmioAndThenOr16(APCIE_ECAM_BASE + (2ULL << 20) + 4, (UINT16)~0x0400, 0x0006); // leaf: MEM|BM, INTx on
++
++  DEBUG((DEBUG_ERROR, "HVLOG: NWOAS-EBS dart-window installed (low-RAM alias, IOVA base 0x%lx size 0x%lx), CMDs on\n",
++         APCIE_WIN_IOVA_BASE, APCIE_WIN_SIZE));
++}
++
++EFI_STATUS EFIAPI
+ AppleDartIoMmuDxeInitialize(
+   IN EFI_HANDLE        ImageHandle,
+   IN EFI_SYSTEM_TABLE  *SystemTable
+@@ -360,6 +1227,37 @@ AppleDartIoMmuDxeInitialize(
+       return EFI_NOT_FOUND;
+     }
+ 
++    //
++    // NWOAS memory/DMA fix: compute the low DMA-window DART backing PA HERE (DXE init), from the
++    // BootArgs struct that SEC copied to PcdBootArgsPointer (0x840000000) -- the same proven-safe
++    // access SimpleFbDxe uses at line ~176. We must NOT use PcdSystemMemoryBase+PcdSystemMemorySize:
++    // those are PcdsPatchableInModule and this module holds the UNPATCHED static defaults
++    // (0x800000000 + 0x200000000 = 0xa00000000), a LIVE Windows RAM page rather than the carved
++    // backing slice. phys_base+mem_size-APCIE_WIN_SIZE reproduces the m1n1 hv map_hw alias
++    // (pcie_emul.py: phys_base+mem_size-0x20000000) and the AdtParser carve-out, so the DART's low
++    // window and the hv's low IPA alias resolve to the SAME physical RAM. Cache it for the EBS
++    // handler (which may run after 0x840000000 has been reclaimed).
++    //
++    {
++      struct boot_args *NwoasBA = (struct boot_args *)FixedPcdGet64 (PcdBootArgsPointer);
++      UINT64 PhysBase = NwoasBA->phys_base;
++      UINT64 MemSize  = NwoasBA->mem_size;
++      if ((PhysBase >= 0x800000000ULL) && (MemSize > APCIE_WIN_SIZE)) {
++        mApcieBackingPa = PhysBase + MemSize - APCIE_WIN_SIZE;
++      } else {
++        // BootArgs looked invalid (null-ish pointer / clobbered): fall back to the patchable PCDs and
++        // shout, rather than program a wild DART PTE. This path is the OLD (buggy) behaviour, taken
++        // only if boot_args is unreadable -- in which case the framebuffer/boot would already be dead.
++        mApcieBackingPa = PcdGet64 (PcdSystemMemoryBase) + PcdGet64 (PcdSystemMemorySize);
++        DEBUG ((DEBUG_ERROR,
++                "HVLOG: NWOAS DART backing: BootArgs invalid (phys_base=0x%lx mem_size=0x%lx) -> fell back to PCD 0x%lx\n",
++                PhysBase, MemSize, mApcieBackingPa));
++      }
++      DEBUG ((DEBUG_ERROR,
++              "HVLOG: NWOAS DART backing computed 0x%lx (phys_base=0x%lx mem_size=0x%lx win=0x%lx)\n",
++              mApcieBackingPa, PhysBase, MemSize, (UINT64)APCIE_WIN_SIZE));
++    }
++
+     //
+     // Get the base addresses from the ADT. Right now there's no good way I know of to test for:
+     //   a. the number of dies a multi-die capable SoC has.
+@@ -514,6 +1412,27 @@ AppleDartIoMmuDxeInitialize(
+         //                 NULL
+         //                 );
+     }
++    //
++    // NWOAS: set up real translation for the PCIe (apcie) DARTs and install the
++    // IoMmu protocol so XhciDxe gets valid DMA (IOVA) addresses for the USB-A
++    // FL1100 controller (which cannot use bypass mode).
++    //
++    DEBUG((DEBUG_ERROR, "HVLOG: AppleDartIoMmu init reached apcie setup\n"));
++    SetupApcieDarts();
++    if (mApcieDartReady) {
++      EFI_STATUS ApcieStatus = gBS->InstallMultipleProtocolInterfaces(
++                                     &ImageHandle,
++                                     &gEdkiiIoMmuProtocolGuid,
++                                     &mAppleDartIoMmuProtocol,
++                                     NULL);
++      DEBUG((DEBUG_ERROR, "HVLOG: AppleDartIoMmu IoMmu protocol install %r\n", ApcieStatus));
++      ApcieStatus = gBS->CreateEvent(EVT_SIGNAL_EXIT_BOOT_SERVICES, TPL_NOTIFY,
++                                     ApcieDartExitBootServicesHandler, NULL, &mApcieEbsEvent);
++      DEBUG((DEBUG_ERROR, "HVLOG: NWOAS-EBS dart-window hook registered %r\n", ApcieStatus));
++    } else {
++      DEBUG((DEBUG_ERROR, "HVLOG: AppleDartIoMmu setup NOT ready, IoMmu NOT installed\n"));
++    }
++
+     DEBUG((DEBUG_INFO, "All done\n"));
+     return EFI_SUCCESS;
+-}
+\ No newline at end of file
++}
+diff --git a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.inf b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.inf
+index c95c52f..576aff5 100644
+--- a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.inf
++++ b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.inf
+@@ -46,6 +46,7 @@
+   MemoryAllocationLib
+   UefiDriverEntryPoint
+   DxeServicesLib
++  DxeServicesTableLib
+   IoLib
+   PcdLib
+   UefiLib
+@@ -56,6 +57,9 @@
+ [Pcd]
+   gAppleSiliconPkgTokenSpaceGuid.PcdAppleSocIdentifier
+   gEmbeddedTokenSpaceGuid.PcdDmaDeviceOffset
++  gArmTokenSpaceGuid.PcdSystemMemoryBase     # NWOAS: invalid-BootArgs fallback only (module-local unpatched copy)
++  gArmTokenSpaceGuid.PcdSystemMemorySize
++  gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer  # NWOAS: BootArgs (phys_base/mem_size) for the low-RAM DMA alias backing
+ 
+ [FixedPcd]
+   gAppleSiliconPkgTokenSpaceGuid.PcdAppleNumDwc3Controllers
+diff --git a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleSiliconPciPlatformDxe/AppleSiliconPciPlatformDxe.c b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleSiliconPciPlatformDxe/AppleSiliconPciPlatformDxe.c
+index b644927..048acb0 100644
+--- a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleSiliconPciPlatformDxe/AppleSiliconPciPlatformDxe.c
++++ b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleSiliconPciPlatformDxe/AppleSiliconPciPlatformDxe.c
+@@ -72,6 +72,15 @@ STATIC EFI_STATUS AppleSiliconPciePlatformDxeGetResetGpios(dt_node_t *SubNode, I
+   //
+   UINT32 *FunctionPerst = (UINT32 *)dt_node_prop(SubNode, "function-perst", &len);
+   //
++  // NWOAS: guard a missing/short "function-perst" so we return an error instead of
++  // dereferencing NULL. This driver runs before BDS on every boot; a NULL fault here
++  // would brick the boot. A missing reset GPIO just means we skip that port.
++  //
++  if (FunctionPerst == NULL || len < 4 * sizeof(UINT32)) {
++    DEBUG((DEBUG_ERROR, "%a - 'function-perst' missing/short; cannot get reset GPIO\n", __FUNCTION__));
++    return EFI_NOT_FOUND;
++  }
++  //
+   // Get the reset GPIO values from the node.
+   //
+ 
+@@ -145,6 +154,12 @@ STATIC EFI_STATUS AppleSiliconPciePlatformDxeSetupPciePort(APPLE_PCIE_COMPLEX_IN
+   PciePortInfo->PortSubNode = SubNode;
+ 
+   Status = AppleSiliconPciePlatformDxeGetResetGpios(SubNode, Index, &ResetGpioStruct);
++  if (EFI_ERROR(Status)) {
++    // NWOAS: no reset GPIO => can't bring this port up. Return the error so the caller
++    // skips the port (it no longer ASSERTs), keeping the boot alive.
++    DEBUG((DEBUG_ERROR, "%a - reset GPIO lookup failed (%r); skipping port\n", __FUNCTION__, Status));
++    return Status;
++  }
+ 
+   DEBUG((DEBUG_INFO, "%a - Reset GPIO number is 0x%x\n", __FUNCTION__, ResetGpioStruct.GpioNum));
+   PciePortInfo->ResetGpioDesc = ResetGpioStruct;
+@@ -335,8 +350,23 @@ STATIC EFI_STATUS AppleSiliconPciePlatformDxeSetupPciePort(APPLE_PCIE_COMPLEX_IN
+   }
+ 
+   AppleSiliconPcieClearBits(PORT_APPCLK_CGDIS, PciePortInfo->DeviceBaseAddress + PORT_APPCLK);
+-  
+-  DEBUG((DEBUG_INFO, "%a - PCIe port %d setup done\n", __FUNCTION__, PciePortInfo->DevicePortIndex));
++
++  //
++  // NWOAS Stage 2: unmask this port's INTx aggregate. Windows enumerates the PCIe via ACPI
++  // (MCFG + PNP0A08, added Stage 1), but a downstream leaf device's PnP StartDevice cannot
++  // complete its interrupt connection until the physical port INTx line is unmasked here:
++  // device INTA-D -> PORT_INTSTAT bits 0-3 -> this port's aggregate AIC SPI (port0=695,
++  // port1(FL1100)=698, port2(Ethernet)=701) -> m1n1 vGIC -> guest. We mask ALL sources first,
++  // then unmask ONLY INTx (bits 0-3): the other sources (AER/MSI/link/completion-timeout) are
++  // not serviced by the m1n1 hv and could storm. The hv storm fix (hv_exc.c: aic_set_mask on
++  // level-IRQ inject, maintenance-EOI unmask) keeps even INTx from re-storming EL2 before the
++  // guest ISR services it. Requires the storm-fixed m1n1-bare (kmutil) to be installed.
++  //
++  MmioWrite32 (PciePortInfo->DeviceBaseAddress + PORT_INTSTAT,   0xFFFFFFFF);          // clear stale status
++  MmioWrite32 (PciePortInfo->DeviceBaseAddress + PORT_INTMSKSET, 0xFFFFFFFF);          // mask all sources
++  MmioWrite32 (PciePortInfo->DeviceBaseAddress + PORT_INTMSKCLR, PORT_INT_INTx_MASK);  // unmask INTx (bits 0-3)
++
++  DEBUG((DEBUG_INFO, "%a - PCIe port %d setup done (NWOAS: INTx unmasked)\n", __FUNCTION__, PciePortInfo->DevicePortIndex));
+   return EFI_SUCCESS;
+ }
+ 
+@@ -363,6 +393,16 @@ AppleSiliconPciPlatformDxeInitialize(
+ 
+     DEBUG((DEBUG_INFO, "%a - started\n", __FUNCTION__));
+ 
++    //
++    // NWOAS: bail gracefully (don't fault in the dt_node_reg below) if the platform DT
++    // has no 'apcie' node or the allocation failed. No PCIe => no USB-A, but the boot
++    // continues to BDS rather than dereferencing NULL before BDS on every boot.
++    //
++    if (ApcieNode == NULL || PcieComplexInfoStruct == NULL) {
++      DEBUG((DEBUG_ERROR, "%a - no 'apcie' DT node (or alloc failed); skipping PCIe bring-up\n", __FUNCTION__));
++      return EFI_SUCCESS;
++    }
++
+     //
+     // Pull the ECAM base address from the FDT. Ditto for "rc" base address.
+     // With the Asahi Linux FDTs, we can usually safely assume this to be the first reg entry,
+@@ -423,10 +463,20 @@ AppleSiliconPciPlatformDxeInitialize(
+       DEBUG((DEBUG_INFO, "%a - starting PCIe port setup\n", __FUNCTION__));
+       Status = AppleSiliconPciePlatformDxeSetupPciePort(PcieComplexInfoStruct, PcieSubNode, PciePortIndex);
+       if(EFI_ERROR(Status)) {
+-        DEBUG((DEBUG_ERROR, "%a - Port setup failed\n", __FUNCTION__));
+-        ASSERT_EFI_ERROR(Status);
++        //
++        // NWOAS: do NOT ASSERT here. This is a DXE_DRIVER with [Depex] TRUE, so it runs
++        // on EVERY boot BEFORE BDS. With PcdDebugPropertyMask|0x2f (ASSERT + DEADLOOP)
++        // an ASSERT_EFI_ERROR would CpuDeadLoop() the firmware short of BDS whenever a
++        // port's REFCLK/PortReady times out -- exactly the "ASMedia controller isn't
++        // working" failure this driver was disabled for. Degrade to skipping the port:
++        // a failed bring-up means "no device on that port" (e.g. no USB-A), NOT a
++        // bricked boot. The working UEFI->BDS path must survive a PCIe port failure.
++        //
++        DEBUG((DEBUG_ERROR, "%a - Port %d setup failed (%r) - skipping port, continuing boot\n",
++               __FUNCTION__, PciePortIndex, Status));
++      } else {
++        DEBUG((DEBUG_ERROR, "%a - Port setup succeeded\n", __FUNCTION__));
+       }
+-      DEBUG((DEBUG_ERROR, "%a - Port setup succeeded\n", __FUNCTION__));
+       PciePortIndex++;
+     }
+ 
+diff --git a/Silicon/Apple/AppleSiliconPkg/Library/AppleArmMmuLib/AArch64/ArmMmuLibCore.c b/Silicon/Apple/AppleSiliconPkg/Library/AppleArmMmuLib/AArch64/ArmMmuLibCore.c
+index fea768d..cd75348 100644
+--- a/Silicon/Apple/AppleSiliconPkg/Library/AppleArmMmuLib/AArch64/ArmMmuLibCore.c
++++ b/Silicon/Apple/AppleSiliconPkg/Library/AppleArmMmuLib/AArch64/ArmMmuLibCore.c
+@@ -60,6 +60,7 @@ ArmMemoryAttributeToPageAttribute (
+ 
+     case ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK_XP:
+     case ARM_MEMORY_REGION_ATTRIBUTE_DEVICE:
++    case ARM_MEMORY_REGION_ATTRIBUTE_DEVICE_NGNRE:
+       if (ArmReadCurrentEL () == AARCH64_EL2) {
+         Permissions = TT_XN_MASK;
+       } else {
+@@ -88,6 +89,10 @@ ArmMemoryAttributeToPageAttribute (
+     case ARM_MEMORY_REGION_ATTRIBUTE_UNCACHED_UNBUFFERED:
+       return TT_ATTR_INDX_MEMORY_NON_CACHEABLE;
+ 
++    // NWOAS: Apple PCIe MMIO -> Device-nGnRE (MAIR index 4)
++    case ARM_MEMORY_REGION_ATTRIBUTE_DEVICE_NGNRE:
++      return TT_ATTR_INDX_DEVICE_MEMORY_NGNRE | Permissions;
++
+     default:
+       ASSERT (0);
+     case ARM_MEMORY_REGION_ATTRIBUTE_DEVICE:
+@@ -775,7 +780,9 @@ ArmConfigureMmu (
+     MAIR_ATTR (TT_ATTR_INDX_DEVICE_MEMORY, MAIR_ATTR_DEVICE_MEMORY)               |
+     MAIR_ATTR (TT_ATTR_INDX_MEMORY_NON_CACHEABLE, MAIR_ATTR_NORMAL_MEMORY_NON_CACHEABLE) |
+     MAIR_ATTR (TT_ATTR_INDX_MEMORY_WRITE_THROUGH, MAIR_ATTR_NORMAL_MEMORY_WRITE_THROUGH) |
+-    MAIR_ATTR (TT_ATTR_INDX_MEMORY_WRITE_BACK, MAIR_ATTR_NORMAL_MEMORY_WRITE_BACK)
++    MAIR_ATTR (TT_ATTR_INDX_MEMORY_WRITE_BACK, MAIR_ATTR_NORMAL_MEMORY_WRITE_BACK)  |
++    // NWOAS: index 4 = Device-nGnRE, for Apple PCIe MMIO (posted writes / early ack)
++    MAIR_ATTR (TT_ATTR_INDX_DEVICE_MEMORY_NGNRE, MAIR_ATTR_DEVICE_MEMORY_NGNRE)
+     );
+ 
+   ArmSetTTBR0 (TranslationTable);
+diff --git a/Silicon/Apple/AppleSiliconPkg/Library/ArmGicArchLib/ArmGicArchLib.c b/Silicon/Apple/AppleSiliconPkg/Library/ArmGicArchLib/ArmGicArchLib.c
+index 5f218e2..1ef9659 100644
+--- a/Silicon/Apple/AppleSiliconPkg/Library/ArmGicArchLib/ArmGicArchLib.c
++++ b/Silicon/Apple/AppleSiliconPkg/Library/ArmGicArchLib/ArmGicArchLib.c
+@@ -52,10 +52,15 @@ ArmGicArchLibInitialize (
+       IccSre = ArmGicV3GetControlSystemRegisterEnable ();
+     }
+ 
+-    if (IccSre & ICC_SRE_EL2_SRE) {
+-      mGicArchRevision = ARM_GIC_ARCH_REVISION_3;
+-      goto Done;
+-    }
++    // NWOAS: under the m1n1 vGIC the SRE read-back at EL1 does not reflect SRE=1
++    // even though the M1 implements the GICv3 sysreg CPU interface (the M1 forces
++    // ICC_SRE_EL2.Enable=1 and the guest's ICC_SRE_EL1.SRE reads back 0), so this
++    // check fails and we wrongly fall back to GICv2 -> absent MMIO GICC -> data
++    // abort at 0x8. Force GICv3 on Apple silicon: the ICC_* CPU-interface sysregs
++    // work through the HW (virtual) interface regardless of the SRE read-back.
++    (void)IccSre;
++    mGicArchRevision = ARM_GIC_ARCH_REVISION_3;
++    goto Done;
+   }
+   mGicArchRevision = ARM_GIC_ARCH_REVISION_2;
+ 
+diff --git a/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c b/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c
+index 347e917..54c61af 100644
+--- a/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c
++++ b/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c
+@@ -33,8 +33,35 @@ EarlySetup (
+   }
+ 
+   *SystemMemoryBase = BootArgs->phys_base;
+-  *SystemMemorySize = BootArgs->phys_base + BootArgs->mem_size - BootArgs->phys_base;
++  //
++  // NWOAS EXP-5 5c (low-RAM DMA alias for the platform xHCI): carve the TOP 0xE0000000 (3.5GB) of
++  // guest RAM out of the UEFI/Windows system-memory map. That top slice is the "backing" that the
++  // m1n1 hv aliases to the low IPA window (base 0x20000000, size 0xE0000000) so the FL1100 xHCI --
++  // behind a 32-bit-IOVA Apple PCIe DART -- has device-reachable RAM below 4GB. Excluding it here
++  // means neither UEFI nor Windows ever allocates it directly, while it stays real RAM reachable
++  // through the alias. Keep in sync with (carve size == window size == 0xE0000000):
++  //   - AppleDartIoMmuDxe backing = phys_base + mem_size - APCIE_WIN_SIZE (this reduced top)
++  //   - hv map_hw alias backing    = phys_base + mem_size - win_size  (pcie_emul; same address)
++  //   - MemoryInitPeiLib window    = [0x20000000, 0x100000000) as the sole Conventional pool
++  //   - DSDT _DMA _TRA = 0 (device == the low IPA window; no >4GB translation needed)
++  //
++  *SystemMemorySize = BootArgs->mem_size - 0x100000000;   // EXP-5 5c-v7: carve top 4GB (window base 0, size 4GB)
+ 
++  //
++  // NWOAS EXP-5 5c (coherence, EARLY backing signal): emit the low-window backing PA HERE, in
++  // EarlySetup (PrePi/SEC), which runs BEFORE DxeMain's CoreInitializeMemoryServices seeds the DXE
++  // pool from the window. Under Method A the window is the ONLY Conventional pool, so DXE writes to
++  // it from pool-init onward; the hv alias must therefore carry the CORRECT backing BEFORE that. The
++  // hv breaker (pcie_emul-exp5.py) parses "backing PA 0x..." from the serial and re-maps its alias
++  // to match -- previously it only saw the DART's per-Map log (during BDS, AFTER the pool is in use),
++  // so the deferred re-map would shift already-written DXE data by the ~208KB inner-m1n1 skew and
++  // corrupt the boot. Logging the SAME value (SystemMemoryBase+SystemMemorySize == mApcieBackingPa ==
++  // phys_base+mem_size-WIN_SIZE) here lets the breaker correct the alias while the window is still
++  // untouched. DEBUG_ERROR level so it reaches the m1n1 serial in real time (same path as the DART's
++  // HVLOG lines, AppleDartIoMmuDxe.c:543).
++  //
++  DEBUG((DEBUG_ERROR, "HVLOG: NWOAS EARLY DART IOVA 0x0..0x100000000 -> backing PA 0x%llx (EarlySetup, pre-DXE)\n",
++         (UINT64)(*SystemMemoryBase + *SystemMemorySize)));
+ 
+   PatchPcdSet64(PcdFrameBufferAddress, BootArgs->video.base);
+   PatchPcdSet64(PcdFrameBufferSize, ALIGN_UP(BootArgs->video.stride * BootArgs->video.height, 0x4000)); // for notched/internal displays, the FB size has to be aligned up!
+diff --git a/Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc b/Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc
+index 6c8bf81..a10893f 100644
+--- a/Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc
++++ b/Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc
+@@ -85,25 +85,25 @@ MULTIPLE_APIC_DESCRIPTION_TABLE Madt = {
+         0, 0, GET_MPIDR(0, 0, 0, 0), EFI_ACPI_6_3_GIC_ENABLED, 50, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // Icestorm-1 (Bootstrap)
+-        1, 1, GET_MPIDR(0, 0, 0, 1),  EFI_ACPI_6_3_GIC_ENABLED, 54, 0,
++        1, 1, GET_MPIDR(0, 0, 0, 1),  0 /* NWOAS: AP disabled for uniprocessor boot */, 54, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // Icestorm-2 (Bootstrap)
+-        2, 2, GET_MPIDR(0, 0, 0, 2),  EFI_ACPI_6_3_GIC_ENABLED, 54, 0,
++        2, 2, GET_MPIDR(0, 0, 0, 2),  0 /* NWOAS: AP disabled for uniprocessor boot */, 54, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // Icestorm-2 (Bootstrap)
+-        3, 3, GET_MPIDR(0, 0, 0, 3),  EFI_ACPI_6_3_GIC_ENABLED, 54, 0,
++        3, 3, GET_MPIDR(0, 0, 0, 3),  0 /* NWOAS: AP disabled for uniprocessor boot */, 54, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // Firestorm-0 (P-core cluster 0)
+-        4, 4, GET_MPIDR(0, 1, 1, 0),  EFI_ACPI_6_3_GIC_ENABLED, 58, 0,
++        4, 4, GET_MPIDR(0, 1, 1, 0),  0 /* NWOAS: AP disabled for uniprocessor boot */, 58, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // Firestorm-1 (P-core cluster 0)
+-        5, 5, GET_MPIDR(0, 1, 1, 1),  EFI_ACPI_6_3_GIC_ENABLED, 62, 0,
++        5, 5, GET_MPIDR(0, 1, 1, 1),  0 /* NWOAS: AP disabled for uniprocessor boot */, 62, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // Firestorm-2 (P-core cluster 0)
+-        6, 6, GET_MPIDR(0, 1, 1, 2),  EFI_ACPI_6_3_GIC_ENABLED, 34, 0,
++        6, 6, GET_MPIDR(0, 1, 1, 2),  0 /* NWOAS: AP disabled for uniprocessor boot */, 34, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // // Firestorm-3 (P-core cluster 0)
+-        7, 7, GET_MPIDR(0, 1, 1, 3),  EFI_ACPI_6_3_GIC_ENABLED, 38, 0,
++        7, 7, GET_MPIDR(0, 1, 1, 3),  0 /* NWOAS: AP disabled for uniprocessor boot */, 38, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+ },
+ EFI_ACPI_6_0_GIC_DISTRIBUTOR_INIT(0, FixedPcdGet64 (PcdGicDistributorBase), 0, 3),
+diff --git a/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c b/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
+index 2848779..4c46bda 100644
+--- a/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
++++ b/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
+@@ -30,7 +30,34 @@
+ //Device memory map configuration file for UEFI (this is to help with pagetable initialization)
+ #include <Library/T810XFamilyVirtualMemoryMapDefines.h>
+ 
+-#define MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS 18
++#define MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS 20
++
++//
++// NWOAS Stage 4 (low-RAM DMA alias for the platform xHCI, see DSDT SCB0/XHC0):
++// The m1n1 hypervisor aliases guest IPA [NWOAS_DMA_WIN_BASE, +NWOAS_DMA_WIN_SIZE) onto the
++// TOP NWOAS_DMA_WIN_SIZE bytes of real guest RAM (SystemMemoryTop - NWOAS_DMA_WIN_SIZE).
++// Because the Apple PCIe DART is 32-bit-IOVA-only and Windows' AllocateCommonBuffer caps a
++// 32-bit device's *physical* allocation at 4GB (it does NOT relocate via ACPI _DMA _TRA), we
++// must make real, device-reachable RAM physically appear below 4GB. We advertise this low
++// window as usable system memory (Windows allocates xHCI DMA rings/DCBAA from it) and RESERVE
++// the high backing so the same DRAM is never double-allocated. Must stay consistent with the
++// hv map_hw() alias, the UEFI DART EBS window, and the DSDT _DMA (_TRA=0).
++//
++#define NWOAS_DMA_WIN_BASE   0x0000000000000000ULL   // EXP-5 5c-v7: base lowered 0x20000000 -> 0 (whole sub-4GB is the window). bootmgfw needs RAM at 0x10000000 (ConvertPages failed when [0,0x20000000) was NonExist under Method A)
++#define NWOAS_DMA_WIN_SIZE   0x0000000100000000ULL   // 4GB (EXP-5 5c-v7: 0xE0000000 -> 0x100000000; base+size == 0x100000000, window top pinned at 4GB)
++
++//
++// NWOAS deferred-application gate (2026-07-10 pivot, see MemoryPeim() !Found block).
++//   0 (default) = DEFERRED: advertise the high system RAM [phys_base, backing) as normal
++//       EFI_RESOURCE_SYSTEM_MEMORY so UEFI executes in device-reachable real RAM -- its own xHCI
++//       reads work (matches the proven no-EXP-5 path that renders Windows Setup; no FL1100 HSE from
++//       UEFI running in Reserved RAM). The low [0,4GB) window built further below stays the ONLY
++//       sub-4GB Conventional pool, so Windows' 32-bit xHCI common buffer still lands there (DART EBS
++//       static window -> backing). This is the "UEFI full RAM, kernel-only DART window" architecture.
++//   1 = legacy Method A: high RAM Reserved to force Windows into the window -- but that put UEFI's
++//       own stack/DMA buffers in FL1100-unreachable Reserved RAM (HSE, read stall). Kept for revert.
++//
++#define NWOAS_METHOD_A 0
+ 
+ #define DDR_ATTRIBUTES_CACHED           ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK
+ #define DDR_ATTRIBUTES_UNCACHED         ARM_MEMORY_REGION_ATTRIBUTE_UNCACHED_UNBUFFERED
+@@ -185,13 +212,43 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
+   }
+ 
+   if (!Found) {
+-    // Reserved the memory space occupied by the firmware volume
++#if NWOAS_METHOD_A
++    //
++    // NWOAS EXP-5 5c Method A (design §4.4 approach 1): advertise the MAIN (high) system RAM as
++    // EFI_RESOURCE_MEMORY_RESERVED, NOT EFI_RESOURCE_SYSTEM_MEMORY. Windows reclaims Conventional/
++    // BootServices/Loader memory after ExitBootServices but NEVER Reserved memory; making high RAM
++    // Reserved hides it from Windows so it cannot host an xHCI common buffer at a >4GB PA that the
++    // 32-bit Apple PCIe DART cannot reach. The low DMA window (built further below at
++    // NWOAS_DMA_WIN_BASE) is then the ONLY EFI_RESOURCE_SYSTEM_MEMORY -> the ONLY Conventional pool
++    // -> Windows is forced to place the common buffer in the window. Attribute arg is 0 to match the
++    // reserved-resource convention used by ReserveMemoryRegion() above.
++    // SUPERSEDED: this forced UEFI's own stack/DMA buffers into unreachable Reserved RAM -> FL1100
++    // HSE / UEFI read stall (never reached Windows). Replaced by the deferred approach (#else).
++    //
++    BuildResourceDescriptorHob (
++      EFI_RESOURCE_MEMORY_RESERVED,
++      0,
++      PcdGet64 (PcdSystemMemoryBase),
++      PcdGet64 (PcdSystemMemorySize)
++      );
++#else
++    //
++    // NWOAS deferred approach (2026-07-10 pivot, NWOAS_METHOD_A==0): advertise the high system RAM
++    // [PcdSystemMemoryBase, +PcdSystemMemorySize) == [phys_base, backing) as normal SYSTEM_MEMORY.
++    // PcdSystemMemorySize is already (mem_size - 4GB) from AdtParser EarlySetup, so this covers only
++    // the low 12GB and leaves the top-4GB backing slice out of the Conventional pool -- exactly the
++    // range the low [0,4GB) window (built below) is aliased onto by the hv, so the same DRAM is never
++    // double-allocated. Result: UEFI/DXE run in device-reachable real RAM (FL1100 reaches UEFI's own
++    // xHCI buffers via the dynamic per-Map DART -> UEFI USB reads work like no-EXP-5), while the low
++    // window remains the sole sub-4GB Conventional pool for Windows' 32-bit xHCI common buffer.
++    //
+     BuildResourceDescriptorHob (
+       EFI_RESOURCE_SYSTEM_MEMORY,
+       ResourceAttributes,
+       PcdGet64 (PcdSystemMemoryBase),
+       PcdGet64 (PcdSystemMemorySize)
+       );
++#endif
+   }
+ 
+   //
+@@ -270,7 +327,18 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
+       NextHob.Raw = GET_NEXT_HOB (NextHob);
+     }
+ 
+-    ASSERT (Found);
++    //
++    // NWOAS EXP-5 5c Method A: under approach 1 the main RAM resource is now
++    // EFI_RESOURCE_MEMORY_RESERVED (see the !Found block above), so this SYSTEM_MEMORY search over
++    // the FD range legitimately finds nothing (Found stays FALSE) and the split / BootServicesData
++    // carve above is skipped. That is EXPECTED and safe: the FD lives in reserved RAM, which DXE
++    // never hands out, so the firmware volume is already protected without the carve. The stock
++    // ASSERT(Found) assumed a SYSTEM_MEMORY main resource; downgrade it to a non-fatal note so the
++    // Method-A map does not wedge here.
++    //
++    if (!Found) {
++      DEBUG ((DEBUG_ERROR, "NWOAS: FD (0x%lx) not in a SYSTEM_MEMORY resource (Method A: high RAM reserved) -- FD protected by reservation\n", (UINT64)PcdGet64 (PcdFdBaseAddress)));
++    }
+   }
+   
+   //reserve secondary stacks carveouts passed into cpm-impl-reg 
+@@ -288,7 +356,34 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
+     );
+   }
+ 
+-
++  //
++  // NWOAS EXP-5 5c Method A (design §4.4): the low DMA-alias window is now the ONLY
++  // EFI_RESOURCE_SYSTEM_MEMORY resource -> the ONLY Conventional pool Windows sees. Backing = top
++  // NWOAS_DMA_WIN_SIZE of RAM; SystemMemoryTop (computed above) matches the m1n1 hv's mem_top (both
++  // = BootArgs phys_base + mem_size), so all four consumers (hv alias / this HOB / DART EBS window /
++  // DSDT _DMA) agree on the same backing physical range. High RAM is now EFI_RESOURCE_MEMORY_RESERVED
++  // (see the !Found block above), so Windows cannot use it -> the xHCI common buffer is forced here.
++  //
++  BuildResourceDescriptorHob (
++    EFI_RESOURCE_SYSTEM_MEMORY,
++    ResourceAttributes,
++    NWOAS_DMA_WIN_BASE,
++    NWOAS_DMA_WIN_SIZE
++    );
++  //
++  // NWOAS EXP-5 5c Method A (design §4.4 recommends REMOVAL): the window's
++  // BuildMemoryAllocationHob(..., EfiBootServicesData) is REMOVED so the window is a PURE Conventional
++  // pool (free from before ExitBootServices, both usable AND reclaimable by Windows). The prior 5b
++  // reservation as BootServicesData was a workaround for a window-BAR abort seen when high RAM was
++  // still Conventional and DMA buffers strayed there; under Method A high RAM is Reserved and the
++  // §4.3 window-aware DART Map (AppleDartIoMmuDxe) translates boot-time window DMA to real backing,
++  // so the window no longer needs to be withheld from the free pool.
++  //   (removed) BuildMemoryAllocationHob (NWOAS_DMA_WIN_BASE, NWOAS_DMA_WIN_SIZE, EfiBootServicesData);
++  //
++  DEBUG ((DEBUG_ERROR,
++    "NWOAS: low DMA window 0x%lx..0x%lx (Conventional, sole pool) aliased to backing 0x%lx..0x%lx (high RAM reserved)\n",
++    NWOAS_DMA_WIN_BASE, NWOAS_DMA_WIN_BASE + NWOAS_DMA_WIN_SIZE,
++    SystemMemoryTop - NWOAS_DMA_WIN_SIZE, SystemMemoryTop));
+ 
+   // Build Memory Allocation Hob
+   InitMmu (MemoryTable);
+@@ -430,6 +525,13 @@ VOID BuildVirtualMemoryMap(OUT ARM_MEMORY_REGION_DESCRIPTOR **VirtualMemoryMap)
+     VirtualMemoryTable[Index].PhysicalBase + VirtualMemoryTable[Index].Length
+     ));
+ 
++  //NWOAS Stage 4: low DMA-alias window (cached RAM; the m1n1 hv aliases this IPA onto real
++  //RAM backing, so it must be mapped like DRAM for UEFI/Windows to read/write it).
++  VirtualMemoryTable[++Index].PhysicalBase = NWOAS_DMA_WIN_BASE;
++  VirtualMemoryTable[Index].VirtualBase    = NWOAS_DMA_WIN_BASE;
++  VirtualMemoryTable[Index].Length         = NWOAS_DMA_WIN_SIZE;
++  VirtualMemoryTable[Index].Attributes     = CacheAttributes;
++
+   //Framebuffer
+   VirtualMemoryTable[++Index].PhysicalBase = PcdGet64(PcdFrameBufferAddress);
+   VirtualMemoryTable[Index].VirtualBase    = PcdGet64(PcdFrameBufferAddress);
+diff --git a/Silicon/Apple/T810XFamilyPkg/T810XFamilyPkg.dsc.inc b/Silicon/Apple/T810XFamilyPkg/T810XFamilyPkg.dsc.inc
+index 19b023e..9eb14f8 100644
+--- a/Silicon/Apple/T810XFamilyPkg/T810XFamilyPkg.dsc.inc
++++ b/Silicon/Apple/T810XFamilyPkg/T810XFamilyPkg.dsc.inc
+@@ -84,7 +84,7 @@
+   #
+   gArmTokenSpaceGuid.PcdPciMmio32Base|0xc0000000
+   gArmTokenSpaceGuid.PcdPciMmio32Size|0x40000000
+-  gEfiMdePkgTokenSpaceGuid.PcdPciMmio32Translation|0x500000000
++  gEfiMdePkgTokenSpaceGuid.PcdPciMmio32Translation|0x600000000
+   gEfiMdePkgTokenSpaceGuid.PcdPciMmio64Translation|0x0
+   #
+   # 64 bit PCIe MMIO *is* prefetchable.
+@@ -112,7 +112,7 @@
+   #
+   gArmTokenSpaceGuid.PcdPciMmio32Base|0xc0000000
+   gArmTokenSpaceGuid.PcdPciMmio32Size|0x40000000
+-  gEfiMdePkgTokenSpaceGuid.PcdPciMmio32Translation|0x500000000
++  gEfiMdePkgTokenSpaceGuid.PcdPciMmio32Translation|0x600000000
+   gEfiMdePkgTokenSpaceGuid.PcdPciMmio64Translation|0x0
+   #
+   # 64 bit PCIe MMIO *is* prefetchable.

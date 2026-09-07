@@ -1,0 +1,15 @@
+{
+  "captured_epoch": 1788753334,
+  "experiment": "S93 depth256",
+  "source_log": "nwoas_scripts/logs/nvme-s93-20260907-125315.KyzBAI.snapshot-handoff",
+  "source_sha256": "4ead8b006960229fe35118e43678c5ec4d55fc0b77cead69ab69ab6133f4c635",
+  "pci_enumeration": true,
+  "admin_queue_ready": true,
+  "successful_io_reads": 388,
+  "io_errors": 0,
+  "successful_io_bytes": 1650688,
+  "admin_unsupported_responses": 10,
+  "cfs": false,
+  "physical_install_disk_selection_verified": false,
+  "storage_writes": false
+}
