@@ -45,6 +45,7 @@
   BaseLib
   PcdLib
   AppleDTLib
+  NonDiscoverableDeviceRegistrationLib
 
 [Guids]
   gEfiEventReadyToBootGuid                        ## CONSUMES ## EVENT ## ReadyToBoot Event Group

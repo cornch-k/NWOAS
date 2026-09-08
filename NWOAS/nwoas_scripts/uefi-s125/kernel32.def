@@ -1,0 +1,13 @@
+LIBRARY kernel32.dll
+EXPORTS
+GetStdHandle
+WriteFile
+GetCommandLineW
+ExitProcess
+GetLastError
+GetVolumeInformationW
+GetDiskFreeSpaceExW
+CreateFileW
+DeviceIoControl
+CloseHandle
+FlushFileBuffers

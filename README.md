@@ -16,25 +16,24 @@ Apple Boot ROM -> iBoot -> m1n1 (EL2 hypervisor, vGIC)
   -> loader-to-kernel handoff
 ```
 
-## Current status — 2026-09-07
+## Current status — 2026-09-09
 
-Windows11 ARM64 Setup boots on the M1 Mac mini with Tahoe firmware. USB-A
-keyboard and a directly attached USB-C Magic Trackpad have user-confirmed input.
-Setup reaches disk selection after the documented single-core compatibility workaround.
+Windows 11 ARM64 now reaches the desktop from the Mac mini M1 internal SSD while
+retaining Tahoe firmware. S124 made the guarded host-mediated NVMe path durable
+enough to apply and verify the Windows image. S126 added a RAM-backed command
+transport, S128 exposed the internal SSD to UEFI, and S129 selected it before USB.
+The observed sequence was installed-OS user-space handshake, a Windows-initiated
+restart, OOBE, offline local setup, and the Windows 11 desktop.
 
-S93 adds a **host-mediated NVMe controller** over the internal ANS2 SSD: Windows
-enumerated it and completed real I/O reads; the Setup disk list showing the
-internal SSD was user-confirmed (S94). In S95 the APFS container was shrunk from
-Recovery and a 25 GB test partition WINTEST was created. S96 adds a write path
-that is **restricted to the WINTEST LBA window at three layers** (m1n1 C guard,
-relay namespace, guest module); a host-side round-trip and refusal test passed,
-and Windows Setup then formatted WINTEST to NTFS through the relay
-(user-confirmed, zero out-of-window writes). S97 moves to 16-block
-commands; the same format then took about 10 s instead of 10 min (≈5.8 MB/s).
-Installation, standalone storage operation, SMP, throughput adequate for an
-install, and the requested macOS/Windows dual-boot layout remain unfinished.
+This is an important boot milestone, but it is not yet a production native-driver
+stack. The current desktop reports one CPU core, one logical processor, 4.1 GB of
+RAM, and an unreliable 0.04 GHz speed value. Storage is still relayed through the
+host process, USB-C hot-unplug/replug does not recover reliably, and networking,
+GPU acceleration, SMP, full memory, standalone storage, and benchmark performance
+remain unfinished. The next work is bottleneck measurement and CPU/memory exposure,
+followed by native device drivers.
 
-Start with the [fable5.1 handoff](NWOAS/NWOAS-HANDOFF-FABLE5.1-2026-09-07.md),
+Start with the [latest session status](NWOAS/NWOAS-STATUS-2026-09-09-SESSION.md),
 [hardware evidence](NWOAS/nwoas_scripts/nvme-s93/hardware-evidence.json), and
 [companion source patches](NWOAS/companion-patches/2026-09-07/README.md).
 Build success alone is never treated as hardware success.

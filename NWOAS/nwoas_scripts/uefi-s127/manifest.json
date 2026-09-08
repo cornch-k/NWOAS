@@ -1,0 +1,6 @@
+{
+  "payload": "/Volumes/X31/NWOAS/m1n1_windows/m1n1-payload-s127-uefinvme-connect.bin",
+  "sha256": "21a975e3961f7831146f72b96efb78873192654a00e774f9651a4f911d7babc0",
+  "bytes": 32342016,
+  "change": "S125 NVMe registration plus explicit BDS BeforeConsole recursive connect of NVMe handles only; original sources restored; hardware untested"
+}

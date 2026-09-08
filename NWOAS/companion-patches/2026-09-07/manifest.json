@@ -4,7 +4,7 @@
   "upstream": "https://github.com/AppleWOA/m1n1_windows.git",
   "base_commit": "59fb54424d35fa4c6c7346201b3f2759109e13ee",
   "patch": "m1n1_windows/changes.patch",
-  "patch_sha256": "f0e1d0b3b90a5a79ff1813085963f53beeccd1be64e999e4b15c45b052d821ec",
+  "patch_sha256": "a1a9c472b498159aa932cf0594f9c78fc951963ff4ffc31e707beb631a91c1e2",
   "added_root": "m1n1_windows/added",
   "added_files": [
    "bringup_atc1.py",
@@ -55,7 +55,7 @@
   "upstream": "https://github.com/AppleWOA/apple_silicon_platforms_mu.git",
   "base_commit": "8dbbcad527180ed31bc2f940d7c4574b18010438",
   "patch": "apple_silicon_platforms_mu/changes.patch",
-  "patch_sha256": "43522b9b72869b58c1f6e1804610332f2060be3db36a6039784391c71e5f32ef",
+  "patch_sha256": "1e57996e1c68c14455f0a57c975c6c483aa553e1c06d0fa4ef09250a3cb6a190",
   "added_root": "apple_silicon_platforms_mu/added",
   "added_files": [
    "Platform/MacMini2020Pkg/AcpiTables/IORT.aslc",

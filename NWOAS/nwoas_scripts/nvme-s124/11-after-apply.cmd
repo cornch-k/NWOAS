@@ -1,0 +1,21 @@
+@echo off
+set "TOOLS="
+for %%d in (C D E F G H I J) do if exist %%d:\NWAGENT.EXE set "TOOLS=%%d:"
+if not defined TOOLS exit /b 20
+%TOOLS%\NWGUARD.EXE C: identify
+if errorlevel 1 exit /b 21
+if not exist C:\S124-APPLY-PASS.TXT exit /b 22
+echo S124 KERNEL FINGERPRINT - ZERO EXPECTATION IS A DIAGNOSTIC SENTINEL
+%TOOLS%\NWREAD.EXE C:\Windows\System32\ntoskrnl.exe 0000000000000000000000000000000000000000000000000000000000000000 direct
+if errorlevel 2 exit /b 23
+echo S124 LOADER FINGERPRINT
+%TOOLS%\NWREAD.EXE C:\Windows\System32\winload.efi 0000000000000000000000000000000000000000000000000000000000000000 direct
+if errorlevel 2 exit /b 24
+echo S124 CURRENT PE BOOT CONFIGURATION
+bcdedit /enum all
+echo S124 INSTALLED EDITION
+dism /English /Image:C:\ /Get-CurrentEdition /LogPath:X:\S124-EDITION.LOG
+echo S124 INSTALLED ROOT
+dir C:\ /a
+echo S124 POST-APPLY REPORT COMPLETE
+exit /b 0

@@ -381,7 +381,7 @@ index 6bcdd57..16f10a7 100644
    # gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferWidth|1920
    # gAppleSiliconPkgTokenSpaceGuid.PcdFrameBufferHeight|1080
 diff --git a/Platform/MacMini2020Pkg/MacMini2020.fdf b/Platform/MacMini2020Pkg/MacMini2020.fdf
-index bf50d13..984ae45 100644
+index bf50d13..4cda850 100644
 --- a/Platform/MacMini2020Pkg/MacMini2020.fdf
 +++ b/Platform/MacMini2020Pkg/MacMini2020.fdf
 @@ -125,6 +125,7 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
@@ -392,7 +392,7 @@ index bf50d13..984ae45 100644
  
    INF MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
  !if $(SECURE_BOOT_ENABLE) == TRUE
-@@ -147,13 +148,17 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
+@@ -147,19 +148,23 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
    INF MdeModulePkg/Universal/WatchdogTimerDxe/WatchdogTimer.inf
  
    INF AppleSiliconPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf
@@ -413,6 +413,13 @@ index bf50d13..984ae45 100644
    INF MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceDxe.inf
  
    #NVMe Support
+   #TODO: ANS2/SART driver
+   #INF AppleSiliconPkg/Drivers/AppleANS2Dxe/AppleANS2Dxe.inf
+-  #INF MdeModulePkg/Bus/Pci/NvmExpressDxe/NvmExpressDxe.inf
++  INF MdeModulePkg/Bus/Pci/NvmExpressDxe/NvmExpressDxe.inf
+ 
+   #
+   # Virtual Keyboard
 @@ -172,10 +177,15 @@ FvNameGuid         = 84c90f2e-22a5-4c84-a199-a17f7ea7cf6d
  
    INF AppleSiliconPkg/Drivers/AppleEmbeddedGpioControllerDxe/AppleEmbeddedGpioControllerDxe.inf
@@ -446,7 +453,7 @@ index 2a526dc..feed8a7 100644
      PackagesPath = ("Platform", "MU_BASECORE", "Common/MU", "Common/TIANO", "Common/MU_OEM_SAMPLE", "Silicon/ARM/TIANO", "Silicon/Apple", "Common/MU_DFCI", "mu_feature_debugger")
  
 diff --git a/Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc b/Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc
-index 57f2120..0da8c1f 100644
+index 57f2120..77d23a7 100644
 --- a/Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc
 +++ b/Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc
 @@ -73,7 +73,14 @@
@@ -481,6 +488,15 @@ index 57f2120..0da8c1f 100644
  
    # Fake Variable Services
    MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
+@@ -676,7 +685,7 @@
+   MdeModulePkg/Bus/Scsi/ScsiBusDxe/ScsiBusDxe.inf
+   MdeModulePkg/Bus/Scsi/ScsiDiskDxe/ScsiDiskDxe.inf
+   MdeModulePkg/Universal/Disk/UdfDxe/UdfDxe.inf
+-  #MdeModulePkg/Bus/Pci/NvmExpressDxe/NvmExpressDxe.inf
++  MdeModulePkg/Bus/Pci/NvmExpressDxe/NvmExpressDxe.inf
+   MdeModulePkg/Universal/Disk/RamDiskDxe/RamDiskDxe.inf
+   AppleSiliconPkg/Drivers/BootRamdiskHelperDxe/BootRamdiskHelperDxe.inf
+ 
 @@ -725,11 +734,26 @@
    # PCI support
    #
@@ -535,7 +551,7 @@ index b1c0894..a57c56f 100644
    AppleAsmediaLoadFirmware(PciIoProtocol, XhciFirmwareBlob, ARRAY_SIZE(XhciFirmwareBlob), &UsbFirmwareLoadSuccessful);
    //
 diff --git a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c
-index 3d15a23..c0e6a2d 100644
+index 3d15a23..8aad517 100644
 --- a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c
 +++ b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c
 @@ -39,6 +39,7 @@
@@ -723,7 +739,7 @@ index 3d15a23..c0e6a2d 100644
      IN EFI_ALLOCATE_TYPE Type, 
      IN EFI_MEMORY_TYPE MemoryType, 
      IN UINTN Pages, 
-@@ -284,12 +422,605 @@ STATIC EFI_STATUS EFIAPI AppleDartIoMmuFreeBuffer (
+@@ -284,12 +422,610 @@ STATIC EFI_STATUS EFIAPI AppleDartIoMmuFreeBuffer (
      return EFI_SUCCESS;
  }
  
@@ -807,6 +823,11 @@ index 3d15a23..c0e6a2d 100644
 +// 0x100000000 (window top == 4GB) so a 32-bit device can reach the whole window.
 +//
 +#define APCIE_WIN_IOVA_BASE 0x0000000000000000ULL   // low IOVA == NWOAS_DMA_WIN_BASE (EXP-5 5c-v7: base 0x20000000 -> 0, whole sub-4GB)
++// S102: 1 = guest RAM ends where the low-window backing begins (hv shrinks boot_args.mem_size);
++//       0 = legacy: backing is the top APCIE_WIN_SIZE of guest RAM (aliases UEFI allocations!).
++#ifndef NWOAS_WINDOW_AFTER_RAM
++#define NWOAS_WINDOW_AFTER_RAM 1
++#endif
 +#define APCIE_WIN_SIZE      0x0000000100000000ULL    // 4GB (EXP-5 5c-v7: 0xE0000000 -> 0x100000000; base+size == 0x100000000)
 +
 +//
@@ -1331,7 +1352,7 @@ index 3d15a23..c0e6a2d 100644
      AppleDartIoMmuFreeBuffer,
  };
  
-@@ -314,7 +1045,143 @@ STATIC VOID AppleDartT8110TlbFlush(VOID *DartInformation) {
+@@ -314,7 +1050,143 @@ STATIC VOID AppleDartT8110TlbFlush(VOID *DartInformation) {
      }
  }
  
@@ -1476,7 +1497,7 @@ index 3d15a23..c0e6a2d 100644
  AppleDartIoMmuDxeInitialize(
    IN EFI_HANDLE        ImageHandle,
    IN EFI_SYSTEM_TABLE  *SystemTable
-@@ -360,6 +1227,37 @@ AppleDartIoMmuDxeInitialize(
+@@ -360,6 +1232,43 @@ AppleDartIoMmuDxeInitialize(
        return EFI_NOT_FOUND;
      }
  
@@ -1496,7 +1517,13 @@ index 3d15a23..c0e6a2d 100644
 +      UINT64 PhysBase = NwoasBA->phys_base;
 +      UINT64 MemSize  = NwoasBA->mem_size;
 +      if ((PhysBase >= 0x800000000ULL) && (MemSize > APCIE_WIN_SIZE)) {
++#if NWOAS_WINDOW_AFTER_RAM
++        // S102: the hv now excludes the window backing from boot_args.mem_size, so the backing
++        // starts exactly where guest RAM ends (m1n1 mem_top - win - skew == phys_base + mem_size).
++        mApcieBackingPa = PhysBase + MemSize;
++#else
 +        mApcieBackingPa = PhysBase + MemSize - APCIE_WIN_SIZE;
++#endif
 +      } else {
 +        // BootArgs looked invalid (null-ish pointer / clobbered): fall back to the patchable PCDs and
 +        // shout, rather than program a wild DART PTE. This path is the OLD (buggy) behaviour, taken
@@ -1514,7 +1541,7 @@ index 3d15a23..c0e6a2d 100644
      //
      // Get the base addresses from the ADT. Right now there's no good way I know of to test for:
      //   a. the number of dies a multi-die capable SoC has.
-@@ -514,6 +1412,27 @@ AppleDartIoMmuDxeInitialize(
+@@ -514,6 +1423,27 @@ AppleDartIoMmuDxeInitialize(
          //                 NULL
          //                 );
      }

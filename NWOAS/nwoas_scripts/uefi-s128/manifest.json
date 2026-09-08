@@ -1,0 +1,6 @@
+{
+  "payload": "/Volumes/X31/NWOAS/m1n1_windows/m1n1-payload-s128-uefinvme-id.bin",
+  "sha256": "feb51551eb4653c7bd6cb1f5d80370418f663d80012842e3e84d9d289aa23000",
+  "bytes": 32342016,
+  "change": "S127 plus synthetic NVMe PCI VID/DID 1234:0010 only at BAR 0x700100000; avoids generic ffff absent-device sentinel; original sources restored; hardware untested"
+}

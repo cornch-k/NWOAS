@@ -1,0 +1,7 @@
+{
+  "payload": "/Volumes/X31/NWOAS/m1n1_windows/m1n1-payload-s125-uefinvme.bin",
+  "sha256": "bf00b5a4bc9ed53abf7e512854ca5408e0352ead16f9511626937aaf1e9ab43a",
+  "bytes": 32342016,
+  "source_before_sha256": "108db610878ff08f0d6a5f515bc2c7ccf70b77c90dde22bf9c31eced98a2f9ab",
+  "change": "NWOAS_UEFI_NVME 0->1 for candidate build only; original source restored; hardware untested"
+}

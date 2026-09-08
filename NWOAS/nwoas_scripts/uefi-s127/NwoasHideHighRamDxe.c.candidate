@@ -59,7 +59,7 @@
 #include <Library/NonDiscoverableDeviceRegistrationLib.h>
 
 #ifndef NWOAS_UEFI_NVME
-#define NWOAS_UEFI_NVME 0   /* S99: register emulated NVMe for UEFI Block I/O (off for the S102 test build) */
+#define NWOAS_UEFI_NVME 1   /* S99: register emulated NVMe for UEFI Block I/O (off for the S102 test build) */
 #endif
 
 #include <Guid/EventGroup.h>

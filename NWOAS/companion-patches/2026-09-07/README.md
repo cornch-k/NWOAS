@@ -1,4 +1,4 @@
-# Companion changes through S93
+# Companion changes through S129
 
 These are source changes against the exact upstream commits recorded in
 `manifest.json`, not replacement upstream repositories. They include accumulated
@@ -14,8 +14,9 @@ again to the already modified live workspace.
 All four patches passed `git apply --check --cached` against temporary indexes
 loaded from their recorded base commits. This checks patch applicability; it does
 not imply that a clean machine has all build tools or local firmware/media assets.
-The S93 runtime still uses machine-specific paths and pre-existing local payloads;
-see the handoff for exact binary hashes and build/reconstruction commands.
+The S129 runtime still uses machine-specific paths and locally built payloads;
+see the latest session status and staged build scripts for exact hashes and
+reconstruction details.
 
 No upstream remotes were pushed. No secrets, Windows media, raw RAM/disk captures
 or large runtime logs are included. `manifest.json` identifies every added source.
