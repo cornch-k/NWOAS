@@ -1,0 +1,16 @@
+UTC=2026-09-09T22:31:18.6930983Z
+
+
+TotalPhysicalMemory       : 15082278912
+NumberOfLogicalProcessors : 8
+
+
+
+S140 CPU PASS active=8 threads=8 elapsed_us=87464 checksum=14964600543233568963
+S140 DISK PASS active=8 bytes=67108864 elapsed_us=178453 failed=0 checksum=2755686512017749371
+S195 START path=C:\ProgramData\NWOAS\IO195.DAT size=268435456 block=1048576 qpc_hz=24000000 deadline_s=300
+S195 SPACE avail_bytes=4421615616
+S195 WRITE END code=0 bytes=268435456 offset=268435456 done=0 err=0 expected=0 actual=0 words=0 elapsed_us=152755
+S195 READ END code=0 bytes=268435456 offset=268435456 done=0 err=0 expected=0 actual=0 words=33554432 elapsed_us=216061
+S195 SUMMARY qpc_hz=24000000 size=268435456 write_us=152755 read_us=216061 words_verified=33554432 first_mismatch=none
+S195 PASS exit=0

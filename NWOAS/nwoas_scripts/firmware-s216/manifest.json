@@ -1,0 +1,29 @@
+{
+  "payload": "/Volumes/X31/NWOAS/nwoas_scripts/firmware-s216/m1n1-payload-s216-compat.bin",
+  "bytes": 33177600,
+  "sha256": "0ae1cb75bfc3cbc2b7b15e6408c489fe5badd3d12d53fc4353a85b6b5ad3d197",
+  "change": "S216: S192 nativeRTC/P12 plus source-built S215 guest placement guard, 30MiB header, pre-copy FD overlap checks, and permanent BootArgs/ADT HOB reservation. Hardware status is recorded separately.",
+  "fdf_image_size": {
+    "before": "0x00, 0x00, 0x0e, 0x10, 0x00, 0x00, 0x00, 0x00, # image_size: 30 MB",
+    "after": "0x00, 0x00, 0xe0, 0x01, 0x00, 0x00, 0x00, 0x00, # image_size: 30 MB (0x01E00000 == PcdFdSize)",
+    "fdf_before_sha256": "7cebb2a3d4c5da24b45a23b902910afd14ed51bce132af77ba627da18c0eabba",
+    "fdf_after_sha256": "a05875cd2c3c898e7ece54c792ee7d5fded00390d68a5185b56e64e5efb2677c"
+  },
+  "source_sha256": {
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.inf": "d638b47bd4f5b30e2df56f04ccbc503d4a78ae6106a6f9887d615f1349112861",
+    "Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c": "013f2d367c8fcb03f9a1cac0f060d24308d820b91f53844e7bec96e36abd9a4c",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c": "d14b5f0497a85ef08fd44e6268c3db79f29106faa3404555bde322dff2438d6e",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c": "cec67207236f81228146db1a7bfcfcf9cbfb2876f3f0723b4bb4ad9cfbe30244",
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c": "c133ec4da90e30d31759d7b7881c2ab39c9f3055582c7a54cf24a9bf8c28003f",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf": "dcf0a920158b6d7d91b0353e9bc329ec45eb23b950a0aeaf32ae306de15a2fb7",
+    "Platform/MacMini2020Pkg/AcpiTables/DSDT.asl": "efdca97768f2d3e92479cc472b525e0e6eed2fe696feb747752d59b488fa145a"
+  },
+  "rtc_source_sha256": {
+    "NwoasHardwareBootRtcLib.c": "cde9d85e340a4633c1c3334eadedffd30ad3efe6eb482d692af90699f8271635",
+    "NwoasRtcSeedCore.c": "27ebcc90e6cfc48604fef58933c34b9d6bc87aeb6c21a849331ac96937aec549",
+    "nwoas_sera_rtc.h": "78def5aa9f13ecb39509455dfa12cd4376c560ec531ddc0305b96c5785b8f84f",
+    "NwoasHardwareBootRtcLib.inf": "ae9d646f48d51839fada9bdc29bce0f5fe755d54777c526a0dcb18c35fe78653",
+    "NwoasRtcSeedCore.h": "28c5ded09c3c8c6b92f0a94dec52961795f59fe16c31f60f794ef4ed1e54c74c",
+    "nwoas_sera_rtc.c": "275364be36d3d1c70c199a61da0063846bb6582d02cfca49556778dfdee05df7"
+  }
+}

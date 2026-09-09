@@ -1,0 +1,39 @@
+--- a/src/payload.c
++++ b/src/payload.c
+@@ -10,6 +10,8 @@
+ #include "cpufreq.h"
+ #include "display.h"
+ #include "heapblock.h"
++#include "xnuboot.h"
++#include "nwoas_handoff_layout.h"
+ #include "kboot.h"
+ #include "mitigations.h"
+ #include "smp.h"
+@@ -137,12 +139,21 @@
+ 
+     assert(size <= kernel->image_size);
+ 
+-    // If this is an in-line kernel, it's probably not aligned, so we need to make a copy
+-    if (((u64)kernel) & (KERNEL_ALIGN - 1)) {
+-        void *new_addr = heapblock_alloc_aligned(kernel->image_size, KERNEL_ALIGN);
+-        memcpy(new_addr, kernel, size ? size : kernel->image_size);
+-        kernel = new_addr;
+-    }
++    // S215: fixed Project Mu BootArgs/ADT copies must not overwrite the FD.
++    // This dedicated NWOAS guest build always relocates the image above both.
++    unsigned long long dest, handoff_end;
++    unsigned long long heap = (u64)heapblock_alloc_aligned(0, KERNEL_ALIGN);
++    assert(nwoas_handoff_layout(cur_boot_args.phys_base, cur_boot_args.mem_size,
++                               cur_boot_args.devtree_size, (u64)_base, (u64)_end,
++                               heap, kernel->image_size, &dest, &handoff_end));
++    if (dest > heap)
++        heapblock_alloc(dest - heap);
++    void *new_addr = heapblock_alloc_aligned(kernel->image_size, KERNEL_ALIGN);
++    assert((u64)new_addr == dest);
++    printf("NWOAS-S215: handoff [%llx,%llx) image [%llx,%llx)\n",
++           NWOAS_BOOTARGS_COPY, handoff_end, dest, dest + kernel->image_size);
++    memcpy(new_addr, kernel, size ? size : kernel->image_size);
++    kernel = new_addr;
+ 
+     /*
+      * Kernel blobs unfortunately do not have an accurate file size header, so

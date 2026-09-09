@@ -1,0 +1,22 @@
+{
+  "status": "PASS",
+  "session": "nwoas_scripts/logs/firmware-s216-handoff-20260910-074136.hXAU0A.link",
+  "job": 1,
+  "cpu_count": 8,
+  "memory_bytes": 15081889792,
+  "cpu_us": 79317,
+  "read64m_us": 52331,
+  "write256m_us": 135806,
+  "read256m_us": 203145,
+  "all_words_verified": 33554432,
+  "native_p12": {
+    "phase": "Windows worker connected; no host P-state writes",
+    "utc": 1788993732.981996,
+    "p_cmd": "0x4000010c10c",
+    "p_status": "0xcc",
+    "e_cmd": "0x40000105105",
+    "e_status": "0x55",
+    "p12_selected": true
+  },
+  "qualification": "Short integration only; see separate active/soak results"
+}

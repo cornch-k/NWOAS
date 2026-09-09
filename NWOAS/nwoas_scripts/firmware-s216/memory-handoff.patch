@@ -1,0 +1,57 @@
+--- a/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
++++ b/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
+@@ -29,6 +29,7 @@
+ 
+ //Device memory map configuration file for UEFI (this is to help with pagetable initialization)
+ #include <Library/T810XFamilyVirtualMemoryMapDefines.h>
++#include <Library/NwoasHandoffRanges.h>
+ #include <Library/NwoasGuestRam.h>   // NWOAS S161: NWOAS_DMA_WIN_BASE/SIZE + guest RAM/backing helper (shared)
+ 
+ #define MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS 20
+@@ -87,7 +88,7 @@
+ }
+ 
+ //borrowed from edk2-platforms:Armada7k8kMemoryInitPeiLib
+-STATIC VOID ReserveMemoryRegion ( IN EFI_PHYSICAL_ADDRESS ReservedRegionBase, IN UINT32 ReservedRegionSize)
++STATIC BOOLEAN ReserveMemoryRegion ( IN EFI_PHYSICAL_ADDRESS ReservedRegionBase, IN UINT32 ReservedRegionSize)
+ {
+   EFI_RESOURCE_ATTRIBUTE_TYPE  ResourceAttributes;
+   EFI_PHYSICAL_ADDRESS         ReservedRegionTop;
+@@ -158,10 +159,11 @@
+         ReservedRegionBase,
+         ReservedRegionSize);
+ 
+-      break;
++      return TRUE;
+     }
+     NextHob.Raw = GET_NEXT_HOB (NextHob);
+   }
++  return FALSE;
+ }
+ 
+ 
+@@ -343,6 +345,24 @@
+     }
+   }
+   
++  // S216: DT libraries retain these fixed copies beyond PrePi. Keep them
++  // out of DXE allocation and the OS map, independently of FD placement.
++  {
++    struct boot_args *BootArgs = (struct boot_args *)(UINTN)PcdGet64 (PcdBootArgsPointer);
++    unsigned long long ReserveSize;
++    if (!NwoasHandoffRange (PcdGet64 (PcdSystemMemoryBase), PcdGet64 (PcdSystemMemorySize),
++                           PcdGet64 (PcdFdBaseAddress), PcdGet32 (PcdFdSize),
++                           PcdGet64 (PcdBootArgsPointer), PcdGet64 (PcdAdtPointer),
++                           BootArgs->devtree_size, &ReserveSize) ||
++        !ReserveMemoryRegion (PcdGet64 (PcdBootArgsPointer), (UINT32)ReserveSize)) {
++      DEBUG ((DEBUG_ERROR, "HVLOG: S216 could not reserve handoff copies -- halt\n"));
++      CpuDeadLoop ();
++      return EFI_DEVICE_ERROR;
++    }
++    DEBUG ((DEBUG_ERROR, "HVLOG: S216 reserved handoff base=%llx bytes=%llx\n",
++            PcdGet64 (PcdBootArgsPointer), ReserveSize));
++  }
++
+   //reserve secondary stacks carveouts passed into cpm-impl-reg 
+   for(int i = 0; i < PcdGet32(PcdCoreCount); i++){
+     CHAR8 CpuNodeName[14];

@@ -1,0 +1,59 @@
+PASS m1n1_windows: base bddf7f06f0 exists locally
+PASS m1n1_windows: base reachable from remote-tracking branch(es) ['fork/nwoas-stage8-instrumentation']
+PASS apple_silicon_platforms_mu: base 35034bea7e exists locally
+PASS apple_silicon_platforms_mu: base reachable from remote-tracking branch(es) ['fork/nwoas-native-windows']
+PASS MU_BASECORE: base ba9f76c16f exists locally
+PASS MU_BASECORE: base reachable from remote-tracking branch(es) ['origin/release/202502']
+PASS ARM_TIANO: base bd7850321a exists locally
+PASS ARM_TIANO: base reachable from remote-tracking branch(es) ['origin/fix_clang_build', 'origin/release/202502']
+PASS m1n1_guest: base bddf7f06f0 exists locally
+PASS m1n1_guest: base reachable from remote-tracking branch(es) ['fork/nwoas-stage8-instrumentation']
+PASS m1n1_windows: patch sha256 matches manifest
+PASS m1n1_windows: patch applies over base blobs outside any repo
+PASS apple_silicon_platforms_mu: patch sha256 matches manifest
+PASS apple_silicon_platforms_mu: patch applies over base blobs outside any repo
+PASS MU_BASECORE: patch sha256 matches manifest
+PASS MU_BASECORE: patch applies over base blobs outside any repo
+PASS ARM_TIANO: patch sha256 matches manifest
+PASS ARM_TIANO: patch applies over base blobs outside any repo
+PASS m1n1_guest: patch sha256 matches manifest
+PASS m1n1_guest: patch applies over base blobs outside any repo
+PASS S216 outer: MemoryInitPeiLib.inf after patch == firmware-s216 manifest
+PASS S216 outer: AdtParser.c after patch == firmware-s216 manifest
+PASS S216 outer: AppleDartIoMmuDxe.c after patch == firmware-s216 manifest
+PASS S216 outer: NwoasHideHighRamDxe.c source-candidate == firmware-s216 manifest (pre-S131 flip)
+PASS S216 outer: MemoryInitPeiLib.c after patch == firmware-s216 manifest
+PASS S216 outer: NwoasHideHighRamDxe.inf after patch == firmware-s216 manifest
+PASS S216 outer: DSDT.asl unchanged at base == firmware-s216 manifest
+PASS S216 RTC lib: NwoasHardwareBootRtcLib.c after patch == firmware-s216 manifest
+PASS S216 RTC lib: NwoasRtcSeedCore.c after patch == firmware-s216 manifest
+PASS S216 RTC lib: nwoas_sera_rtc.h after patch == firmware-s216 manifest
+PASS S216 RTC lib: NwoasHardwareBootRtcLib.inf after patch == firmware-s216 manifest
+PASS S216 RTC lib: NwoasRtcSeedCore.h after patch == firmware-s216 manifest
+PASS S216 RTC lib: nwoas_sera_rtc.c after patch == firmware-s216 manifest
+PASS S216 header: NwoasCpuPstate.h after patch == firmware-s216/Include/Library/NwoasCpuPstate.h
+PASS S216 header: NwoasSplitMemoryMap.h after patch == firmware-s216/Include/Library/NwoasSplitMemoryMap.h
+PASS S216 header: NwoasGuestRam.h after patch == memory-s161/Include/Library/NwoasGuestRam.h
+PASS S131 inner override: NwoasHideHighRamDxe.c.candidate == patched tree
+PASS S131 inner override: DeviceBootManagerLib.c.candidate == patched tree
+PASS S131 inner override: DeviceBootManagerLib.inf.candidate == patched tree
+PASS S131 inner override: MsBootOptionsLib.c.candidate == patched tree
+PASS S131 inner override: MADT_Static.aslc.candidate == patched tree
+PASS S131 inner override: NonDiscoverablePciDeviceIo.c.candidate == patched MU_BASECORE
+PASS Hide driver: NWOAS_UEFI_NVME 1 (S131 flip) present
+PASS Hide driver: 10 GiB keep prefix present (S180/S216)
+PASS MADT: all eight GICC entries enabled
+PASS DSC: AppleSiliconPkg RealTimeClockLib mapping swapped to NwoasHardwareBootRtcLib (generic EmbeddedPkg entry may remain earlier)
+PASS HV: patched hv_exc.c == nvme-s208/hv_exc-s208.c
+PASS HV: patched hv_vm.c == nvme-s208/hv_vm-s208.c
+PASS HV: source default REASSERT_US=0 (50us only via build flag)
+PASS HV: manifest hv_build_flags carry REASSERT_US=50 and MAX_BLOCKS=256
+PASS HV: nvme-s163/manifest-gap50.json pins the gap50 binary hash
+PASS HV host: run_guest.py exported from live m1n1_windows (--strict-init)
+PASS S216 handoff range header matches
+PASS S216 image header source matches
+PASS S215 guest payload source matches built snapshot
+PASS S215 range policy matches built header
+PASS run_guest.py executable mode preserved
+
+RESULT: 0 failure(s)

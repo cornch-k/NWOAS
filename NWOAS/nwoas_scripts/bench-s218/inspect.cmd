@@ -1,0 +1,3 @@
+@echo off
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; Write-Output ('UTC='+[DateTime]::UtcNow.ToString('o')); if(Test-Path -LiteralPath 'C:\Users\Public\Documents\NWOAS-BENCH\cb-s218.result'){Get-Content -LiteralPath 'C:\Users\Public\Documents\NWOAS-BENCH\cb-s218.result'}else{Write-Output 'S218_RESULT_PENDING'}; if(Test-Path 'C:\Users\Public\Documents\NWOAS-BENCH\cb-s218.out'){Get-Content -LiteralPath 'C:\Users\Public\Documents\NWOAS-BENCH\cb-s218.out' -Tail 5}; Get-Process -Name Cinebench -ErrorAction SilentlyContinue | Select Id,SessionId,CPU,WorkingSet64 | Format-List; Get-PSDrive C | Select Free | Format-List; exit 0"
+exit /b %errorlevel%

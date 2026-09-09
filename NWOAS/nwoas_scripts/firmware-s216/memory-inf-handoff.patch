@@ -1,0 +1,10 @@
+--- a/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.inf
++++ b/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.inf
+@@ -66,3 +66,7 @@
+   gAppleSiliconPkgTokenSpaceGuid.PcdCoreCount
+ [Depex]
+   TRUE
++
++[FixedPcd]
++  gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer
++  gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer

@@ -84,7 +84,7 @@ clean after the compat run.
 **Finding: it is a mis-encoded 30 MiB, not a footprint requirement.** Nothing
 in the UEFI side needs memory beyond `PcdFdSize` (0x1E00000, 30 MiB) after
 the FD, and m1n1 uses the value only as an allocation size and a `memcpy`
-length. The current value merely makes m1n1 reserve and copy 269 MiB instead
+length. The current value merely makes m1n1 reserve and copy 256.875 MiB instead
 of 30 MiB. It is harmless in the sense that the copy source is mapped RAM and
 the copy destination is a private heap block, and S192 boots with it, so no
 change is made now.
@@ -125,7 +125,7 @@ change is made now.
   unrelated `chainload.c` local variable.
 - `proxyclient/m1n1/hv/__init__.py:2186-2224` (`load_raw`): the guest region
   is `image + SEPFW + preoslog + boot-args` at `guest_base`, and the tracer
-  `RAM-HIGH` maps `phys_base .. mem_size_actual`, so the 269 MiB read that
+  `RAM-HIGH` maps `phys_base .. mem_size_actual`, so the 256.875 MiB read that
   starts at `guest_base + 0x21c000` (S197) or `+ 0x150000` (S192) covers the
   rest of the payload, SEPFW, preoslog, boot-args, then free mapped RAM.
   Over-read source is mapped; destination is the fresh heap block; nothing is
@@ -161,7 +161,7 @@ outside the FV, and its scratch memory lives elsewhere. The only true
 footprint constraint is `image_size >= PcdFdSize` (0x1E00000): UEFI treats
 `[FdBase, FdBase + 0x1E00000)` as its own, which is 0x78000 bytes past the
 FD file end, and m1n1's bump allocator must not hand that tail to anyone
-else. `0x1E00000` satisfies it; `0x100E0000` satisfies it with 239 MiB to
+else. `0x1E00000` satisfies it; `0x100E0000` satisfies it with 226.875 MiB to
 spare.
 
 ### Why not change it now

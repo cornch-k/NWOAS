@@ -1,0 +1,162 @@
+diff --git a/src/i2c.c b/src/i2c.c
+index 14ab5f70..df728c0b 100644
+--- a/src/i2c.c
++++ b/src/i2c.c
+@@ -20,8 +20,6 @@
+ #define PASEMI_STATUS_XFER_ENDED BIT(27)
+ 
+ #define PASEMI_CONTROL          0x1c
+-#define PASEMI_CONTROL_ENABLE   BIT(11)
+-#define PASEMI_REVISION         0x28
+ #define PASEMI_CONTROL_CLEAR_RX BIT(10)
+ #define PASEMI_CONTROL_CLEAR_TX BIT(9)
+ 
+@@ -55,14 +53,6 @@ i2c_dev_t *i2c_init(const char *adt_node)
+         return NULL;
+ 
+     dev->base = base;
+-    /* D71: Apple rev >= 6 requires CTL.EN; do not inherit the disabled
+-     * controller left by a previous host-side I2C transaction. Preserve CLK.
+-     * Same revision/enable rule as Linux i2c-pasemi-core.c. */
+-    u32 rev = read32(base + PASEMI_REVISION);
+-    if (rev != 0xffffffffu && rev >= 6)
+-        set32(base + PASEMI_CONTROL, PASEMI_CONTROL_ENABLE);
+-    printf("i2c: rev=%u ctl=0x%x ready %s\n", rev,
+-           read32(base + PASEMI_CONTROL), adt_node);
+     return dev;
+ }
+ 
+diff --git a/src/main.c b/src/main.c
+index 9b978ede..e5c1ff92 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -161,15 +161,7 @@ void m1n1_main(void)
+ #ifndef BRINGUP
+     pmgr_init();
+ #ifdef USE_FB
+-    /* NWOAS S6-D4 [DESIGN]: preserve iBoot's DCP state until the host can
+-     * observe its first handshake. Scope this diagnostic to the actual M1
+-     * Tahoe firmware under test; explicit display proxy operations remain.
+-     * HARDWARE-UNVERIFIED: this defers initialization, it does not fix display.
+-     */
+-    if (chip_id == 0x8103 && !strcmp(os_firmware.iboot, "mBoot-18000.121.3"))
+-        printf("NWOAS-DCP-DEFER: automatic display init deferred to host\n");
+-    else
+-        display_init();
++    display_init();
+     // Kick DCP to sleep, so dodgy monitors which cause reconnect cycles don't cause us to lose the
+     // framebuffer.
+     display_shutdown(DCP_SLEEP_IF_EXTERNAL);
+diff --git a/src/nwoas_handoff_layout.h b/src/nwoas_handoff_layout.h
+new file mode 100644
+index 00000000..b0ad1f0f
+--- /dev/null
++++ b/src/nwoas_handoff_layout.h
+@@ -0,0 +1,33 @@
++/* NWOAS T8103 Project Mu handoff placement; source-only pure range policy.
++ * Keep synchronized with T810XFamilyPkg.dsc.inc. The compiled helper is shared
++ * with the host regression tests, not reimplemented in the tests. */
++#ifndef NWOAS_HANDOFF_LAYOUT_H
++#define NWOAS_HANDOFF_LAYOUT_H
++#define NWOAS_BOOTARGS_COPY 0x840000000ULL
++#define NWOAS_ADT_COPY 0x840004000ULL
++#define NWOAS_IMAGE_ALIGN 0x200000ULL
++static int nwoas_handoff_layout(unsigned long long ram_base,
++ unsigned long long ram_size,unsigned long long adt_size,
++ unsigned long long prefix_base,unsigned long long prefix_end,
++ unsigned long long heap,unsigned long long image_size,
++ unsigned long long *image_base,unsigned long long *handoff_end)
++{
++ const unsigned long long max=~0ULL;
++ if(!image_base || !handoff_end || !adt_size || !image_size ||
++    ram_size>max-ram_base || adt_size>max-NWOAS_ADT_COPY)return 0;
++ unsigned long long end=NWOAS_ADT_COPY+adt_size;
++ if(end>max-0x3fff)return 0;
++ end=(end+0x3fff)&~0x3fffULL;
++ unsigned long long ram_end=ram_base+ram_size;
++ if(NWOAS_BOOTARGS_COPY<ram_base || end>ram_end || prefix_end<prefix_base ||
++    (prefix_base<end && prefix_end>NWOAS_BOOTARGS_COPY) ||
++    heap<ram_base || heap>ram_end)return 0;
++ /* Force all following monotonic allocations beyond the handoff copies, even
++    when a smaller image could temporarily fit before them. */
++ unsigned long long base=heap>end?heap:end;
++ if(base>max-(NWOAS_IMAGE_ALIGN-1))return 0;
++ base=(base+NWOAS_IMAGE_ALIGN-1)&~(NWOAS_IMAGE_ALIGN-1);
++ if(base>ram_end || image_size>ram_end-base)return 0;
++ *image_base=base;*handoff_end=end;return 1;
++}
++#endif
+diff --git a/src/payload.c b/src/payload.c
+index 5b1547fd..d597068e 100644
+--- a/src/payload.c
++++ b/src/payload.c
+@@ -10,6 +10,8 @@
+ #include "cpufreq.h"
+ #include "display.h"
+ #include "heapblock.h"
++#include "xnuboot.h"
++#include "nwoas_handoff_layout.h"
+ #include "kboot.h"
+ #include "mitigations.h"
+ #include "smp.h"
+@@ -137,12 +139,21 @@ static void *load_kernel(void *p, size_t size)
+ 
+     assert(size <= kernel->image_size);
+ 
+-    // If this is an in-line kernel, it's probably not aligned, so we need to make a copy
+-    if (((u64)kernel) & (KERNEL_ALIGN - 1)) {
+-        void *new_addr = heapblock_alloc_aligned(kernel->image_size, KERNEL_ALIGN);
+-        memcpy(new_addr, kernel, size ? size : kernel->image_size);
+-        kernel = new_addr;
+-    }
++    // S215: fixed Project Mu BootArgs/ADT copies must not overwrite the FD.
++    // This dedicated NWOAS guest build always relocates the image above both.
++    unsigned long long dest, handoff_end;
++    unsigned long long heap = (u64)heapblock_alloc_aligned(0, KERNEL_ALIGN);
++    assert(nwoas_handoff_layout(cur_boot_args.phys_base, cur_boot_args.mem_size,
++                               cur_boot_args.devtree_size, (u64)_base, (u64)_end,
++                               heap, kernel->image_size, &dest, &handoff_end));
++    if (dest > heap)
++        heapblock_alloc(dest - heap);
++    void *new_addr = heapblock_alloc_aligned(kernel->image_size, KERNEL_ALIGN);
++    assert((u64)new_addr == dest);
++    printf("NWOAS-S215: handoff [%llx,%llx) image [%llx,%llx)\n",
++           NWOAS_BOOTARGS_COPY, handoff_end, dest, dest + kernel->image_size);
++    memcpy(new_addr, kernel, size ? size : kernel->image_size);
++    kernel = new_addr;
+ 
+     /*
+      * Kernel blobs unfortunately do not have an accurate file size header, so
+diff --git a/src/usb.c b/src/usb.c
+index 98d07cec..80f49742 100644
+--- a/src/usb.c
++++ b/src/usb.c
+@@ -286,8 +286,7 @@ static int usb_init_i2c(const char *i2c_path)
+         const char *name = adt_get_name(adt, node);
+         if (!name || memcmp(name, "hpm", 3) || name[4] != '\0')
+             continue; // unexpected hpm node name
+-        /* HPM names carry an ASCII digit: hpm1 must select port 1, not 19. */
+-        u32 idx = (u32)(name[3] - '0');
++        u32 idx = name[3] - 30;
+         if (idx >= USB_IODEV_COUNT)
+             continue; // unexpected hpm index
+ 
+@@ -299,8 +298,6 @@ static int usb_init_i2c(const char *i2c_path)
+             continue;
+         }
+ 
+-        printf("usb: HPM %s port=%u powerup OK\n", name, idx);
+-
+         if (tps6598x_disable_irqs(tps, &tps6598x_irq_state[idx]))
+             printf("usb: unable to disable IRQ masks for %s\n", name);
+ 
+@@ -377,8 +374,7 @@ void usb_i2c_restore_irqs(const char *i2c_path, bool force)
+         const char *name = adt_get_name(adt, node);
+         if (!name || memcmp(name, "hpm", 3) || name[4] != '\0')
+             continue; // unexpected hpm node name
+-        /* HPM names carry an ASCII digit: hpm1 must select port 1, not 19. */
+-        u32 idx = (u32)(name[3] - '0');
++        u32 idx = name[3] - 30;
+         if (idx >= USB_IODEV_COUNT)
+             continue; // unexpected hpm index
+ 

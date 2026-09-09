@@ -1,0 +1,2 @@
+HVLOG: S216 reserved handoff base=840000000 bytes=60000
+HVLOG: S163 IRQ gap_us=50 inject=2224361 eoi=2224361 gated=5016551 last_inject_pc=fffff80099aaa61c last_eoi_pc=fffff80099a5c26c

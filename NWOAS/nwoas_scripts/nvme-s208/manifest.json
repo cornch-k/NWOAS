@@ -1,0 +1,100 @@
+{
+  "session": "S208",
+  "purpose": "Diagnostic-correctness fix: the enabled-vGIC hv_exc_irq EOI note reads the architectural ELR_EL2 (hv_get_elr()) instead of the never-initialized ctx->elr. Evidence-accuracy only; NOT a watchdog fix.",
+  "scope": {
+    "owns": [
+      "nwoas_scripts/nvme-s208",
+      "/Volumes/X31/NWOAS/m1n1-diag-s208 (detached worktree)"
+    ],
+    "untouched": [
+      "hardware",
+      "USB",
+      "launchers",
+      "secrets",
+      "UI",
+      "m1n1_windows",
+      "m1n1_windows-s159",
+      "m1n1-guest-s197",
+      "m1n1-rebuild-s205",
+      "generic main build / S194 current artifact"
+    ]
+  },
+  "base_commit": "bddf7f06f033a7411834ac61381d8c997034f532",
+  "build_tag": "v1.0.2-1474-gbddf7f06-dirty",
+  "companion_patch": {
+    "path": "nwoas_scripts/publish-s198/companion/m1n1_windows.patch",
+    "sha256": "a3f6c5741f1d96db30ee88d3e2148763214d582ddcb50b67c080834e70b65851"
+  },
+  "rust_fatfs_commit": "4eccb50d011146fbed20e133d33b22f3c27292e7",
+  "the_fix": {
+    "file": "src/hv_exc.c",
+    "function": "hv_exc_irq (maintenance-EOI loop, ENABLE_VGIC_MODULE path)",
+    "before": "nwoas_nvme_note_eoi(intd, ctx->elr);",
+    "after": "nwoas_nvme_note_eoi(intd, hv_get_elr());",
+    "reason": "The ENABLE_VGIC_MODULE hv_exc_irq path never calls hv_get_context(); the assembly entry (_exc_entry) saves only x0-x29, so exc_info.elr/spsr/esr are populated solely by hv_get_context() in C, which only the sync/abort paths call. ctx->elr in this IRQ branch is therefore uninitialized stack. hv_get_elr() reads ELR_EL2 architecturally. Confirmed by S163 README review note (2026-09-10 01:10).",
+    "preserves": "IRQ spacing, mask, queue, generation and delivery semantics; changes only the recorded EOI PC diagnostic."
+  },
+  "input_hashes": {
+    "s208.patch": "1be8db43798583a77013f4e7101a4b486df8ccba1cfa1eea6e6412fd1e12100d",
+    "minimal-from-s163.diff": "6e038ffcd38ff32df0f30c00bf5be92e3a3878d8d3d555aa2a92eaccf8ed41fe",
+    "hv_exc-s208.c": "9bf469d96d35b7b937c8c4346bb7cc5c2e5762797b650072f28cf87f2bbe3f00",
+    "harness/harness.c": "2f1649a3cb2b0888952d9d3870250ab44aae948d5fe6327d2412e26cd6c95f82",
+    "harness/frag_note_eoi.inc": "f3e36467e333005da4a387c3922abda8c36b0c11ae083ab530c999f9ada4f3e8",
+    "harness/frag_loop.inc": "87558b44ebe1575225e80360e50dddd42e8b6c368319d9c3d6c7a88588b7b29d",
+    "harness/gen.sh": "cb962bd07ec2dc3762bf9893721a4ab9ad6e77c7049d0d7d5879c26160c0cf0c",
+    "harness/frag_gic_fields.inc": "8b473e81e2375523d5a551171dc3ba49ed7b455350e5d97c67e08763075ef0f0"
+  },
+  "extraction_note": "hv_bridge_nvme_irq and nwoas_nvme_note_eoi are byte-identical between the S208 candidate and the recorded S163 snapshot; the fix is entirely at the hv_exc_irq call site.",
+  "binaries": [
+    {
+      "name": "m1n1-s208-eoipc-gap50.bin",
+      "bytes": 2162688,
+      "sha256": "f801c5bec4e2972a0011b594ec8fb9201406dd7a82180631f4328f6d2779fa16",
+      "extra_cflags": "-DNWOAS_NVME_MAX_BLOCKS=256 -DNWOAS_NVME_REASSERT_US=50"
+    },
+    {
+      "name": "m1n1-s208-eoipc-gap25.bin",
+      "bytes": 2162688,
+      "sha256": "1f1291dd354ab202faaceccd05635b0d1cac7666f32bf808c49807db0bec5bde",
+      "extra_cflags": "-DNWOAS_NVME_MAX_BLOCKS=256 -DNWOAS_NVME_REASSERT_US=25"
+    }
+  ],
+  "toolchain": {
+    "clang": "Homebrew clang 20.1.8 (/opt/homebrew/opt/llvm/bin)",
+    "lld": "LLD 20.1.8 (/opt/homebrew/opt/lld/bin)",
+    "rustc": "1.88.0",
+    "rust_target": "aarch64-unknown-none-softfloat",
+    "make": "GNU Make 4.4.1",
+    "load": "nice -n 19, make -j2, CARGO_BUILD_JOBS=2, CARGO_NET_OFFLINE=true",
+    "build_dir": "wiped before each variant"
+  },
+  "validation": {
+    "compiled_harness": {
+      "file": "harness/harness.c + gen.sh (extracts real call site verbatim)",
+      "plain": "PASS (S208 fixed and S163 pre-fix contrast)",
+      "ubsan": "PASS (S208 and S163)",
+      "asan": "PASS with Apple Clang, both fixed and pre-fix contrast, after correcting ICH_LR constants to actual header mask=0xffff shift=0",
+      "key_results": [
+        "fixed variant records the architectural PC (hv_get_elr), never the poisoned context value",
+        "pre-fix contrast records the poisoned value (reproduces the defect)",
+        "unrelated IRQ (intd != 900) leaves all NVMe counters and eoi_last_pc/last_eoi at 0",
+        "unrelated SPI (>31) still EOId, LR cleared, and unmasked at AIC (delivery/mask preserved)"
+      ],
+      "review": "Earlier Homebrew runtime timeout cause unestablished. Main verification log records actual completed ASan+UBSan runs."
+    },
+    "real_bridge_test": {
+      "file": "test_irq_gap_s208.py (existing S163 harness, candidate source)",
+      "gaps_us": [
+        0,
+        25,
+        50,
+        200
+      ],
+      "result": "ALL PASS: affinity, disabled line, capacity, dedup, exact deadline, live-level cancellation, eventual redelivery, 64-bit counter wrap"
+    }
+  },
+  "warnings": "43 pre-existing warnings in tracked source; 0 errors; make exit 0 (both variants).",
+  "hardware_status": "S214 gap50 control passed Windows 8-core integration, 256MiB full integrity, 5-minute continuous reads and 30-minute mixed soak. Actual EOI PC captured. This is diagnostic correctness, not a demonstrated watchdog fix or native driver.",
+  "not_a_watchdog_fix": "This corrects an uninitialized diagnostic read (last_eoi_pc). It does NOT change watchdog behavior and makes no stability claim.",
+  "worktree_restore": "The candidate diff (companion patch + one-line fix) is the definition of S208 and is intentionally left applied in the owned worktree m1n1-diag-s208; no temporary/foreign patches were used, so nothing needs reverting."
+}

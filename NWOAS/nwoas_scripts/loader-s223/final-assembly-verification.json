@@ -1,0 +1,8 @@
+{
+  "source_hash_matches": true,
+  "candidate_hash_matches": true,
+  "original_bytes_unchanged": true,
+  "deterministic_tail_bytes": 491520,
+  "copy_end_equals_payload_end": true,
+  "note": "Local payload files only; no guest memory or neighbouring firmware read"
+}

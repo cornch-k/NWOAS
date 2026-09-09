@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "session": "nwoas_scripts/logs/nvme-s214-eoipc50-control-20260910-065133.L1K2Wr.link",
+  "job": 2,
+  "samples": 2219,
+  "elapsed_ms": 300073,
+  "disk_us": {
+    "min": 121053,
+    "median": 125372,
+    "max": 993139
+  },
+  "note": "Logical 64MiB reads on a compressed filesystem; not raw SSD throughput"
+}

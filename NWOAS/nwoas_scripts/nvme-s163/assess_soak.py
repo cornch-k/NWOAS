@@ -10,7 +10,11 @@ parser = argparse.ArgumentParser()
 parser.add_argument('session', type=Path)
 parser.add_argument('job', type=int)
 parser.add_argument('--samples', type=int, default=31)
+parser.add_argument('--completion-marker', default='THIRTY MINUTE READ-MOSTLY SOAK PASS')
+parser.add_argument('--minimum-span-seconds', type=float, default=None)
 args = parser.parse_args()
+if args.samples < 1 or (args.minimum_span_seconds is not None and args.minimum_span_seconds < 0):
+    parser.error('positive sample count and nonnegative duration required')
 log = args.session / f'job-{args.job}.log'
 body = log.read_text(errors='replace')
 events = [json.loads(line) for line in (args.session/'events.jsonl').read_text().splitlines()]
@@ -27,7 +31,7 @@ for offset in range(1, len(parts), 3):
                         cpu_us=int(cpus[0][2]) if len(cpus)==1 else None,
                         disk_us=int(disks[0][2]) if len(disks)==1 else None))
 complete = any(e.get('kind')==3 and e.get('job')==args.job and e.get('exit')==0 for e in events)
-passed = (complete and 'THIRTY MINUTE READ-MOSTLY SOAK PASS' in body and
+passed = (complete and args.completion_marker in body and
           [s['number'] for s in samples] == list(range(1,args.samples+1)) and
           all(s['valid'] and s['cpu_us']>0 and s['disk_us']>0 for s in samples))
 result = dict(session=str(args.session), job=args.job, pass_=passed,
@@ -44,5 +48,9 @@ if (args.session/'job.json').is_file():
     current=json.loads((args.session/'job.json').read_text())
     if current.get('id')==args.job:
         result['host_queue_to_last_log_write_s'] = log.stat().st_mtime-(args.session/'job.json').stat().st_mtime
+if args.minimum_span_seconds is not None:
+    result['required_span_s'] = args.minimum_span_seconds
+    passed = passed and result.get('guest_timestamp_span_s', 0) >= args.minimum_span_seconds
+    result['pass_'] = passed
 print(json.dumps(result, indent=2))
 raise SystemExit(0 if passed else 1)

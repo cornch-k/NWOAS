@@ -305,5 +305,95 @@ onfailedrestore;5modulefakeproxytestsPASS. P12stillnotdeployed.
 - S193 five-minute continuous load completed 3,219 CPU checks and 201 unbuffered 64MiB read checks, all correct (300029 ms). S195 dedicated CREATE_NEW 256MiB write-through/readback verified every one of 33,554,432 words. File SHA256 eb11897202f621134a7ec3c737c4ac3fbeee61ef69faa50d4b9469d8998538d6; renamed to IO195-s193-gap50.DAT without deletion. S195 artifact effd43ff105cb5d4ede2d72a9f415eac02557012f0b419254688f53f47fa2bb8,10752B; actual Win32 wrapper mock passed plain and ASan/UBSan. Main corrected backwards QPC to fail closed.
 - S200 integrates S192 native RTC/P12/HPD with S193 host-init omission. Run firmware-s200-nohost-20260910-055702.XlGKN7: Windows 15,082,278,912B (15.08GB, about14.05GiB),8cores; CPU/read tests and256MiB full integrity passed. S200 file hash matches S193; archived IO195-s200-gap50.DAT. No initial/late host CPU writes. Still EL2/host transport dependent.
 - S202 changes ONLY S200 HV interrupt spacing50us->25us using S194 binary3801b716...5b06. Run nvme-s202-gap25-nohost-20260910-060000.yOxl9b: Windows startup and256MiB integrity passed. Five-minute read loop2524samples300042ms allchecksums correct. Job3 thirty-minute soak now running; do not restart or claim long-soak pass yet.
-- Fable S197/S199 built replacement guest m1n1 from pinned tracked source twice identically and fixed vendor verification to compare content/mode/type, not filenames alone. S203compat/S206head launchers prepared, hardware untested. S199 found FDF image_size misencoded269MiB instead of30MiB; S204 source-built correction in progress, separate from the live storage comparison.
+- Fable S197/S199 built replacement guest m1n1 from pinned tracked source twice identically and fixed vendor verification to compare content/mode/type, not filenames alone. S203compat/S206head launchers prepared, hardware untested. S199 found FDF image_size misencoded256.875MiB instead of30MiB; S204 source-built correction in progress, separate from the live storage comparison.
 - Fable S205 reconstructed the stable S16350us HV from an empty build directory twice. Both binaries exactly match bd8f16f286c8d1141df4a17d9b85eafdd4c2d39d5680c6ed75b63429f061d166. Companion source audit49checks passed; source export includes final nested UEFI overrides. Original dirty guest prefix still unreproducible until substitute qualification. Explicit source/evidence snapshot prepared for GitHub; raw logs/device transcripts and proprietary binaries excluded.
+
+### 07:20 KST — completed25us soak, source-loader collision isolated, corrected candidates built
+
+- S202 gap25 completed2524 continuous64MiB reads in300042ms and31 mixed samples spanning1807.03s, all checksums correct. Read medians110878.5us(active)/111582us(mixed). Full256MiB file hash matched the expected pattern and was archived. No failure during that run. S214 currently tests the diagnostic-corrected S208 gap50 with the original S192 payload:2219 active reads/300073ms passed; its30min job3 is still running (23samples as of07:20). No timing query or restart during either soak.
+- S203 source-built S197compat prefix booted Windows once and passed8cores/15.08GB/P12/256MiB integrity. S20430MiB header and S211original header then both failed in PrePi atPCffffffffffffffff/ESR8a000000 (PC alignment fault). Both placed the FD at0x840000000, overlapping fixedBootArgs0x840000000/ADT0x840004000. Header-size-only attribution is rejected. Correct old header units:0x100e0000=269352960B=256.875MiB; excess over30MiB is226.875MiB.
+- Main built S215 dedicated source-prefix placement guard (196608 compiled/sanitized range cases) and S21630MiB-header UEFI with pre-copy FD/source checks plus permanent handoff HOB reservation (1048576 size cases and actual split-helper tests). Both reproduce byte-identically; S216 payload0ae1cb75bfc3cbc2b7b15e6408c489fe5badd3d12d53fc4353a85b6b5ad3d197. FableCLI source review found no blocking defect. Hardware is still pending; do not adopt these as qualified yet.
+- S208 one-line EOI-PC diagnostic fix readsarchitecturalELR; it is not a watchdog fix. Main corrected harnessGICfieldconstants and reran plain/UBSan/ASan successfully. S209 pureC NVMe control model passes10000 differentialoperations, native sanitizer tests, freestandingARM64 compile, and partial control-trace replay267reads/48writes. Admin/DMA/NS2 are not implemented or integrated; no hostdependency removed byS209.
+- Source/evidence checkpoint93ecb11 was pushed to cornch-k/NWOAS main. New S217 companion export preserves executablemode and matches candidate buildinputs; hardwarestatus remainspending. Live work continues until09:00KST without scheduling. S218 officialbenchmark repeat prepared with unique output files, notlaunched.
+
+## 07:33 KST — S214 control qualified; S215 placement trial boots
+
+S214 diagnostic-corrected S208 gap50 HV with original S192 payload passed
+2,219 continuous reads / 300.073 s and 31 checksum-correct CPU/read samples
+over 1,807.56 s. EOI and injection counts matched 2,333,497 at the post-test
+query; last EOI PC now comes from the architectural ELR. This is diagnostic
+accuracy, not a demonstrated watchdog cure. IO195 was hash-verified and
+archived, then Windows rebooted normally.
+
+S215 guarded source prefix + original S192 FD has booted 8-core Windows,
+15,082,278,912 bytes RAM, native P12 without host CPU writes. CPU/read and
+256MiB complete write/read passed; the five-minute read test is still active.
+S216 combined corrected header and permanent UEFI handoff reservation remains
+hardware-pending. No standalone boot or native Windows driver is claimed.
+
+## 07:41 KST — S216 combined handoff fix booted and memory-tested
+
+S215 passed2,214 continuous reads/300.038s. After hash-confirmed retirement
+of four owned256MiB old test files, Windows reported5,232,082,944 free bytes.
+S216 payload0ae1cb75…d197 then booted8-core Windows with15,081,889,792B RAM
+and nativeP12. 256MiB complete integrity passed;10GiB memory tested every
+word on each of3passes in27.907s, followed by CPU/read checks. UEFI emitted
+`HVLOG: S216 reserved handoff base=840000000 bytes=60000`, proving the384KiB
+reservation branch executed. This fixes the observed pre-Windows placement
+collision; it does not establish the cause of earlier Windows watchdogs.
+Repeat boot/long soak remain pending. S218 benchmark has not been launched.
+
+## 08:01 KST — repeated S216 boot and complete source-input reconstruction
+
+The second S216 boot passed8-core Windows/nativeP12/full256MiB integrity and
+2,309 continuous reads over300.061s. The uninterrupted30min soak is active.
+No hardware configuration was changed during that test.
+
+S221 recovered a readable DTS from the existing static J274 FDT and DTC1.8.1
+reconstructed the exact64KiB `ecc93b24…190f76` artifact. The entire S216 build
+pipeline was then rerun using that DTS instead of the pre-existing DTB file,
+and reproduced payload`0ae1cb75…d197`; tracked sources restored successfully.
+This resolves the local opaque-input requirement, while the exact historical
+upstream DT source revision remains unconfirmed. Compared Asahi revisions
+differ; recovered source attribution/provenance limitations remain explicit.
+Claude reviewed the source-only reconstruction and found no machine-specific
+identity beyond template placeholders. No raw machine ADT/NVRAM is published.
+
+## 08:20 KST — S216 qualified; S218 Cinebench running
+
+Second S216 boot passed the complete30-minute mixed test:31 valid samples
+over1,807.61s, acknowledged exit0. CPU median106,838us and logical64MiB-read
+median128,434us are integrity-test timings, not isolated raw-SSD performance.
+No initial or late host CPU-state writes were used. EOI/inject counts matched
+2,224,361 at the post-soak read-only query; actual architectural EOI PC captured.
+
+The repeated256MiB test file was hash-verified and archived. S218 uploads
+(job5–8) and guarded launcher installation/job9 all acknowledged exit0.
+Official ARM64 Cinebench CPUX started23:19:09UTC /08:19:09KST, PID3500 in
+user session1, with its unique output files. Native completion/score pending.
+No further device probes, firmware changes, reboots or host builds during it.
+
+## 08:34 KST — S218 benchmark PASS; S223 packaging correction trial
+
+S218 official ARM64 CPUX completed1888.454 points, render635,440.5ms,
+minimum600,000ms, native exit0, no timeout, wrapper663.500s. This is0.883%
+below S1961905.281, a single-sample difference across changed configurations,
+not evidence of an improvement/regression cause or same-Mini macOS parity.
+S218 usedS216/S208gap50 with no initial/late host CPU-state writes. Curated
+output and SHA256 are in bench-s218; the raw unique OS ID was not published.
+
+Further source review found S216 supplies an FD480KiB shorter than its Image
+copy size. load_raw puts later allocations directly after it; inline guest
+copy can therefore consume those neighbouring bytes. S223 appends explicit
+0xff tail bytes following FDF erase polarity, changing no existing payload
+byte. Claude confirmed the source issue; no watchdog causality is claimed.
+S223 payload2343f7fc…8b5e7 was built identically twice. Hardware trial started
+08:34:26, after S218 collection and normal Windows reboot. Qualification pending.
+
+## 08:57 KST — S223 bounded qualification complete
+
+S223 integration passed with eight cores and 15,081,889,792 bytes RAM. Its 10 GiB memory test passed three full passes. Mixed CPU/read validation passed 16 samples over 903.888258 seconds. Active reads passed 2247 iterations over 300074 ms (median 126125 us, maximum 974580 us). The large read latency outlier remains unexplained. No S223 Cinebench was run; 1888.454 belongs to S216. Final inventory is queued, without reboot.
+
+The deterministic 480 KiB FD tail supplies the complete inline copy span while preserving all existing executable bytes. No historical watchdog cause is claimed. Source rebuilds, evidence, Claude Code reviews and current/fallback instructions are included in the public delta. Host-independent native boot and Windows drivers remain incomplete.
+
+Final S222 inventory exited 0: eight cores, 15,081,889,792 bytes RAM, C: free 4,416,102,400 bytes; subsequent CPU/read checks passed. Device enumeration still reports one USB Input Device with code 10 and two unnamed code-28 entries. No present network adapter was listed. This does not prove pointer operation or hotplug support. IO195.DAT was hash-verified and renamed IO195-s223-tail.DAT. No final reboot was issued.

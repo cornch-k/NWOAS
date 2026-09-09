@@ -1,0 +1,19 @@
+{
+  "completed_exit0": true,
+  "session": "nwoas_scripts/logs/loader-s223-fd-tail-20260910-083426.LIw4EF.link",
+  "job": 5,
+  "cpu_count": 8,
+  "memory_bytes": 15081889792,
+  "c_free_bytes": 4416102400,
+  "device_problem_codes": [
+    28,
+    10,
+    28
+  ],
+  "usb_input_device_code": 10,
+  "network": "No present adapter in enumeration",
+  "clock_metadata": "29 MHz is metadata, not measured clock",
+  "cpu_read_checks": "PASS",
+  "test_archive": "IO195-s223-tail.DAT hash verified before rename",
+  "limitation": "Enumeration does not establish pointer operation or hotplug success"
+}

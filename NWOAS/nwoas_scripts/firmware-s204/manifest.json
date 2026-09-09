@@ -1,0 +1,28 @@
+{
+  "payload": "/Volumes/X31/NWOAS/nwoas_scripts/firmware-s204/m1n1-payload-s204-native-rtc-p12-30mib-hdr.bin",
+  "bytes": 32342016,
+  "sha256": "97808b29525e390e33f8fb720323d2c156eb3158d3594d93f31d390a55525c4a",
+  "change": "S204 = S192 (conformant RTC unseeded error + ReadyToBoot P12, S180 10GiBhigh+low4GiB, 8 cores, USB-C XHC1 visible, direct SERA hardwareRTC boot read with physicalcounter runtime advance, no host date seed, SetTime unsupported) PLUS MacMini2020.fdf image_size corrected 0x100E0000->0x01E00000 (30 MiB == PcdFdSize).  Source-built FD only; not a binary patch.",
+  "fdf_image_size": {
+    "before": "0x00, 0x00, 0x0e, 0x10, 0x00, 0x00, 0x00, 0x00, # image_size: 30 MB",
+    "after": "0x00, 0x00, 0xe0, 0x01, 0x00, 0x00, 0x00, 0x00, # image_size: 30 MB (0x01E00000 == PcdFdSize)",
+    "fdf_before_sha256": "7cebb2a3d4c5da24b45a23b902910afd14ed51bce132af77ba627da18c0eabba",
+    "fdf_after_sha256": "a05875cd2c3c898e7ece54c792ee7d5fded00390d68a5185b56e64e5efb2677c"
+  },
+  "source_sha256": {
+    "Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c": "03eb8896cc9f84b04924f5029333fee004b4b8dc2790bded9a5c99349ce8a71c",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c": "d14b5f0497a85ef08fd44e6268c3db79f29106faa3404555bde322dff2438d6e",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c": "cec67207236f81228146db1a7bfcfcf9cbfb2876f3f0723b4bb4ad9cfbe30244",
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c": "bcfcbdcd083f90906d421a976045abf524c468213d1bc5cced71eb94d6fb46ca",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf": "dcf0a920158b6d7d91b0353e9bc329ec45eb23b950a0aeaf32ae306de15a2fb7",
+    "Platform/MacMini2020Pkg/AcpiTables/DSDT.asl": "efdca97768f2d3e92479cc472b525e0e6eed2fe696feb747752d59b488fa145a"
+  },
+  "rtc_source_sha256": {
+    "NwoasHardwareBootRtcLib.c": "cde9d85e340a4633c1c3334eadedffd30ad3efe6eb482d692af90699f8271635",
+    "NwoasRtcSeedCore.c": "27ebcc90e6cfc48604fef58933c34b9d6bc87aeb6c21a849331ac96937aec549",
+    "nwoas_sera_rtc.h": "78def5aa9f13ecb39509455dfa12cd4376c560ec531ddc0305b96c5785b8f84f",
+    "NwoasHardwareBootRtcLib.inf": "ae9d646f48d51839fada9bdc29bce0f5fe755d54777c526a0dcb18c35fe78653",
+    "NwoasRtcSeedCore.h": "28c5ded09c3c8c6b92f0a94dec52961795f59fe16c31f60f794ef4ed1e54c74c",
+    "nwoas_sera_rtc.c": "275364be36d3d1c70c199a61da0063846bb6582d02cfca49556778dfdee05df7"
+  }
+}

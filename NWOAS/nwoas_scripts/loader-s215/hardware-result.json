@@ -1,0 +1,22 @@
+{
+  "status": "PASS",
+  "session": "nwoas_scripts/logs/loader-s215-placement-20260910-073027.bqKJF6.link",
+  "job": 1,
+  "cpu_count": 8,
+  "memory_bytes": 15082278912,
+  "cpu_us": 87464,
+  "read64m_us": 178453,
+  "write256m_us": 152755,
+  "read256m_us": 216061,
+  "all_words_verified": 33554432,
+  "native_p12": {
+    "phase": "Windows worker connected; no host P-state writes",
+    "utc": 1788993062.179136,
+    "p_cmd": "0x4000010c10c",
+    "p_status": "0xcc",
+    "e_cmd": "0x40000105105",
+    "e_status": "0x55",
+    "p12_selected": true
+  },
+  "qualification": "Short integration only; see separate active/soak results"
+}

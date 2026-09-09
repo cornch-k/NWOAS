@@ -1,0 +1,39 @@
+{
+  "restored": true,
+  "before_tracked_sha256": {
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.inf": "1e501ee32b46edc7648c7b36b712695d1a410c04a7600331ea0a17150b447628",
+    "Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc": "646ededd15f5af6659cb4a26465f89a3fa8e7ebafcbdc2a6cb6d0a108c437506",
+    "Platform/MacMini2020Pkg/MacMini2020.fdf": "7cebb2a3d4c5da24b45a23b902910afd14ed51bce132af77ba627da18c0eabba",
+    "Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c": "740467c9d6be226f0358d712b74dd70169f2a99fcae5af9e8c92975e44a4a620",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c": "45461b559421aea832bc03d1afdd0ffc5a78d91aaeb1c6e3ea4199c9087ded19",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c": "108db610878ff08f0d6a5f515bc2c7ccf70b77c90dde22bf9c31eced98a2f9ab",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf": "f4765db5fb588b6cf10d0200d46801970662d7f9fe9f8536edc285ce3f64720a",
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c": "7d2d8e44c88cfe688152ec845034cefdc3b6669b50b483f88087a6e879482f02",
+    "Platform/MacMini2020Pkg/AcpiTables/DSDT.asl": "efdca97768f2d3e92479cc472b525e0e6eed2fe696feb747752d59b488fa145a",
+    "Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.c": "ffa4911bffe820a5f80ec6336785e6b6bba67934b526a1f5bb303cae7045016b",
+    "Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.inf": "06577f591943da2f9ddebbdb49e1b99d59e45fd7896309602f020b7a58703ff6",
+    "MU_BASECORE/MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceIo.c": "518d9f1ec5197d4d9ada49a492c13f17d9546b7a929e8c8df7325a568ba0ab89",
+    "Silicon/Apple/AppleSiliconPkg/Library/MsBootOptionsLib/MsBootOptionsLib.c": "4d07212fdc6404359cd38a3b9a73e50c45a3cc6f8cd599d23f1c363d9424944a",
+    "Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc": "26e936097c8424f897bb7568b9fb0f5c44a049d853778de9ceece73a54542cc3"
+  },
+  "after_tracked_sha256": {
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.inf": "1e501ee32b46edc7648c7b36b712695d1a410c04a7600331ea0a17150b447628",
+    "Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc": "646ededd15f5af6659cb4a26465f89a3fa8e7ebafcbdc2a6cb6d0a108c437506",
+    "Platform/MacMini2020Pkg/MacMini2020.fdf": "7cebb2a3d4c5da24b45a23b902910afd14ed51bce132af77ba627da18c0eabba",
+    "Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c": "740467c9d6be226f0358d712b74dd70169f2a99fcae5af9e8c92975e44a4a620",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c": "45461b559421aea832bc03d1afdd0ffc5a78d91aaeb1c6e3ea4199c9087ded19",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c": "108db610878ff08f0d6a5f515bc2c7ccf70b77c90dde22bf9c31eced98a2f9ab",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf": "f4765db5fb588b6cf10d0200d46801970662d7f9fe9f8536edc285ce3f64720a",
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c": "7d2d8e44c88cfe688152ec845034cefdc3b6669b50b483f88087a6e879482f02",
+    "Platform/MacMini2020Pkg/AcpiTables/DSDT.asl": "efdca97768f2d3e92479cc472b525e0e6eed2fe696feb747752d59b488fa145a",
+    "Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.c": "ffa4911bffe820a5f80ec6336785e6b6bba67934b526a1f5bb303cae7045016b",
+    "Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.inf": "06577f591943da2f9ddebbdb49e1b99d59e45fd7896309602f020b7a58703ff6",
+    "MU_BASECORE/MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceIo.c": "518d9f1ec5197d4d9ada49a492c13f17d9546b7a929e8c8df7325a568ba0ab89",
+    "Silicon/Apple/AppleSiliconPkg/Library/MsBootOptionsLib/MsBootOptionsLib.c": "4d07212fdc6404359cd38a3b9a73e50c45a3cc6f8cd599d23f1c363d9424944a",
+    "Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc": "26e936097c8424f897bb7568b9fb0f5c44a049d853778de9ceece73a54542cc3"
+  },
+  "changed_after_restore": [],
+  "git_status_before": " M MU_BASECORE\n M Silicon/ARM/TIANO\n?? Platform/MacMini2020Pkg/AcpiTables/DSDT.hex\n?? Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc.bak-8cpu\n?? venv/\n",
+  "git_status_after": " M MU_BASECORE\n M Silicon/ARM/TIANO\n?? Platform/MacMini2020Pkg/AcpiTables/DSDT.hex\n?? Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc.bak-8cpu\n?? venv/\n",
+  "note": "git_status carries only the pre-existing submodule modifications and untracked files; it must be byte-identical before and after.  All temporary edits (DSC, FDF and every source file) restore to their original tracked hash."
+}

@@ -1,0 +1,241 @@
+{
+  "session": "nwoas_scripts/logs/nvme-s214-eoipc50-control-20260910-065133.L1K2Wr.link",
+  "job": 3,
+  "pass_": true,
+  "completed_exit0": true,
+  "samples": [
+    {
+      "number": 1,
+      "guest_time": "2026-09-10T06:57:37.0355948+09:00",
+      "valid": true,
+      "cpu_us": 107945,
+      "disk_us": 128197
+    },
+    {
+      "number": 2,
+      "guest_time": "2026-09-10T06:58:37.3012115+09:00",
+      "valid": true,
+      "cpu_us": 109802,
+      "disk_us": 127576
+    },
+    {
+      "number": 3,
+      "guest_time": "2026-09-10T06:59:37.5668366+09:00",
+      "valid": true,
+      "cpu_us": 106669,
+      "disk_us": 128898
+    },
+    {
+      "number": 4,
+      "guest_time": "2026-09-10T07:00:37.8324613+09:00",
+      "valid": true,
+      "cpu_us": 106241,
+      "disk_us": 128319
+    },
+    {
+      "number": 5,
+      "guest_time": "2026-09-10T07:01:38.0980874+09:00",
+      "valid": true,
+      "cpu_us": 96176,
+      "disk_us": 127067
+    },
+    {
+      "number": 6,
+      "guest_time": "2026-09-10T07:02:38.3480866+09:00",
+      "valid": true,
+      "cpu_us": 106856,
+      "disk_us": 126626
+    },
+    {
+      "number": 7,
+      "guest_time": "2026-09-10T07:03:38.5980865+09:00",
+      "valid": true,
+      "cpu_us": 112921,
+      "disk_us": 127325
+    },
+    {
+      "number": 8,
+      "guest_time": "2026-09-10T07:04:38.8637116+09:00",
+      "valid": true,
+      "cpu_us": 96456,
+      "disk_us": 127253
+    },
+    {
+      "number": 9,
+      "guest_time": "2026-09-10T07:05:39.0980865+09:00",
+      "valid": true,
+      "cpu_us": 104561,
+      "disk_us": 129175
+    },
+    {
+      "number": 10,
+      "guest_time": "2026-09-10T07:06:39.3324655+09:00",
+      "valid": true,
+      "cpu_us": 107607,
+      "disk_us": 127214
+    },
+    {
+      "number": 11,
+      "guest_time": "2026-09-10T07:07:39.5964999+09:00",
+      "valid": true,
+      "cpu_us": 112876,
+      "disk_us": 127915
+    },
+    {
+      "number": 12,
+      "guest_time": "2026-09-10T07:08:39.8526579+09:00",
+      "valid": true,
+      "cpu_us": 110609,
+      "disk_us": 127892
+    },
+    {
+      "number": 13,
+      "guest_time": "2026-09-10T07:09:40.1182831+09:00",
+      "valid": true,
+      "cpu_us": 112107,
+      "disk_us": 127417
+    },
+    {
+      "number": 14,
+      "guest_time": "2026-09-10T07:10:40.3777253+09:00",
+      "valid": true,
+      "cpu_us": 113465,
+      "disk_us": 128616
+    },
+    {
+      "number": 15,
+      "guest_time": "2026-09-10T07:11:40.6441641+09:00",
+      "valid": true,
+      "cpu_us": 116033,
+      "disk_us": 127327
+    },
+    {
+      "number": 16,
+      "guest_time": "2026-09-10T07:12:40.9097890+09:00",
+      "valid": true,
+      "cpu_us": 111946,
+      "disk_us": 130135
+    },
+    {
+      "number": 17,
+      "guest_time": "2026-09-10T07:13:41.1606458+09:00",
+      "valid": true,
+      "cpu_us": 96928,
+      "disk_us": 126477
+    },
+    {
+      "number": 18,
+      "guest_time": "2026-09-10T07:14:41.3968560+09:00",
+      "valid": true,
+      "cpu_us": 117420,
+      "disk_us": 126962
+    },
+    {
+      "number": 19,
+      "guest_time": "2026-09-10T07:15:41.6468559+09:00",
+      "valid": true,
+      "cpu_us": 110814,
+      "disk_us": 127684
+    },
+    {
+      "number": 20,
+      "guest_time": "2026-09-10T07:16:41.8972958+09:00",
+      "valid": true,
+      "cpu_us": 121252,
+      "disk_us": 129957
+    },
+    {
+      "number": 21,
+      "guest_time": "2026-09-10T07:17:42.1514965+09:00",
+      "valid": true,
+      "cpu_us": 108097,
+      "disk_us": 126213
+    },
+    {
+      "number": 22,
+      "guest_time": "2026-09-10T07:18:42.3887975+09:00",
+      "valid": true,
+      "cpu_us": 113434,
+      "disk_us": 125205
+    },
+    {
+      "number": 23,
+      "guest_time": "2026-09-10T07:19:42.6473711+09:00",
+      "valid": true,
+      "cpu_us": 103226,
+      "disk_us": 126750
+    },
+    {
+      "number": 24,
+      "guest_time": "2026-09-10T07:20:42.8861143+09:00",
+      "valid": true,
+      "cpu_us": 97628,
+      "disk_us": 127771
+    },
+    {
+      "number": 25,
+      "guest_time": "2026-09-10T07:21:43.1228876+09:00",
+      "valid": true,
+      "cpu_us": 108074,
+      "disk_us": 127949
+    },
+    {
+      "number": 26,
+      "guest_time": "2026-09-10T07:22:43.3759867+09:00",
+      "valid": true,
+      "cpu_us": 117269,
+      "disk_us": 130287
+    },
+    {
+      "number": 27,
+      "guest_time": "2026-09-10T07:23:43.6287448+09:00",
+      "valid": true,
+      "cpu_us": 105313,
+      "disk_us": 128831
+    },
+    {
+      "number": 28,
+      "guest_time": "2026-09-10T07:24:43.8711334+09:00",
+      "valid": true,
+      "cpu_us": 106952,
+      "disk_us": 126455
+    },
+    {
+      "number": 29,
+      "guest_time": "2026-09-10T07:25:44.1055108+09:00",
+      "valid": true,
+      "cpu_us": 108102,
+      "disk_us": 127499
+    },
+    {
+      "number": 30,
+      "guest_time": "2026-09-10T07:26:44.3421636+09:00",
+      "valid": true,
+      "cpu_us": 106608,
+      "disk_us": 127809
+    },
+    {
+      "number": 31,
+      "guest_time": "2026-09-10T07:27:44.5921638+09:00",
+      "valid": true,
+      "cpu_us": 97996,
+      "disk_us": 127485
+    }
+  ],
+  "note": "Repeated read-only 64MiB test and bounded CPU work; not a general SSD benchmark or lifetime stability proof.",
+  "cpu_us": {
+    "min": 96176,
+    "median": 108074,
+    "max": 121252
+  },
+  "disk_us": {
+    "min": 125205,
+    "median": 127576,
+    "max": 130287
+  },
+  "guest_timestamp_span_s": 1807.556569,
+  "host_queue_to_last_log_write_s": 1814.933782339096,
+  "hv_sha256": "f801c5bec4e2972a0011b594ec8fb9201406dd7a82180631f4328f6d2779fa16",
+  "payload_sha256": "b67313c48e057e3c1e608521b69a611e129328c04554785e429f4a4211d4c7c9",
+  "host_cpu_writes": false
+}

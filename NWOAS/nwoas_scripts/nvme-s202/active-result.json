@@ -1,0 +1,13 @@
+{
+  "session": "nwoas_scripts/logs/nvme-s202-gap25-nohost-20260910-060000.yOxl9b.link",
+  "job": 2,
+  "pass": true,
+  "samples": 2524,
+  "elapsed_ms": 300042,
+  "disk_us": {
+    "min": 104444,
+    "median": 110878.5,
+    "max": 1030739
+  },
+  "note": "64MiB logical read test on compressed filesystem, not raw SSD throughput"
+}

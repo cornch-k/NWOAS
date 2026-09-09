@@ -1,0 +1,43 @@
+--- a/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c
++++ b/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c
+@@ -10,6 +10,7 @@
+ #include <Library/DebugAgentLib.h>
+ #include <Library/DebugLib.h>
+ #include <Library/AppleDTLib.h>
++#include <Library/NwoasHandoffRanges.h>
+ #include <Library/NwoasGuestRam.h>    // NWOAS S161: ONE helper for guest RAM end / window backing
+ 
+ #define ALIGN_UP(x, a)   (((x) + ((a) - 1)) & ~((a) - 1))
+@@ -24,10 +25,28 @@
+   )
+ {
+ 
+-  struct boot_args *BootArgs = (struct boot_args *)BootArgsAddr;
+-
+-  CopyMem(PcdBootArgsDest, BootArgsAddr, sizeof(struct boot_args));
+-  CopyMem(PcdAdtDest, (VOID*)BootArgs->devtree - BootArgs->virt_base + BootArgs->phys_base, BootArgs->devtree_size);
++  // Save the source first: a destination copy must not invalidate later reads.
++  struct boot_args SavedBootArgs;
++  CopyMem (&SavedBootArgs, BootArgsAddr, sizeof (SavedBootArgs));
++  struct boot_args *BootArgs = &SavedBootArgs;
++  unsigned long long ReserveSize, AdtSource;
++  if (sizeof (SavedBootArgs) > 0x4000 ||
++      !NwoasHandoffRange (BootArgs->phys_base, BootArgs->mem_size,
++                         PcdGet64 (PcdFdBaseAddress), PcdGet32 (PcdFdSize),
++                         (UINT64)PcdBootArgsDest, (UINT64)PcdAdtDest,
++                         BootArgs->devtree_size, &ReserveSize) ||
++      !NwoasHandoffAdtSource (BootArgs->virt_base, (UINT64)BootArgs->devtree,
++                             BootArgs->phys_base, BootArgs->mem_size,
++                             BootArgs->devtree_size, &AdtSource)) {
++    DEBUG ((DEBUG_ERROR, "HVLOG: S216 invalid/overlapping handoff copy FD=%llx BA=%llx ADT=%llx size=%x -- halt\n",
++            PcdGet64 (PcdFdBaseAddress), (UINT64)PcdBootArgsDest,
++            (UINT64)PcdAdtDest, BootArgs->devtree_size));
++    CpuDeadLoop ();
++    return FALSE;
++  }
++  // ADT first: its source may otherwise be overwritten by the BootArgs copy.
++  CopyMem(PcdAdtDest, (VOID *)(UINTN)AdtSource, BootArgs->devtree_size);
++  CopyMem(PcdBootArgsDest, BootArgs, sizeof(struct boot_args));
+ 
+   if(dt_check(PcdAdtDest, BootArgs->devtree_size, NULL) != 0) {
+     DEBUG((EFI_D_INFO | EFI_D_LOAD | EFI_D_ERROR, "no ADT supplied, exiting\n"));

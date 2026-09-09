@@ -1,0 +1,10 @@
+{
+  "status": "PASS",
+  "source_prefix": "d91700ccbe277461513ca9d8320263bf41fc33da8cb814ba095d0f857d02e334",
+  "source_dts_rebuilt_dtb": "ecc93b24740d80007d31986a43983c36eef47dd8b0b105b663c25a7b51190f76",
+  "source_built_fd": "b008dcfc93059ee6f623dc7f8d96dd69276970c14931be68f8e7dce256e537cc",
+  "assembled_payload": "0ae1cb75bfc3cbc2b7b15e6408c489fe5badd3d12d53fc4353a85b6b5ad3d197",
+  "bytes": 33177600,
+  "byte_identical_to_hardware_tested_s216": true,
+  "note": "DTB is now rebuilt from recovered DTS. Original upstream source revision remains unknown. No runtime image changed."
+}

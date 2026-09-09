@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "session": "nwoas_scripts/logs/firmware-s216-handoff-20260910-074136.hXAU0A.link",
+  "job": 2,
+  "samples": 2309,
+  "elapsed_ms": 300061,
+  "disk_us": {
+    "min": 49351,
+    "median": 126531,
+    "max": 869699
+  },
+  "note": "Logical 64MiB reads on a compressed filesystem; not raw SSD throughput"
+}

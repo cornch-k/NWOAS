@@ -1,0 +1,238 @@
+{
+  "session": "nwoas_scripts/logs/firmware-s216-handoff-20260910-074136.hXAU0A.link",
+  "job": 3,
+  "pass_": true,
+  "completed_exit0": true,
+  "samples": [
+    {
+      "number": 1,
+      "guest_time": "2026-09-10T07:47:58.0944215+09:00",
+      "valid": true,
+      "cpu_us": 78124,
+      "disk_us": 140968
+    },
+    {
+      "number": 2,
+      "guest_time": "2026-09-10T07:48:58.3444197+09:00",
+      "valid": true,
+      "cpu_us": 95915,
+      "disk_us": 128126
+    },
+    {
+      "number": 3,
+      "guest_time": "2026-09-10T07:49:58.5944196+09:00",
+      "valid": true,
+      "cpu_us": 102897,
+      "disk_us": 130789
+    },
+    {
+      "number": 4,
+      "guest_time": "2026-09-10T07:50:58.8444204+09:00",
+      "valid": true,
+      "cpu_us": 115709,
+      "disk_us": 128575
+    },
+    {
+      "number": 5,
+      "guest_time": "2026-09-10T07:51:59.1100448+09:00",
+      "valid": true,
+      "cpu_us": 92309,
+      "disk_us": 128794
+    },
+    {
+      "number": 6,
+      "guest_time": "2026-09-10T07:52:59.3600443+09:00",
+      "valid": true,
+      "cpu_us": 112210,
+      "disk_us": 130309
+    },
+    {
+      "number": 7,
+      "guest_time": "2026-09-10T07:53:59.6256697+09:00",
+      "valid": true,
+      "cpu_us": 117962,
+      "disk_us": 129278
+    },
+    {
+      "number": 8,
+      "guest_time": "2026-09-10T07:54:59.8912948+09:00",
+      "valid": true,
+      "cpu_us": 121498,
+      "disk_us": 128177
+    },
+    {
+      "number": 9,
+      "guest_time": "2026-09-10T07:56:00.1569267+09:00",
+      "valid": true,
+      "cpu_us": 97237,
+      "disk_us": 128485
+    },
+    {
+      "number": 10,
+      "guest_time": "2026-09-10T07:57:00.4069197+09:00",
+      "valid": true,
+      "cpu_us": 119997,
+      "disk_us": 125953
+    },
+    {
+      "number": 11,
+      "guest_time": "2026-09-10T07:58:00.6629512+09:00",
+      "valid": true,
+      "cpu_us": 108819,
+      "disk_us": 129487
+    },
+    {
+      "number": 12,
+      "guest_time": "2026-09-10T07:59:00.9148017+09:00",
+      "valid": true,
+      "cpu_us": 102468,
+      "disk_us": 127997
+    },
+    {
+      "number": 13,
+      "guest_time": "2026-09-10T08:00:01.1648017+09:00",
+      "valid": true,
+      "cpu_us": 106404,
+      "disk_us": 129757
+    },
+    {
+      "number": 14,
+      "guest_time": "2026-09-10T08:01:01.4166445+09:00",
+      "valid": true,
+      "cpu_us": 108482,
+      "disk_us": 128434
+    },
+    {
+      "number": 15,
+      "guest_time": "2026-09-10T08:02:01.6822695+09:00",
+      "valid": true,
+      "cpu_us": 104566,
+      "disk_us": 128270
+    },
+    {
+      "number": 16,
+      "guest_time": "2026-09-10T08:03:01.9203485+09:00",
+      "valid": true,
+      "cpu_us": 106618,
+      "disk_us": 129007
+    },
+    {
+      "number": 17,
+      "guest_time": "2026-09-10T08:04:02.1859695+09:00",
+      "valid": true,
+      "cpu_us": 106759,
+      "disk_us": 127368
+    },
+    {
+      "number": 18,
+      "guest_time": "2026-09-10T08:05:02.4352637+09:00",
+      "valid": true,
+      "cpu_us": 97946,
+      "disk_us": 127721
+    },
+    {
+      "number": 19,
+      "guest_time": "2026-09-10T08:06:02.6738286+09:00",
+      "valid": true,
+      "cpu_us": 108092,
+      "disk_us": 128074
+    },
+    {
+      "number": 20,
+      "guest_time": "2026-09-10T08:07:02.9356670+09:00",
+      "valid": true,
+      "cpu_us": 106838,
+      "disk_us": 128741
+    },
+    {
+      "number": 21,
+      "guest_time": "2026-09-10T08:08:03.1715141+09:00",
+      "valid": true,
+      "cpu_us": 112957,
+      "disk_us": 127805
+    },
+    {
+      "number": 22,
+      "guest_time": "2026-09-10T08:09:03.4225528+09:00",
+      "valid": true,
+      "cpu_us": 107932,
+      "disk_us": 128275
+    },
+    {
+      "number": 23,
+      "guest_time": "2026-09-10T08:10:03.6733920+09:00",
+      "valid": true,
+      "cpu_us": 113484,
+      "disk_us": 127243
+    },
+    {
+      "number": 24,
+      "guest_time": "2026-09-10T08:11:03.9370887+09:00",
+      "valid": true,
+      "cpu_us": 97982,
+      "disk_us": 128915
+    },
+    {
+      "number": 25,
+      "guest_time": "2026-09-10T08:12:04.1870884+09:00",
+      "valid": true,
+      "cpu_us": 121417,
+      "disk_us": 141183
+    },
+    {
+      "number": 26,
+      "guest_time": "2026-09-10T08:13:04.4645219+09:00",
+      "valid": true,
+      "cpu_us": 99712,
+      "disk_us": 129595
+    },
+    {
+      "number": 27,
+      "guest_time": "2026-09-10T08:14:04.7145160+09:00",
+      "valid": true,
+      "cpu_us": 109622,
+      "disk_us": 126965
+    },
+    {
+      "number": 28,
+      "guest_time": "2026-09-10T08:15:04.9719182+09:00",
+      "valid": true,
+      "cpu_us": 101765,
+      "disk_us": 127989
+    },
+    {
+      "number": 29,
+      "guest_time": "2026-09-10T08:16:05.2091968+09:00",
+      "valid": true,
+      "cpu_us": 97845,
+      "disk_us": 125086
+    },
+    {
+      "number": 30,
+      "guest_time": "2026-09-10T08:17:05.4554033+09:00",
+      "valid": true,
+      "cpu_us": 110074,
+      "disk_us": 128620
+    },
+    {
+      "number": 31,
+      "guest_time": "2026-09-10T08:18:05.7072536+09:00",
+      "valid": true,
+      "cpu_us": 111684,
+      "disk_us": 128068
+    }
+  ],
+  "note": "Repeated read-only 64MiB test and bounded CPU work; not a general SSD benchmark or lifetime stability proof.",
+  "cpu_us": {
+    "min": 78124,
+    "median": 106838,
+    "max": 121498
+  },
+  "disk_us": {
+    "min": 125086,
+    "median": 128434,
+    "max": 141183
+  },
+  "guest_timestamp_span_s": 1807.612832,
+  "required_span_s": 1800.0
+}

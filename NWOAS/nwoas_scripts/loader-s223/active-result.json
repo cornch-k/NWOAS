@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "session": "nwoas_scripts/logs/loader-s223-fd-tail-20260910-083426.LIw4EF.link",
+  "job": 4,
+  "samples": 2247,
+  "elapsed_ms": 300074,
+  "disk_us": {
+    "min": 120722,
+    "median": 126125,
+    "max": 974580
+  },
+  "note": "Logical 64MiB reads on a compressed filesystem; not raw SSD throughput"
+}

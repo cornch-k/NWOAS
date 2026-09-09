@@ -1,0 +1,171 @@
+{
+  "source": "S216 candidate UEFI, S215 dedicated guest prefix and S208 diagnostic HV; runtime launchers separate",
+  "hardware_status": "S215 isolated trial and two S216 Windows boots passed. S216 passed native P12, 8 cores, full256MiB integrity, 10GiB memory x3, 5-minute active reads and 30-minute mixed soak. S218 Cinebench is separate; no standalone/native-driver claim.",
+  "hv_build_flags": "-DNWOAS_NVME_MAX_BLOCKS=256 -DNWOAS_NVME_REASSERT_US=50",
+  "guest_build_tag": "v1.0.2-1474-gbddf7f06-s215handoff",
+  "components": [
+    {
+      "component": "m1n1_windows",
+      "base_commit": "bddf7f06f033a7411834ac61381d8c997034f532",
+      "patch": "m1n1_windows.patch",
+      "sha256": "676dbc416c51c7bec2a9ef24ae9d2a4a4adbdc2ef80b059de709c8728abeb1d7",
+      "files": [
+        "proxyclient/tools/run_guest.py",
+        "src/hv_exc.c",
+        "src/hv_vm.c",
+        "src/nwoas_stage8.inc"
+      ],
+      "apply_check": "PASS against clean temporary index"
+    },
+    {
+      "component": "apple_silicon_platforms_mu",
+      "base_commit": "35034bea7e054a7c07ad05c5fcf1731ab50b860e",
+      "patch": "apple_silicon_platforms_mu.patch",
+      "sha256": "63670e77cf0336581639a80a1df2c210b415d1d7ac5425a292753fabe215aa75",
+      "files": [
+        "Platform/MacMini2020Pkg/MacMini2020.fdf",
+        "Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc",
+        "Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c",
+        "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c",
+        "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf",
+        "Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasCpuPstate.h",
+        "Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasGuestRam.h",
+        "Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasHandoffRanges.h",
+        "Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasSplitMemoryMap.h",
+        "Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.c",
+        "Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.inf",
+        "Silicon/Apple/AppleSiliconPkg/Library/MsBootOptionsLib/MsBootOptionsLib.c",
+        "Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasHardwareBootRtcLib.c",
+        "Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasHardwareBootRtcLib.inf",
+        "Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasRtcSeedCore.c",
+        "Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasRtcSeedCore.h",
+        "Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/nwoas_sera_rtc.c",
+        "Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/nwoas_sera_rtc.h",
+        "Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c",
+        "Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc",
+        "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c",
+        "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.inf"
+      ],
+      "apply_check": "PASS against clean temporary index"
+    },
+    {
+      "component": "MU_BASECORE",
+      "base_commit": "ba9f76c16f0f170d233f25ffb52e6ab66d7873c2",
+      "patch": "MU_BASECORE.patch",
+      "sha256": "fa42cb197c4cf230a89dacba548ab32458436679023e1996fb73763c496379d5",
+      "files": [
+        "MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceIo.c",
+        "MdeModulePkg/Bus/Pci/XhciDxe/Xhci.c",
+        "MdeModulePkg/Bus/Pci/XhciDxe/XhciSched.c",
+        "MdeModulePkg/Bus/Usb/UsbBusDxe/UsbEnumer.c",
+        "MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c",
+        "MdeModulePkg/Library/UefiBootManagerLib/InternalBm.h",
+        "MdeModulePkg/Library/UefiBootManagerLib/UefiBootManagerLib.inf",
+        "MdePkg/Include/AArch64/AArch64Mmu.h",
+        "MdePkg/Include/Library/ArmLib.h",
+        "MdePkg/Library/BaseMemoryLibOptDxe/Arm/MemLibGuid.c"
+      ],
+      "apply_check": "PASS against clean temporary index"
+    },
+    {
+      "component": "ARM_TIANO",
+      "base_commit": "bd7850321a762c1eb2f0a3b11bcac0265c863741",
+      "patch": "ARM_TIANO.patch",
+      "sha256": "a9d17be061fdf028cf0047b9a7b513f6e624600aa2ccc61b2d923784b813180d",
+      "files": [
+        "ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.c",
+        "ArmPkg/Drivers/CpuDxe/AArch64/Mmu.c",
+        "ArmPkg/Library/ArmMmuLib/AArch64/ArmMmuLibCore.c"
+      ],
+      "apply_check": "PASS against clean temporary index"
+    },
+    {
+      "component": "m1n1_guest",
+      "base_commit": "bddf7f06f033a7411834ac61381d8c997034f532",
+      "patch": "m1n1_guest.patch",
+      "sha256": "d40f737621febf13a0b367cd6f84e02f64b6bd19175cf864b2474ba81bf46405",
+      "files": [
+        "src/i2c.c",
+        "src/main.c",
+        "src/nwoas_handoff_layout.h",
+        "src/payload.c",
+        "src/usb.c"
+      ],
+      "apply_check": "PASS against clean temporary index"
+    }
+  ],
+  "uefi_payload_sha256": "0ae1cb75bfc3cbc2b7b15e6408c489fe5badd3d12d53fc4353a85b6b5ad3d197",
+  "guest_prefix_sha256": "d91700ccbe277461513ca9d8320263bf41fc33da8cb814ba095d0f857d02e334",
+  "note": "S198 remains unchanged for historical S205 reproduction; this export preserves run_guest.py executable mode.",
+  "uefi_submodules": {
+    "Common/MU": "aea10a3baca8e48cfe76d869fa88460eadc5cfce",
+    "Common/MU_DFCI": "9e06f210708c23257b3d57ff5ad02af02cdca1d5",
+    "Common/MU_OEM_SAMPLE": "79efd1522566cca0169870addba3d57c3224694a",
+    "Common/TIANO": "50e18df38333cc220f5b8d30cd9946a7bd384c30",
+    "MU_BASECORE": "ba9f76c16f0f170d233f25ffb52e6ab66d7873c2",
+    "Silicon/ARM/TIANO": "bd7850321a762c1eb2f0a3b11bcac0265c863741",
+    "mu_feature_debugger": "cf5dadba437b32475eef22059496c051c1fe0386"
+  },
+  "toolchain": {
+    "guest_and_hv_clang": "20.1.8",
+    "lld": "20.1.8",
+    "guest_rust": "1.88.0",
+    "uefi_python": "3.11.15",
+    "edk2-pytool-extensions": "0.27.6",
+    "edk2-pytool-library": "0.21.8",
+    "uefi_tag": "CLANGPDB",
+    "uefi_target": "DEBUG",
+    "build_concurrency": 2,
+    "dtc": "1.8.1"
+  },
+  "dtb": {
+    "path": "NWOAS/nwoas_scripts/dtb-s221/recovered-j274.dts",
+    "source_sha256": "0cd8f7c7d9ab42629a01ea60ed97db66835ae7cce70b1286c860194cc7be61a8",
+    "bytes": 65536,
+    "sha256": "ecc93b24740d80007d31986a43983c36eef47dd8b0b105b663c25a7b51190f76",
+    "recipe": "python3 NWOAS/nwoas_scripts/dtb-s221/build.py",
+    "provenance": "Recovered readable DTS reproduces existing static FDT exactly. Original upstream source revision remains unknown; see S221 NOTICE and review."
+  },
+  "fd_sha256": "b008dcfc93059ee6f623dc7f8d96dd69276970c14931be68f8e7dce256e537cc",
+  "hv_configurations": {
+    "gap50": {
+      "define": "-DNWOAS_NVME_REASSERT_US=50",
+      "sha256": "f801c5bec4e2972a0011b594ec8fb9201406dd7a82180631f4328f6d2779fa16"
+    },
+    "gap25": {
+      "define": "-DNWOAS_NVME_REASSERT_US=25",
+      "sha256": "1f1291dd354ab202faaceccd05635b0d1cac7666f32bf808c49807db0bec5bde"
+    }
+  },
+  "recipe_paths": [
+    "NWOAS/nwoas_scripts/loader-s215/build.sh",
+    "NWOAS/nwoas_scripts/firmware-s216/build_candidate.py",
+    "NWOAS/nwoas_scripts/firmware-s216-handoff-guest-test.sh"
+  ],
+  "public_repository_urls": {
+    "m1n1_windows": [
+      "https://github.com/AppleWOA/m1n1_windows.git",
+      "https://github.com/cornch-k/m1n1_windows.git"
+    ],
+    "apple_silicon_platforms_mu": [
+      "https://github.com/AppleWOA/apple_silicon_platforms_mu.git",
+      "https://github.com/cornch-k/apple_silicon_platforms_mu.git"
+    ]
+  },
+  "base_availability_check": {
+    "method": "GitHub API authenticated read on public owner forks",
+    "m1n1_guest": "bddf7f06f033a7411834ac61381d8c997034f532",
+    "apple_silicon_platforms_mu": "35034bea7e054a7c07ad05c5fcf1731ab50b860e",
+    "status": "commit objects returned"
+  },
+  "additional_padding_candidate": {
+    "stage": "S223",
+    "recipe": "NWOAS/nwoas_scripts/loader-s223/build_candidate.py",
+    "source_payload_sha256": "0ae1cb75bfc3cbc2b7b15e6408c489fe5badd3d12d53fc4353a85b6b5ad3d197",
+    "payload_sha256": "2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7",
+    "padding_bytes": 491520,
+    "pad": "0xff",
+    "status": "PASS: 8-core integration, 10 GiB x3 memory, 15-minute mixed soak and five-minute active reads; no S223 Cinebench measurement"
+  },
+  "validation_scope": "Integrity-soak timings are not isolated performance measurements; a two-job low-priority host source build overlapped part of the S216 soak. Benchmarks ran separately without host builds."
+}

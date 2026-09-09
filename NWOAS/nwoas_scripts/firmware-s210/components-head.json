@@ -1,0 +1,9 @@
+{
+  "variant": "head",
+  "prefix_sha256": "b2515b77d5e3cc5d5031823ce88bd0b25fdf1f4c41a9183ce92ef12c29a0b007",
+  "dtb_sha256": "ecc93b24740d80007d31986a43983c36eef47dd8b0b105b663c25a7b51190f76",
+  "fd_sha256": "e3407c3687b2b860bc168f050acdfd686ac0fbc73fe5345fc52ebaf86640cb57",
+  "payload_sha256": "38b0f279a74c19ab51839d68877101dadb00d6449c96d9bcbddb01a9064d598b",
+  "bytes": 33177600,
+  "opaque_prefix_used": false
+}

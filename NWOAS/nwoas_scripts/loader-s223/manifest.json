@@ -1,0 +1,23 @@
+{
+  "status": "PASS: 8-core integration, 10 GiB x3 memory, 15-minute mixed soak and five-minute active reads; no S223 Cinebench measurement",
+  "source_payload_sha256": "0ae1cb75bfc3cbc2b7b15e6408c489fe5badd3d12d53fc4353a85b6b5ad3d197",
+  "payload_sha256": "2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7",
+  "bytes": 33669120,
+  "fd_offset": 2211840,
+  "original_fd_bytes": 30965760,
+  "image_size": 31457280,
+  "padding_bytes": 491520,
+  "padding_value": "0xff (FD ErasePolarity=1)",
+  "original_bytes_unchanged": true,
+  "known_input_copy_span_fully_supplied": true,
+  "runtime_changed": false,
+  "note": "Fully supplies the inline copy span. No watchdog causality claim. See matching hardware/soak result files.",
+  "soak_span_s": 903.888258,
+  "active_read_samples": 2247,
+  "limitations": [
+    "One S223 boot and bounded tests, not lifetime stability proof",
+    "S223 has no Cinebench measurement",
+    "Maximum single active read 974580 us; latency outlier remains unexplained",
+    "Host runtime remains required"
+  ]
+}

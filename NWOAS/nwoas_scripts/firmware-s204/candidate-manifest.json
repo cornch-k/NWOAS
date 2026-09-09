@@ -1,0 +1,104 @@
+{
+  "candidate": "/Volumes/X31/NWOAS/nwoas_scripts/firmware-s204/m1n1-payload-s204-imghdr-compat.bin",
+  "validated": true,
+  "boot_tested": false,
+  "status": "build-only; awaiting main hardware test",
+  "claim": "offline layout/provenance validated only; no boot, no native-driver, and no standalone-boot completion is claimed",
+  "bytes": 33177600,
+  "sha256": "548fd6b035e58024fc61969ae2ad14ce5efa5b84a18a503c35a20ba7691bd783",
+  "source_patch": "/Volumes/X31/NWOAS/nwoas_scripts/firmware-s204/image_size.patch",
+  "recipe": "loader-s197 compat recipe with the S204 source-built FD substituted for the S192 FD",
+  "layout": {
+    "m1n1": {
+      "offset": 0,
+      "size": 2146304,
+      "sha256": "1c255a7f325a125040ed7aa5fcbc8bfda8b82c84d727698d4bf14e97ab162078",
+      "source": "/Volumes/X31/NWOAS/nwoas_scripts/loader-s197/out/compat/m1n1.bin",
+      "note": "loader-s197 out/compat m1n1.bin, unchanged"
+    },
+    "dtb": {
+      "offset": 2146304,
+      "size": 65536,
+      "sha256": "ecc93b24740d80007d31986a43983c36eef47dd8b0b105b663c25a7b51190f76",
+      "source": "/Volumes/X31/NWOAS/m1n1_windows/apple-j274-padded.dtb"
+    },
+    "fd": {
+      "offset": 2211840,
+      "size": 30965760,
+      "sha256": "e3407c3687b2b860bc168f050acdfd686ac0fbc73fe5345fc52ebaf86640cb57",
+      "source": "/Volumes/X31/NWOAS/nwoas_scripts/firmware-s204/m1n1-payload-s204-native-rtc-p12-30mib-hdr.bin[1376256:]",
+      "image_size": "0x1e00000",
+      "built_from": "source (MacMini2020.fdf image_size corrected); not a binary patch"
+    }
+  },
+  "image_size_constraints": {
+    "image_size": "0x1e00000",
+    "pcd_fd_size": "0x1e00000",
+    "fd_len": "0x1d88000",
+    "image_size_ge_fd_len": true,
+    "image_size_ge_pcd_fd_size": true
+  },
+  "heap_position_consequence": "Heap-position consequence: m1n1 load_kernel() (src/payload.c) reserves and memcpy()s image_size bytes for a non-2MiB-aligned inline FD, and heapblock.c advances heap_base by that amount.  S192/S197 used image_size=0x100E0000, reserving 256.875 MiB; this candidate uses 0x01E00000 (30 MiB == PcdFdSize), so every later m1n1 allocation (kboot_prepare_dt buffers, malloc arena) sits 0xE2E0000 (~226.875 MiB) lower.  UEFI only requires image_size >= PcdFdSize (it treats [FdBase, FdBase+PcdFdSize) as its own and is position-independent, relocated in place, with scratch memory placed below FdBase), and both checks above hold.  The layout shift is real and has no offline proof of neutrality; it must be confirmed by a user-run hardware A/B against S197-compat before any launcher is pointed at this FD.",
+  "checks": [
+    {
+      "check": "S197 compat m1n1 prefix sha256 pinned (read-only)",
+      "ok": true,
+      "detail": "1c255a7f325a1250"
+    },
+    {
+      "check": "pinned DTB sha256",
+      "ok": true,
+      "detail": "ecc93b24740d8000"
+    },
+    {
+      "check": "DTB is 64 KiB and FDT magic",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "S204 source-built FD sha256",
+      "ok": true,
+      "detail": "e3407c3687b2b860"
+    },
+    {
+      "check": "FD magic ARM\\x64 at 0x38",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "FD Linux header adr x1,. / b 0x8000 / text_offset 0x80000",
+      "ok": true,
+      "detail": "10000001 14001fff text_off=0x80000"
+    },
+    {
+      "check": "image_size corrected to 0x01E00000 (30 MiB == PcdFdSize)",
+      "ok": true,
+      "detail": "0x1e00000"
+    },
+    {
+      "check": "image_size >= FD length",
+      "ok": true,
+      "detail": "0x1e00000 >= 0x1d88000"
+    },
+    {
+      "check": "image_size >= PcdFdSize (0x1E00000)",
+      "ok": true,
+      "detail": "0x1e00000"
+    },
+    {
+      "check": "assembled layout m1n1 | dtb | fd",
+      "ok": true,
+      "detail": "dtb@0x20c000 fd@0x21c000"
+    },
+    {
+      "check": "total payload == 33177600 B",
+      "ok": true,
+      "detail": "33177600"
+    },
+    {
+      "check": "total payload 16 KiB aligned",
+      "ok": true,
+      "detail": ""
+    }
+  ]
+}

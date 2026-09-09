@@ -1,0 +1,33 @@
+{
+  "pass_": true,
+  "benchmark": "Cinebench 2026.1.3 official Windows ARM64 CPUX",
+  "score": 1888.454,
+  "display_score": 1888.45,
+  "render_ms": 635440.5,
+  "minimum_ms": 600000,
+  "native_exit": 0,
+  "timeout": false,
+  "wrapper_elapsed_s": 663.5000882,
+  "threads": 8,
+  "windows_ram_bytes": 15081889792,
+  "log": "nwoas_scripts/logs/firmware-s216-handoff-20260910-074136.hXAU0A.link",
+  "job": 17,
+  "hv": "S208 gap50 diagnostic-corrected control",
+  "hv_sha256": "f801c5bec4e2972a0011b594ec8fb9201406dd7a82180631f4328f6d2779fa16",
+  "payload": "S216 guarded source-built firmware, native RTC/P12",
+  "payload_sha256": "0ae1cb75bfc3cbc2b7b15e6408c489fe5badd3d12d53fc4353a85b6b5ad3d197",
+  "host_late_p12_write": false,
+  "initial_s140_host_cpufreq_init": false,
+  "stdout_sha256": "76073064748f3ba4ad47a8391a02a56f528c5c10aefe0bc0d182230749b28e11",
+  "prior_s196_score": 1905.281,
+  "score_change_percent": -0.8831768122392392,
+  "limitations": [
+    "One sample per configuration; the small score difference is not a causally isolated performance change.",
+    "Measured S216, not the subsequent S223 tail-padding candidate.",
+    "Host EL2 mediation and runtime service transport remain.",
+    "No matching same-Mini macOS baseline measured.",
+    "CPU MHz30 metadata is not a measured hardware clock.",
+    "No network adapter; asset DNS warnings did not prevent CPU completion."
+  ],
+  "observer_interval_s": 120
+}

@@ -1,15 +1,15 @@
 """Keep APs parked until Windows requests them through PSCI.
 
-Windows' Apple AIC HAL writes the Apple PMGR CPU_START registers during early
-bring-up.  The outer Python hypervisor normally translates those writes into
-hv_start_secondary(), entering the AP at the firmware RVBAR.  Windows later
-issues PSCI CPU_ON for the same AP, which caused the S131/S132 double-start
-deadlock at ``HV: Initializing secondary 1``.
+Observed legacy PMGR CPU_START writes occur in the guest m1n1 prefix, before
+UEFI storage initialization, and match smp_start_cpu(). Earlier documentation
+attributed them to Windows; that attribution was not supported by the trace.
+The outer Python hypervisor otherwise dispatches these writes through
+hv_start_secondary() at the firmware RVBAR. This gate suppresses that legacy
+start path, preserving parked APs for later Windows PSCI CPU_ON requests.
 
-MADT still advertises all eight CPUs.  This gate blocks only the legacy/direct
-PMGR dispatch path.  PSCI CPU_ON is handled inside the C hypervisor and calls
-hv_start_secondary() directly, so it remains able to start each parked AP at
-Windows' requested entry point.
+MADT still advertises all eight CPUs. PSCI CPU_ON is handled inside the C
+hypervisor and calls hv_start_secondary() directly. This Python gate remains
+a host-side boot dependency; it is not a native Windows CPU-start driver.
 """
 
 _nwoas_pmstart_seen = 0

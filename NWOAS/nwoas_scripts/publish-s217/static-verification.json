@@ -1,0 +1,13 @@
+{
+  "python_ast_pass": 30,
+  "bash_syntax_pass": 18,
+  "whitespace_check": "PASS outside exact source/patch snapshots",
+  "preserved_snapshot_exclusions": [
+    "*.patch",
+    "*.diff",
+    "NWOAS/nwoas_scripts/nvme-s208/hv_exc-s208.c",
+    "NWOAS/nwoas_scripts/publish-s217/companion/AppleSiliconPkg.dsc.inc",
+    "NWOAS/nwoas_scripts/firmware-s216/tests/reserve_actual.inc"
+  ],
+  "note": "Excluded source snapshots preserve upstream whitespace/bytes and hashes. Patch context blanks are not generated-code whitespace defects."
+}

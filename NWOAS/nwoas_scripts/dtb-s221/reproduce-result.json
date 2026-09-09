@@ -1,0 +1,9 @@
+{
+  "status": "PASS",
+  "dtc": "Version: DTC 1.8.1",
+  "bytes": 65536,
+  "sha256": "ecc93b24740d80007d31986a43983c36eef47dd8b0b105b663c25a7b51190f76",
+  "source_sha256": "0cd8f7c7d9ab42629a01ea60ed97db66835ae7cce70b1286c860194cc7be61a8",
+  "hardware_changed": false,
+  "upstream_source_revision": "unknown; recovered DTS reproduces existing static FDT exactly"
+}

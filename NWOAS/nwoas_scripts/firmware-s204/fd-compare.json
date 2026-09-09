@@ -1,0 +1,33 @@
+{
+  "expected_only_offsets": [
+    18,
+    19
+  ],
+  "fd_offset_in_payload": 1376256,
+  "fd192_len": 30965760,
+  "fd204_len": 30965760,
+  "fd192_sha256": "ae917fef199f29c2168550ae3af3dbe9f012c54140d36700e568258c3c3c382b",
+  "fd204_sha256": "e3407c3687b2b860bc168f050acdfd686ac0fbc73fe5345fc52ebaf86640cb57",
+  "diff_offsets_0based": [
+    18,
+    19
+  ],
+  "diffs": [
+    {
+      "offset": 18,
+      "s192": 14,
+      "s204": 224
+    },
+    {
+      "offset": 19,
+      "s192": 16,
+      "s204": 1
+    }
+  ],
+  "image_size_s192": "0x100e0000",
+  "image_size_s204": "0x1e00000",
+  "pcd_fd_size": "0x1e00000",
+  "image_size_s204_eq_pcd": true,
+  "image_size_s204_ge_fd_len": true,
+  "exact_two_byte_header_diff": true
+}

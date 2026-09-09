@@ -1,0 +1,8 @@
+{
+  "prefix_sha256": "d91700ccbe277461513ca9d8320263bf41fc33da8cb814ba095d0f857d02e334",
+  "prefix_bytes": 2146304,
+  "payload_sha256": "bb930c722e19751eeb7a331680d396444ac4d1defd020fa35b041c226b738d83",
+  "payload_bytes": 33177600,
+  "change": "Dedicated guest prefix with post-handoff kernel placement; S197compat plus placement.patch and handoff_layout.h; original S192 FD retained",
+  "hardware": "S215 isolated original-FD trial passed 8-core Windows, native P12, CPU and 256MiB full integrity. Active/soak qualification recorded separately."
+}

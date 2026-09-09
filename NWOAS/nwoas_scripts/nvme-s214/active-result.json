@@ -1,0 +1,18 @@
+{
+  "status": "PASS",
+  "session": "nwoas_scripts/logs/nvme-s214-eoipc50-control-20260910-065133.L1K2Wr.link",
+  "job": 2,
+  "samples": 2219,
+  "elapsed_ms": 300073,
+  "disk_us": {
+    "min": 121053,
+    "median": 125372,
+    "max": 993139
+  },
+  "hv": "S208 gap50 diagnostic correction",
+  "payload": "S192 nativeRTC/P12, initial and late hostCPU writes omitted",
+  "note": "Logical64MiB reads on compressed filesystem; not raw SSD throughput",
+  "hv_sha256": "f801c5bec4e2972a0011b594ec8fb9201406dd7a82180631f4328f6d2779fa16",
+  "payload_sha256": "b67313c48e057e3c1e608521b69a611e129328c04554785e429f4a4211d4c7c9",
+  "host_cpu_writes": false
+}

@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "session": "nwoas_scripts/logs/loader-s215-placement-20260910-073027.bqKJF6.link",
+  "job": 2,
+  "samples": 2214,
+  "elapsed_ms": 300038,
+  "disk_us": {
+    "min": 121159,
+    "median": 126128.0,
+    "max": 728881
+  },
+  "note": "Logical 64MiB reads on a compressed filesystem; not raw SSD throughput"
+}

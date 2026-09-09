@@ -1,0 +1,18 @@
+{
+  "source_review": "loader-s213/review-s216.md",
+  "reviewed_payload_sha256": "0ae1cb75bfc3cbc2b7b15e6408c489fe5badd3d12d53fc4353a85b6b5ad3d197",
+  "no_blocking_source_issue_reported": true,
+  "accepted_nonblocking_limits": [
+    "S215 accepts >1MiB ADT but S216 rejects it; failure is closed, observed size0x5c000",
+    "Legacy carve mode could reject later; tested launchers use WINDOW_AFTER_RAM=1",
+    "Explicit returns after CpuDeadLoop are retained for conservative C control flow"
+  ],
+  "source_hashes": {
+    "NwoasHandoffRanges.h": "9c10c9019de0c21d52295544e9f7eae03b68673a03ed166d1bbdb19ecaab8a45",
+    "patch_sources.py": "494e0d17a1ad6d0375f62e6d0a8becbc01b5aedfc0096be9a85746a18871d8a0",
+    "adt-handoff.patch": "72d9a6b07558ef8d84aee57d93e607004b1b46bd9395171a3e051c8ab54b9b67",
+    "memory-handoff.patch": "152ab61ad20099b067300fcda261abf66454e0058a012652881ea29b241ac2bf",
+    "memory-inf-handoff.patch": "ed8b7bc715a7bbc33067076be2908089af35ae20b1c88ef341d6b3948228caf7"
+  },
+  "hardware": "pending"
+}

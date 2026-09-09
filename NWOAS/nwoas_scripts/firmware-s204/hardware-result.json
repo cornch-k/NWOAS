@@ -1,0 +1,13 @@
+{
+  "status": "FAIL pre-UEFI completion; not accepted",
+  "session": "loader-s204-imghdr-20260910-064645.5fRxTb",
+  "payload_sha256": "548fd6b035e58024fc61969ae2ad14ce5efa5b84a18a503c35a20ba7691bd783",
+  "actual_entry": "0x840000000",
+  "configured_adt_copy": "0x840004000",
+  "PC": "0xffffffffffffffff",
+  "ESR": "0x8a000000",
+  "observation": "ADT copy address overlaps loaded 30MiB FD; source investigation needed. Old 256.875MiB header works; do not adopt size-only fix.",
+  "observed_adt_bytes": 376832,
+  "ESR_meaning": "EC0x22 PC alignment fault",
+  "followup": "S211 reproduced with original header; image-size-only attribution rejected"
+}

@@ -1,0 +1,9 @@
+{
+  "variant": "compat",
+  "prefix_sha256": "1c255a7f325a125040ed7aa5fcbc8bfda8b82c84d727698d4bf14e97ab162078",
+  "dtb_sha256": "ecc93b24740d80007d31986a43983c36eef47dd8b0b105b663c25a7b51190f76",
+  "fd_sha256": "e3407c3687b2b860bc168f050acdfd686ac0fbc73fe5345fc52ebaf86640cb57",
+  "payload_sha256": "548fd6b035e58024fc61969ae2ad14ce5efa5b84a18a503c35a20ba7691bd783",
+  "bytes": 33177600,
+  "opaque_prefix_used": false
+}

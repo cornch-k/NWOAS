@@ -1,0 +1,3 @@
+@echo off
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $names=@('IO195-s193-gap50.DAT','IO195-s200-gap50.DAT','IO195-s202-gap25.DAT','IO195-s203-compat.DAT'); $paths=@(); foreach($name in $names){$p=Join-Path 'C:\ProgramData\NWOAS' $name; $f=Get-Item -LiteralPath $p; if($f.Length -ne 268435456){throw ('Unexpected size '+$name)}; $h=(Get-FileHash -LiteralPath $p).Hash; if($h -ne 'EB11897202F621134A7EC3C737C4AC3FBEEE61EF69FAA50D4B9469D8998538D6'){throw ('Unexpected hash '+$name)}; Write-Output ('VERIFIED '+$name+' '+$h); $paths+=$p}; foreach($p in $paths){Remove-Item -LiteralPath $p; Write-Output ('RETIRED '+[IO.Path]::GetFileName($p))}; Write-Output ('FREE_BYTES='+[long](Get-PSDrive C).Free)"
+exit /b %errorlevel%

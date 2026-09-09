@@ -1,0 +1,12 @@
+{
+  "session": "nvme-s211-eoipc50-20260910-064856.EPuUmp",
+  "status": "FAIL before Windows",
+  "payload": "S197 compat with original256.875MiB header",
+  "hv": "S208 gap50",
+  "actual_kernel_entry": "0x840000000",
+  "bootargs_copy_destination": "0x840000000",
+  "adt_copy_destination": "0x840004000",
+  "PC": "0xffffffffffffffff",
+  "ESR": "0x8a000000",
+  "conclusion": "Header-size-only attribution disproven: old header also collides for this allocation. S203 one successful boot does not establish relocation safety."
+}

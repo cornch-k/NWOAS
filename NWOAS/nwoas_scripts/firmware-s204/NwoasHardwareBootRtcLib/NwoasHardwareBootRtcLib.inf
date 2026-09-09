@@ -1,0 +1,32 @@
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = NwoasHardwareBootRtcLib
+  FILE_GUID                      = 138F45C7-1436-4FCE-A43F-185000000001
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 0.1
+  LIBRARY_CLASS                  = RealTimeClockLib
+
+[Sources.common]
+  NwoasHardwareBootRtcLib.c
+  NwoasRtcSeedCore.c
+  NwoasRtcSeedCore.h
+  nwoas_sera_rtc.c
+  nwoas_sera_rtc.h
+
+[Packages]
+  ArmPkg/ArmPkg.dec
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[LibraryClasses]
+  ArmGenericTimerCounterLib
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  AppleDTLib
+  IoLib
+
+# NwoasRtcSeedCore.c is shared with the host test build and uses only
+# <stdint.h>/<stddef.h>; no BUILD_EPOCH or shell-dependent flags are needed.

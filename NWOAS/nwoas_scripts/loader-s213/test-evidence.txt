@@ -1,0 +1,16 @@
+# S213 host regression test evidence
+# cmd: python3 nwoas_scripts/loader-s213/test_handoff_overlap.py
+# date: 2026-09-09T22:01:02Z  python: Python 3.13.7
+# inputs (read-only): T810XFamilyPkg.dsc.inc, PrePi/AArch64/ModuleEntryPoint.S, firmware-s204/MacMini2020.fdf.{before,candidate}, firmware-s204/hardware-result.json, m1n1-guest-s197/src/{xnuboot.h,payload.c}
+# no hardware, no build, no log or dump reads; no hardware fix verified
+test_image_size_constraints (__main__.HandoffOverlap.test_image_size_constraints) ... ok
+test_kernel_block_address_is_header_independent (__main__.HandoffOverlap.test_kernel_block_address_is_header_independent) ... ok
+test_observed_entry_collides_for_both_headers (__main__.HandoffOverlap.test_observed_entry_collides_for_both_headers) ... ok
+test_reservation_invariant_for_a_fix (__main__.HandoffOverlap.test_reservation_invariant_for_a_fix) ... ok
+test_source_constants (__main__.HandoffOverlap.test_source_constants) ... ok
+test_what_269mib_actually_protects (__main__.HandoffOverlap.test_what_269mib_actually_protects) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.001s
+
+OK

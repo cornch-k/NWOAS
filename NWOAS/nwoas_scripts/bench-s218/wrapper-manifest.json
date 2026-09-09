@@ -1,0 +1,11 @@
+{
+  "wrapper_sha256": "84b61cc0d18e0c1643b5e4dd3abb032c4d905cdb4e778850ffc79c7b1ad5b814",
+  "bytes": 3829,
+  "previous_wrapper_sha256": "3578a5cfc5d1188d63ab7da671140d7a925de039d6f53a3d8187a1d4562214ff",
+  "status": "completed native exit0, no timeout; score evidence in result.json",
+  "change": "Only unique output/staging/backup name from S196; native exit and timeout capture preserved",
+  "installation_job": 9,
+  "session": "nwoas_scripts/logs/firmware-s216-handoff-20260910-074136.hXAU0A.link",
+  "native_start_utc": "2026-09-09T23:19:09.0184885Z",
+  "observer_interval_s": 120
+}

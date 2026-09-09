@@ -1,0 +1,23 @@
+{
+  "session": "nwoas_scripts/logs/loader-s203-compat-20260910-064129.VJAAoz.link",
+  "job": 1,
+  "status": "PASS short integration; not long soak",
+  "payload_sha256": "9a0b96af3e09cbd4450590ac4ff59e5e2aa4949bd70723ad9b8240996635020a",
+  "source_prefix_sha256": "1c255a7f325a125040ed7aa5fcbc8bfda8b82c84d727698d4bf14e97ab162078",
+  "cpu_count": 8,
+  "memory_bytes": 15082278912,
+  "native_p12": {
+    "phase": "Windows worker connected; no host P-state writes",
+    "utc": 1788990126.058155,
+    "p_cmd": "0x4000010c10c",
+    "p_status": "0xcc",
+    "e_cmd": "0x40000105105",
+    "e_status": "0x55",
+    "p12_selected": true
+  },
+  "cpu_us": 121401,
+  "read64m_us": 128331,
+  "write256m_us": 134751,
+  "read256m_us": 200821,
+  "all_words_verified": 33554432
+}

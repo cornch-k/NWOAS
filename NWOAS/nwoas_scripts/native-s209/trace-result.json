@@ -1,0 +1,9 @@
+{
+  "status": "PASS C/Python control-access equivalence",
+  "reads": 267,
+  "writes": 48,
+  "unimplemented_doorbells_returned_not_handled": 16,
+  "logged_read_values_matched": 267,
+  "logged_read_value_differences": [],
+  "limitation": "Not full controller replay: omitted admin command bodies/completions, target fastpath and capped logging. Matching logged reads does not prove those paths."
+}

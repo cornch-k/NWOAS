@@ -1,0 +1,10 @@
+{
+  "source": "pre-existing static J274 FDT, not machine ADT",
+  "original_sha256": "ecc93b24740d80007d31986a43983c36eef47dd8b0b105b663c25a7b51190f76",
+  "roundtrip_sha256": "ecc93b24740d80007d31986a43983c36eef47dd8b0b105b663c25a7b51190f76",
+  "byte_identical": true,
+  "dts_sha256": "0cd8f7c7d9ab42629a01ea60ed97db66835ae7cce70b1286c860194cc7be61a8",
+  "dtc": "Version: DTC 1.8.1",
+  "upstream_source_revision": "unknown; conversion alone does not establish upstream provenance",
+  "hardware_changed": false
+}

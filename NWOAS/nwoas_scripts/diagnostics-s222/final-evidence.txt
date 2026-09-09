@@ -1,0 +1,58 @@
+
+
+Algorithm : SHA256
+Hash      : EB11897202F621134A7EC3C737C4AC3FBEEE61EF69FAA50D4B9469D8998538D6
+Path      : C:\ProgramData\NWOAS\IO195.DAT
+
+
+
+
+
+Name   : IO195-s223-tail.DAT
+Length : 268435456
+
+
+
+S222 UTC=2026-09-09T23:57:01.4589507Z
+S222 CPU metadata (not measured clock)
+
+
+Name                      : Not Specified
+NumberOfCores             : 8
+NumberOfLogicalProcessors : 8
+MaxClockSpeed             : 29
+CurrentClockSpeed         : 29
+
+
+
+S222 MEMORY
+
+
+TotalPhysicalMemory       : 15081889792
+NumberOfLogicalProcessors : 8
+
+
+
+S222 DEVICE PROBLEMS (no instance IDs)
+
+Name             PNPClass ConfigManagerErrorCode
+----             -------- ----------------------
+                                              28
+USB Input Device HIDClass                     10
+                                              28
+
+
+S222 NETWORK (no MAC addresses)
+
+InterfaceDescription                   Status      LinkSpeed
+--------------------                   ------      ---------
+                                       Not Present 0 bps
+                                       Not Present 0 bps
+Microsoft Kernel Debug Network Adapter Not Present 0 bps
+                                       Not Present 0 bps
+
+
+S222 FREE_BYTES=4416102400
+S222 QUERY COMPLETE
+S140 CPU PASS active=8 threads=8 elapsed_us=126020 checksum=14964600543233568963
+S140 DISK PASS active=8 bytes=67108864 elapsed_us=128522 failed=0 checksum=2755686512017749371

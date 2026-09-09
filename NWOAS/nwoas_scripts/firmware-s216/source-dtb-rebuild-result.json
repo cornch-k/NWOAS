@@ -1,0 +1,10 @@
+{
+  "status": "PASS",
+  "payload_sha256": "0ae1cb75bfc3cbc2b7b15e6408c489fe5badd3d12d53fc4353a85b6b5ad3d197",
+  "bytes": 33177600,
+  "full_pipeline": "build_candidate.py -> build_memory.py -> S221 source-DTS build -> source UEFI build -> assembled payload",
+  "matches_previous_two_source_builds": true,
+  "tracked_sources_restored": true,
+  "hardware_unchanged": true,
+  "soak_context": "Low-priority host build with two jobs ran during mixed integrity soak; soak timings are not an isolated performance comparison."
+}

@@ -1,0 +1,1202 @@
+diff --git a/MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceIo.c b/MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceIo.c
+index 29d1023664..388b22583a 100644
+--- a/MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceIo.c
++++ b/MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceIo.c
+@@ -2009,6 +2009,12 @@ InitializePciIoProtocol (
+                &gEdkiiNonDiscoverableNvmeDeviceGuid
+                ))
+   {
++    // S128+: give the synthetic NVMe controller a concrete PCI identity.
++    if (Dev->Device->Resources[0].AddrRangeMin == 0x700100000ULL) {
++      Dev->ConfigSpace.Hdr.VendorId = 0x1234;
++      Dev->ConfigSpace.Hdr.DeviceId = 0x0010;
++      DEBUG ((DEBUG_ERROR, "HVLOG: S128 NVMe PCI identity 1234:0010\n"));
++    }
+     Dev->ConfigSpace.Hdr.ClassCode[0] = 0x2; // PCI_IF_NVMHCI
+     Dev->ConfigSpace.Hdr.ClassCode[1] = 0x8; // PCI_CLASS_MASS_STORAGE_NVM
+     Dev->ConfigSpace.Hdr.ClassCode[2] = PCI_CLASS_MASS_STORAGE;
+diff --git a/MdeModulePkg/Bus/Pci/XhciDxe/Xhci.c b/MdeModulePkg/Bus/Pci/XhciDxe/Xhci.c
+index c337f15118..b1863fe240 100644
+--- a/MdeModulePkg/Bus/Pci/XhciDxe/Xhci.c
++++ b/MdeModulePkg/Bus/Pci/XhciDxe/Xhci.c
+@@ -9,6 +9,8 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ 
+ #include "Xhci.h"
+ 
++#include <IndustryStandard/Acpi10.h>
++
+ //
+ // Two arrays used to translate the XHCI port state (change)
+ // to the UEFI protocol's port state (change).
+@@ -91,6 +93,190 @@ static UINT64   mXhciPerformanceCounterEndValue;
+ static UINT64   mXhciPerformanceCounterFrequency;
+ static BOOLEAN  mXhciPerformanceCounterValuesCached = FALSE;
+ 
++//
++// ============================================================================
++// NWOAS boot-device-loop fix (Part 1): idempotent / non-destructive re-bind.
++//
++// Symptom (confirmed on real HW via m1n1 serial instrumentation): a redundant
++// gBS->ConnectController on the FL1100 (1B73:1100) boot path re-runs
++// NonDiscoverablePciDeviceStart -> XhcDriverBindingStart -> XhcResetHC +
++// XhcInitSched. That HCRST + full schedule rebuild tears down the in-flight
++// boot-device read (device slot / transfer ring / URB) and thrashes the Event
++// Ring Consumer Cycle State, so the completion the FL1100 already posted is
++// never consumed. bootmgfw's read fails, BDS retries, each retry re-connects ->
++// re-resets -> self-sustaining loop -> 0xc0000272 / 0xc000000f.
++//
++// Fix: keep a tiny module-global registry of controllers this driver has
++// already fully initialized, keyed by the INVARIANT BAR0 CPU base address (not
++// the handle, which can be re-created). On a subsequent bind, if the physical
++// controller is still genuinely running with a programmed DCBAAP, DECLINE the
++// duplicate bind (EFI_ALREADY_STARTED) instead of resetting it. We deliberately
++// do NOT try to "reuse" the rings in a fresh instance: the in-flight URB lives
++// in the ORIGINAL instance's heap and cannot be reconstructed from MMIO, so the
++// only safe action is to leave the original running instance + hardware
++// untouched and let its pending transfer complete.
++// ============================================================================
++//
++#define NWOAS_MAX_TRACKED_XHC  8
++
++//
++// NWOAS v15-fix compile gate (candidate fix, HARDWARE-UNVERIFIED). When 1,
++// XhcReset declines a destructive protocol-level host-controller reset of a
++// genuinely live+running controller (see XhcReset). Default 0 = diagnostic-only
++// build (the NWOAS-XHC hcreset marker still fires; behavior is unchanged), so a
++// stock UEFI rebuild never silently ships the unverified behavior change. Flip
++// to 1 only to assemble the v15-fix payload for a hardware test.
++//
++// ADVERSARIAL-REVIEW CAVEAT (before enabling): NwoasXhcControllerIsLiveRunning
++// cannot distinguish "live and progressing" from "live but wedged" (RUN=1,
++// HCH=0, HSE=0, DCBAAP!=0 yet the already-posted completion was lost / the
++// instance is no longer polling that ring). If the survivability hypothesis is
++// wrong and the completion is truly lost, declining the reset converts the
++// reset-loop (0xc0000272) into a HANG -- a different non-boot, not a boot. Only
++// hardware can confirm the original instance still drains the pending transfer.
++//
++#ifndef NWOAS_DECLINE_LIVE_HCRESET
++#define NWOAS_DECLINE_LIVE_HCRESET  0
++#endif
++
++STATIC UINT64  mNwoasInitedXhcBar[NWOAS_MAX_TRACKED_XHC];
++STATIC UINTN   mNwoasInitedXhcCount = 0;
++
++/**
++  Return the invariant BAR0 CPU base address of an xHCI controller, used as a
++  stable key to recognise the same physical controller across handle
++  re-creation. Returns 0 if it cannot be determined, in which case the guard
++  self-disables and stock (reset-on-every-bind) behavior is preserved.
++
++  @param  PciIo   The PciIo protocol of the controller.
++  @return BAR0 CPU base address, or 0 if unavailable.
++**/
++STATIC
++UINT64
++NwoasXhcGetBarBase (
++  IN EFI_PCI_IO_PROTOCOL  *PciIo
++  )
++{
++  EFI_STATUS                         Status;
++  EFI_ACPI_ADDRESS_SPACE_DESCRIPTOR  *Desc;
++  UINT64                             Base;
++
++  Desc = NULL;
++  Base = 0;
++
++  Status = PciIo->GetBarAttributes (PciIo, XHC_BAR_INDEX, NULL, (VOID **)&Desc);
++  if (!EFI_ERROR (Status) && (Desc != NULL)) {
++    if (Desc->Desc == ACPI_ADDRESS_SPACE_DESCRIPTOR) {
++      Base = Desc->AddrRangeMin;
++    }
++
++    FreePool (Desc);
++  }
++
++  return Base;
++}
++
++/**
++  TRUE iff this driver has already fully initialized the controller at BarBase.
++**/
++STATIC
++BOOLEAN
++NwoasXhcWasInited (
++  IN UINT64  BarBase
++  )
++{
++  UINTN  Index;
++
++  if (BarBase == 0) {
++    return FALSE;
++  }
++
++  for (Index = 0; Index < mNwoasInitedXhcCount; Index++) {
++    if (mNwoasInitedXhcBar[Index] == BarBase) {
++      return TRUE;
++    }
++  }
++
++  return FALSE;
++}
++
++/**
++  Record that this driver has fully initialized the controller at BarBase.
++**/
++STATIC
++VOID
++NwoasXhcMarkInited (
++  IN UINT64  BarBase
++  )
++{
++  if ((BarBase == 0) || NwoasXhcWasInited (BarBase)) {
++    return;
++  }
++
++  if (mNwoasInitedXhcCount < NWOAS_MAX_TRACKED_XHC) {
++    mNwoasInitedXhcBar[mNwoasInitedXhcCount++] = BarBase;
++  }
++}
++
++/**
++  Forget the controller at BarBase (called on a genuine DriverBindingStop so a
++  later bind after a real teardown re-initializes from scratch as usual).
++**/
++STATIC
++VOID
++NwoasXhcClearInited (
++  IN UINT64  BarBase
++  )
++{
++  UINTN  Index;
++
++  if (BarBase == 0) {
++    return;
++  }
++
++  for (Index = 0; Index < mNwoasInitedXhcCount; Index++) {
++    if (mNwoasInitedXhcBar[Index] == BarBase) {
++      mNwoasInitedXhcBar[Index] = mNwoasInitedXhcBar[--mNwoasInitedXhcCount];
++      return;
++    }
++  }
++}
++
++/**
++  TRUE iff the physical controller is genuinely up and initialized: Run/Stop
++  set, Halted clear, Controller-Not-Ready clear, Host-System-Error clear, and a
++  non-zero Device Context Base Address Array Pointer has been programmed.
++
++  A cold first-bind controller is halted (HCH=1) with DCBAAP == 0, so this is
++  FALSE on the legitimate first Start; a wedged (HSE) controller is also FALSE,
++  so it is still reset normally. Requires Xhc->CapLength to be valid (set by
++  XhcCreateUsbHc), which is true at the guard call site.
++
++  @param  Xhc   The XHCI instance (already created; op-regs readable).
++**/
++STATIC
++BOOLEAN
++NwoasXhcControllerIsLiveRunning (
++  IN USB_XHCI_INSTANCE  *Xhc
++  )
++{
++  UINT32  UsbCmd;
++  UINT32  UsbSts;
++  UINT32  DcbaapLo;
++  UINT32  DcbaapHi;
++
++  UsbCmd   = XhcReadOpReg (Xhc, XHC_USBCMD_OFFSET);
++  UsbSts   = XhcReadOpReg (Xhc, XHC_USBSTS_OFFSET);
++  DcbaapLo = XhcReadOpReg (Xhc, XHC_DCBAAP_OFFSET);
++  DcbaapHi = XhcReadOpReg (Xhc, XHC_DCBAAP_OFFSET + 4);
++
++  return (BOOLEAN)(((UsbCmd & XHC_USBCMD_RUN) != 0) &&
++                   ((UsbSts & XHC_USBSTS_HALT) == 0) &&
++                   ((UsbSts & XHC_USBSTS_CNR) == 0) &&
++                   ((UsbSts & XHC_USBSTS_HSE) == 0) &&
++                   ((((UINT64)DcbaapHi << 32) | DcbaapLo) != 0));
++}
++
+ /**
+   Retrieves the capability of root hub ports.
+ 
+@@ -185,6 +371,60 @@ XhcReset (
+         goto ON_EXIT;
+       }
+ 
++      //
++      // NWOAS v15-diag: instrument the DESTRUCTIVE host-controller reset path.
++      // XhcReset(EFI_USB_HC_RESET_HOST_CONTROLLER / _GLOBAL) runs XhcHaltHC +
++      // XhcResetHC + XhcFreeSched + XhcInitSched below: a full HCRST + schedule/
++      // ring/DCBAA rebuild, identical destruction to a fresh XhcDriverBindingStart
++      // but WITHOUT a re-bind. NOTE (to be settled by THIS marker): no EDK2 USB-
++      // stack caller invokes this protocol member (verified tree-wide), and the
++      // block-io/SimpleFS path Windows uses does not either, so this path may fire
++      // ~0 times -- in which case the re-init loop is the DriverBindingStart path
++      // (bindstart), not this one. This marker counts the destructive-reset path directly
++      // and in real time -- it streams via the "HVLOG:" vuart passthrough, so it
++      // is visible even if the guest wedges in the re-init loop before PSCI dumps
++      // the vuart ring. Combined with NWOAS-XHC bindstart (DriverBindingStart), a
++      // single hardware run disambiguates the \BCD-read re-init loop source:
++      //   bindstart~68 & hcreset~0  -> loop is DriverBindingStart (fix the guard)
++      //   bindstart~0  & hcreset~68 -> loop is XhcReset          (decline it)
++      //
++      DEBUG ((
++        DEBUG_ERROR,
++        "HVLOG: NWOAS-XHC hcreset BAR=0x%lx attr=0x%x liveRunning=%d\n",
++        NwoasXhcGetBarBase (Xhc->PciIo),
++        (UINT32)Attributes,
++        NwoasXhcControllerIsLiveRunning (Xhc)
++        ));
++
++ #if NWOAS_DECLINE_LIVE_HCRESET
++      //
++      // NWOAS v15-fix (candidate; compile-gated): decline a DESTRUCTIVE protocol-
++      // level host-controller reset of a controller that is genuinely live and
++      // running with a programmed DCBAAP. Only a caller of EFI_USB2_HC_PROTOCOL.
++      // Reset reaches here (XhcDriverBindingStart calls XhcResetHC directly, NOT
++      // this protocol entry, so its init-time reset is unaffected). ENABLE THIS
++      // ONLY IF the v15-diag run shows hcreset ~= the re-init count; if instead a
++      // caller issues this reset during the \BCD read, the ensuing
++      // XhcHaltHC+XhcResetHC+XhcFreeSched+XhcInitSched tears down
++      // the in-flight transfer ring / URB / device slot, so the completion the
++      // FL1100 already posted is never consumed -> read fails -> retry -> reset ->
++      // self-sustaining loop (0xc0000272). Report the reset as a no-op SUCCESS so
++      // the caller is satisfied while the original running instance + hardware +
++      // pending transfer are preserved. A wedged controller (HSE/HCH set, or
++      // DCBAAP==0) has liveRunning==FALSE and is still reset normally, so genuine
++      // error-recovery resets are NOT blocked.
++      //
++      if (NwoasXhcControllerIsLiveRunning (Xhc)) {
++        DEBUG ((
++          DEBUG_ERROR,
++          "HVLOG: NWOAS-XHC decline destructive host-controller reset (attr=0x%x) of live controller\n",
++          (UINT32)Attributes
++          ));
++        Status = EFI_SUCCESS;
++        goto ON_EXIT;
++      }
++ #endif
++
+       //
+       // Host Controller must be Halt when Reset it
+       //
+@@ -1978,6 +2218,7 @@ XhcDriverBindingStart (
+   BOOLEAN                   PciAttributesSaved;
+   USB_XHCI_INSTANCE         *Xhc;
+   EFI_DEVICE_PATH_PROTOCOL  *HcDevicePath;
++  UINT64                    BarBase;
+ 
+   //
+   // Open the PciIo Protocol, then enable the USB host controller
+@@ -2056,6 +2297,13 @@ XhcDriverBindingStart (
+     return EFI_OUT_OF_RESOURCES;
+   }
+ 
++  //
++  // NWOAS Part 1: invariant key for the duplicate-bind guard (below) and the
++  // success-path mark. Computed once here; XhcCreateUsbHc has set Xhc->CapLength
++  // so op-register reads used by the guard are valid.
++  //
++  BarBase = NwoasXhcGetBarBase (PciIo);
++
+   //
+   // Enable 64-bit DMA support in the PCI layer if this controller
+   // supports it.
+@@ -2080,6 +2328,33 @@ XhcDriverBindingStart (
+     }
+   }
+ 
++  //
++  // NWOAS Part 1: decline a redundant bind of a controller we already fully
++  // initialized and that is still genuinely running. Resetting + re-initializing
++  // it here (XhcResetHC/XhcInitSched below) is exactly what destroys the
++  // in-flight boot-device read and self-sustains the BDS retry loop. Leave the
++  // original running instance and the hardware untouched so its pending transfer
++  // can complete. The registry gate (NwoasXhcWasInited) guarantees the FIRST
++  // bind is never declined, even if the controller was already running when we
++  // got here; the live-state gate guarantees we never adopt a halted/wedged HC.
++  //
++  DEBUG ((
++    DEBUG_ERROR,
++    "HVLOG: NWOAS-XHC bindstart BAR=0x%lx wasInited=%d liveRunning=%d\n",
++    BarBase,
++    NwoasXhcWasInited (BarBase),
++    NwoasXhcControllerIsLiveRunning (Xhc)
++    ));
++  if (NwoasXhcWasInited (BarBase) && NwoasXhcControllerIsLiveRunning (Xhc)) {
++    DEBUG ((
++      DEBUG_ERROR,
++      "HVLOG: NWOAS-XHC decline redundant bind of live controller @0x%lx (skip HCRST+InitSched)\n",
++      BarBase
++      ));
++    Status = EFI_ALREADY_STARTED;
++    goto FREE_POOL;
++  }
++
+   XhcSetBiosOwnership (Xhc);
+ 
+   Status = XhcResetHC (Xhc, XHC_RESET_TIMEOUT);
+@@ -2161,6 +2436,13 @@ XhcDriverBindingStart (
+     goto FREE_POOL;
+   }
+ 
++  //
++  // NWOAS Part 1: record that this physical controller is now fully initialized
++  // and running, so a subsequent redundant ConnectController is declined rather
++  // than reset (see the duplicate-bind guard above).
++  //
++  NwoasXhcMarkInited (BarBase);
++
+   DEBUG ((DEBUG_INFO, "XhcDriverBindingStart: XHCI started for controller @ %x\n", Controller));
+   return EFI_SUCCESS;
+ 
+@@ -2251,6 +2533,13 @@ XhcDriverBindingStop (
+   Xhc   = XHC_FROM_THIS (Usb2Hc);
+   PciIo = Xhc->PciIo;
+ 
++  //
++  // NWOAS Part 1: a genuine teardown of this controller re-arms first-bind
++  // (reset + full init) behavior for this BAR on the next ConnectController.
++  //
++  DEBUG ((DEBUG_ERROR, "HVLOG: NWOAS-XHC Stop BAR=0x%lx\n", NwoasXhcGetBarBase (PciIo)));
++  NwoasXhcClearInited (NwoasXhcGetBarBase (PciIo));
++
+   //
+   // Stop AsyncRequest Polling timer then stop the XHCI driver
+   // and uninstall the XHCI protocl.
+diff --git a/MdeModulePkg/Bus/Pci/XhciDxe/XhciSched.c b/MdeModulePkg/Bus/Pci/XhciDxe/XhciSched.c
+index 4b8eb904f8..cd63fd704e 100644
+--- a/MdeModulePkg/Bus/Pci/XhciDxe/XhciSched.c
++++ b/MdeModulePkg/Bus/Pci/XhciDxe/XhciSched.c
+@@ -1122,6 +1122,96 @@ IsAsyncIntTrb (
+   return FALSE;
+ }
+ 
++//
++// NWOAS v16-fix compile gate (candidate fix; hardware-diagnosed, boot-UNVERIFIED).
++// When 1, XhcCheckUrbResult resyncs the software Event Ring Consumer Cycle State to a
++// parked completion's cycle -- but ONLY when that completion is a Transfer Event whose
++// transfer-TRB pointer lies inside a checked/pending URB's ring. 2026-07-10 v15/v16-diag
++// proved: the FL1100 posts the \BCD-read completion for THIS Urb (evtTrbPtr==Urb->TrbStart,
++// CC=Success -- DMA works) but with a cycle bit that mismatches EventRingCCS, so
++// XhcSyncEventRing sees the ring as empty and it is never consumed (UrbFin=0 -> 0xc0000272).
++// The removed v11 hack resynced on ANY parked Type-32 (incl. already-consumed/unmatched
++// ones that never advance the dequeue), so it thrashed (17400x). Gating the resync on the
++// URB-ring match means it fires only on a real, consumable completion, so the consume loop
++// advances the dequeue and it cannot thrash. Default 0.
++//
++#ifndef NWOAS_MATCHED_RESYNC
++#define NWOAS_MATCHED_RESYNC  0
++#endif
++
++//
++// NWOAS fix-A compile gate (candidate fix; boot-critical, boot-UNVERIFIED). When 1, the xHCI
++// event-ring consumer becomes canonical single-pass/cycle-based (XhcCheckNewEvent tests the
++// TRB cycle bit vs CCS and toggles CCS on wrap; XhcCheckUrbResult skips XhcSyncEventRing),
++// which drains a SATURATED ring that the stock two-pass (compute-enqueue-then-consume) design
++// strands. Mutually exclusive with NWOAS_MATCHED_RESYNC (single-pass owns CCS). Default 0.
++//
++#ifndef NWOAS_SINGLEPASS_DRAIN
++#define NWOAS_SINGLEPASS_DRAIN  0
++#endif
++
++#if NWOAS_SINGLEPASS_DRAIN && NWOAS_MATCHED_RESYNC
++#error "NWOAS_SINGLEPASS_DRAIN and NWOAS_MATCHED_RESYNC are mutually exclusive: both would manage EventRingCCS (single-pass owns CCS; matched-resync also calls XhcSyncEventRing whose walk toggles CCS) -> CCS corruption."
++#endif
++
++//
++// NWOAS fix compile gate (candidate; boot-critical, boot-UNVERIFIED). When 1, XhcCheckUrbResult
++// finishes a multi-TRB bulk TD that the device short-completes. 2026-07-10 v19-diag proved: the
++// \BCD read is a 3-TRB bulk IN whose Transfer Event lands on TrbStart (CC=Success) and the remaining
++// TRBs never execute (short/early completion, ISP=1) -> EndDone(TRBPtr==TrbEnd) never sets ->
++// StartDone&&EndDone never finishes the URB (UrbFin=0 forever -> 0xc0000272). Treat a matched terminal
++// completion as ending the TD when it is a SHORT_PACKET, carries residual (Length>0 = device sent less
++// than the TRB), or the requested DataLen is already satisfied -- the standard short-packet TD completion
++// the rigid TrbStart&&TrbEnd check omits. Default 0.
++//
++#ifndef NWOAS_TD_SHORT_FIN
++#define NWOAS_TD_SHORT_FIN  0
++#endif
++
++//
++// NWOAS Tahoe/FL1100 recovery: a synchronous transfer can remain parked with the
++// endpoint Running and its dequeue pointer still on the newly submitted TRB.  In
++// that state the controller has not fetched the work and no Transfer Event exists.
++// Ringing the same endpoint doorbell again is permitted by xHCI and is idempotent;
++// do it once after 100 ms.  The one-shot guard prevents a disconnected/NAKing
++// device from turning this into a doorbell storm.
++//
++#ifndef NWOAS_RERING_STUCK_TRANSFER
++#define NWOAS_RERING_STUCK_TRANSFER  1
++#endif
++
++ #if NWOAS_MATCHED_RESYNC
++/**
++  NWOAS: TRUE iff PCI/device address EvtPtrPci points inside Urb's transfer ring.
++  Safe: converts the ring's own (pool-allocated) host base to PCI; never host-converts
++  the untrusted EvtPtrPci (which UsbHcGetHostAddrForPciAddr would ASSERT/NULL-deref on).
++**/
++STATIC
++BOOLEAN
++NwoasEvtPtrInUrbRing (
++  IN USB_XHCI_INSTANCE  *Xhc,
++  IN UINT64             EvtPtrPci,
++  IN URB                *Urb
++  )
++{
++  UINT64  RingBasePci;
++  UINT64  RingSize;
++
++  if ((Urb == NULL) || (Urb->Ring == NULL) || (Urb->Ring->RingSeg0 == NULL) || (EvtPtrPci == 0)) {
++    return FALSE;
++  }
++
++  RingBasePci = (UINT64)UsbHcGetPciAddrForHostAddr (Xhc->MemPool, Urb->Ring->RingSeg0, sizeof (TRB_TEMPLATE), FALSE);
++  if (RingBasePci == 0) {
++    return FALSE;
++  }
++
++  RingSize = (UINT64)Urb->Ring->TrbNumber * sizeof (TRB_TEMPLATE);
++  return (BOOLEAN)((EvtPtrPci >= RingBasePci) && (EvtPtrPci < (RingBasePci + RingSize)));
++}
++
++ #endif
++
+ /**
+   Check the URB's execution result and update the URB's
+   result accordingly.
+@@ -1149,11 +1239,20 @@ XhcCheckUrbResult (
+   UINT32                High;
+   UINT32                Low;
+   EFI_PHYSICAL_ADDRESS  PhyAddr;
++  BOOLEAN               Consumed;
+ 
+   ASSERT ((Xhc != NULL) && (Urb != NULL));
+ 
+   Status   = EFI_SUCCESS;
+   AsyncUrb = NULL;
++  //
++  // NWOAS: track whether this call consumed >=1 event, so the ERDP (Event Ring Dequeue
++  // Pointer) register is re-armed with EHB(BIT3) cleared even when a full-lap drain leaves
++  // the dequeue back at its starting address (masked-address-unchanged). Per xHCI 4.9.4 the
++  // ERDP must be advanced after consuming; the stock "only if the masked address changed"
++  // gate skips it in that fix-A-reachable full-ring case, leaving the xHC un-re-armed.
++  //
++  Consumed = FALSE;
+ 
+   if (Urb->Finished) {
+     goto EXIT;
+@@ -1168,8 +1267,155 @@ XhcCheckUrbResult (
+ 
+   //
+   // Traverse the event ring to find out all new events from the previous check.
++  // NWOAS fix-A: skipped under NWOAS_SINGLEPASS_DRAIN -- the cycle-based XhcCheckNewEvent
++  // below owns CCS/dequeue directly, so precomputing enqueue here (and its CCS side effects)
++  // is both unnecessary and would double-manage CCS.
+   //
++ #if !NWOAS_SINGLEPASS_DRAIN
+   XhcSyncEventRing (Xhc, &Xhc->EventRing);
++ #endif
++
++ #if NWOAS_MATCHED_RESYNC
++  //
++  // NWOAS v16-fix: if the ring looks empty but the parked dequeue TRB is a Transfer Event
++  // whose transfer-TRB pointer lies inside THIS Urb's (or the pending Urb's) ring, the
++  // completion is real and for us -- only its cycle bit is stale vs EventRingCCS. Resync CCS
++  // to it (once; gated on the ring match so it can never fire on an unmatched/stale event
++  // and thrash), then re-walk so the consume loop below advances the dequeue and finishes it.
++  //
++  if (!Urb->Finished) {
++    TRB_TEMPLATE  *DeqTrb = Xhc->EventRing.EventRingDequeue;
++    if ((DeqTrb != NULL) &&
++        ((UINT32)DeqTrb->CycleBit != Xhc->EventRing.EventRingCCS) &&
++        (DeqTrb->Type == TRB_TYPE_TRANS_EVENT))
++    {
++      UINT64  EvtPtr = ((UINT64)DeqTrb->Parameter1) | LShiftU64 ((UINT64)DeqTrb->Parameter2, 32);
++      if (NwoasEvtPtrInUrbRing (Xhc, EvtPtr, Urb) ||
++          NwoasEvtPtrInUrbRing (Xhc, EvtPtr, Xhc->PendingUrb))
++      {
++        DEBUG ((
++          DEBUG_ERROR,
++          "HVLOG: NWOAS-XHC matched-resync CCS %d->%d evtTrbPtr=0x%lx\n",
++          Xhc->EventRing.EventRingCCS, DeqTrb->CycleBit, EvtPtr
++          ));
++        Xhc->EventRing.EventRingCCS = DeqTrb->CycleBit;
++        XhcSyncEventRing (Xhc, &Xhc->EventRing);
++      }
++    }
++  }
++ #endif
++
++  //
++  // NWOAS EXP-5 5c diag: bootmgr wedges reading \BCD because XhcExecTransfer polls this URB forever
++  // -- no completion event ever finishes it. Throttled (1/4096) dump of the controller + event-ring
++  // state to split the cause into three: HCH/HSE set => controller halted (device/DMA fault);
++  // deq-TRB cycle == ring CCS => ring EMPTY (FL1100 posted no event / DMA-coherence of the ring);
++  // cycle != CCS => an event IS present but unmatched (cycle/ERDP/match bug). DEBUG_ERROR reaches
++  // the m1n1 serial. TRB is 4x UINT32: [2]=status(CC in 31:24), [3]=control(cycle bit0, type 15:10).
++  //
++  {
++    STATIC UINT32  mNwoasXhcDbg = 0;
++    if (!Urb->Finished && (((mNwoasXhcDbg++) & 0xfff) == 0)) {
++      UINT32  Sts  = XhcReadOpReg (Xhc, XHC_USBSTS_OFFSET);
++      UINT32  *Deq = (UINT32 *)Xhc->EventRing.EventRingDequeue;
++      UINT32  Ctrl = (Deq != NULL) ? Deq[3] : 0;
++      UINT32  Stat = (Deq != NULL) ? Deq[2] : 0;
++      DEBUG ((
++        DEBUG_ERROR,
++        "HVLOG: NWOAS-XHC wedge USBSTS=0x%x(HCH=%d HSE=%d) ringCCS=%d deqCyc=%d deqType=%d deqCC=%d UrbFin=%d Res=0x%x urbTrbStart=0x%lx DataLen=0x%x TrbNum=%d\n",
++        Sts, (Sts & XHC_USBSTS_HALT) != 0, (Sts & XHC_USBSTS_HSE) != 0,
++        Xhc->EventRing.EventRingCCS, Ctrl & 1, (Ctrl >> 10) & 0x3f, (Stat >> 24) & 0xff,
++        Urb->Finished, Urb->Result,
++        (UINT64)(UINTN)Urb->TrbStart, (UINT32)Urb->DataLen, (UINT32)Urb->TrbNum
++        ));
++      //
++      // NWOAS v24: the read DATA buffer's DEVICE (PCI/IOVA) address the FL1100 DMAs into. UEFI's own reads
++      // (UsbBootReadBlocks) succeed, so its buffers are FL1100-reachable; if bootmgfw's read buffer (DataPhy)
++      // sits above the 32-bit DART window or in a mis-backed region, the FL1100's DMA of the read data cannot
++      // land -> no data, no completion. dataHost = the CPU-side buffer.
++      //
++      DEBUG ((
++        DEBUG_ERROR,
++        "HVLOG: NWOAS-XHC wedgedata DataPhy=0x%lx dataHost=0x%lx DataLen=0x%x\n",
++        (UINT64)Urb->DataPhy, (UINT64)(UINTN)Urb->Data, (UINT32)Urb->DataLen
++        ));
++      //
++      // NWOAS v22: transfer-ring / endpoint state of the stuck bulk block-read URB. Was the Normal TRB
++      // submitted and has the FL1100 consumed it? trbCyc/trbType = the TRB at TrbStart (should be a valid
++      // Normal TRB whose cycle matches the ring PCS the FL1100 expects). enqOff/deqOff = ring enqueue vs
++      // dequeue positions: deqOff advanced past TrbStart => FL1100 consumed the TRB but posted no event
++      // (device stall / no completion); deqOff==TrbStart's slot => FL1100 never fetched it (doorbell not
++      // rung / endpoint halted). ep/dir identify the endpoint.
++      //
++      if ((Urb->Ring != NULL) && (Urb->Ring->RingSeg0 != NULL)) {
++        DEBUG ((
++          DEBUG_ERROR,
++          "HVLOG: NWOAS-XHC wedgering trbCyc=%d trbType=%d ringPCS=%d enqOff=%d deqOff=%d ep=0x%x dir=%d\n",
++          (Urb->TrbStart != NULL) ? (UINT32)Urb->TrbStart->CycleBit : 9,
++          (Urb->TrbStart != NULL) ? (UINT32)Urb->TrbStart->Type : 0,
++          (UINT32)(Urb->Ring->RingPCS & 1),
++          (UINT32)(((UINTN)Urb->Ring->RingEnqueue - (UINTN)Urb->Ring->RingSeg0) / sizeof (TRB_TEMPLATE)),
++          (UINT32)(((UINTN)Urb->Ring->RingDequeue - (UINTN)Urb->Ring->RingSeg0) / sizeof (TRB_TEMPLATE)),
++          Urb->Ep.EpAddr,
++          Urb->Ep.Direction
++          ));
++      }
++      //
++      // NWOAS v23: the FL1100's own view of this endpoint. EPState (1=Running 2=Halted 3=Stopped 4=Error)
++      // splits the block-read stall: Halted => the endpoint halted on an error and needs a reset-endpoint
++      // (SOFTWARE-recoverable in XhcCheckUrbResult -- stock only resets endpoints in a few CC paths); Running
++      // but no completion => the drive/FL1100 link is NAKing/not returning data (device/hardware level).
++      // epDeqLo = the endpoint's TR Dequeue Pointer (bit0=DCS): if it advanced past the stuck TRB the FL1100
++      // consumed it (completed silently / lost event); if it still points at the stuck TRB the FL1100 stopped there.
++      //
++      {
++        UINT8   Slot = XhcBusDevAddrToSlotId (Xhc, Urb->Ep.BusAddr);
++        UINT8   Dci  = XhcEndpointToDci (Urb->Ep.EpAddr, (UINT8)(Urb->Ep.Direction));
++        VOID    *Oc  = (Slot != 0) ? Xhc->UsbDevContext[Slot].OutputContext : NULL;
++        UINT32  EpSt = 9;
++        UINT32  EpDq = 0;
++        if ((Oc != NULL) && (Dci >= 1) && (Dci < 32)) {
++          if (Xhc->HcCParams.Data.Csz == 0) {
++            EpSt = ((DEVICE_CONTEXT *)Oc)->EP[Dci - 1].EPState;
++            EpDq = ((DEVICE_CONTEXT *)Oc)->EP[Dci - 1].PtrLo;
++          } else {
++            EpSt = ((DEVICE_CONTEXT_64 *)Oc)->EP[Dci - 1].EPState;
++            EpDq = ((DEVICE_CONTEXT_64 *)Oc)->EP[Dci - 1].PtrLo;
++          }
++        }
++        DEBUG ((
++          DEBUG_ERROR,
++          "HVLOG: NWOAS-XHC epstate slot=%d dci=%d EPState=%d epDeqLo=0x%x\n",
++          Slot, Dci, EpSt, EpDq
++          ));
++      }
++      //
++      // NWOAS v16: decide WHY the parked completion is not consumed. Is the parked
++      // dequeue completion's transfer-TRB pointer (evtTrbPtr, a PCI/device address in
++      // Deq[0..1]) inside THIS Urb's transfer ring? If evtTrbPtr in [ringSeg0, ringSeg0+
++      // ringTrbN*16) and near urbTrbStart => the completion IS for this Urb and the only
++      // problem is the event-ring cycle desync (fix = correct cycle tracking / direct
++      // consume). If evtTrbPtr is OUTSIDE the ring => it is a stale/other-endpoint
++      // completion (fix = stop the BDS-retry churn that leaves stale URBs). We log raw PCI
++      // addresses only -- Urb->TrbStart / Ring->RingSeg0 are pool allocations so the
++      // host->PCI conversion is safe; we deliberately do NOT host-convert the parked
++      // evtTrbPtr (it may be stale/garbage and UsbHcGetHostAddrForPciAddr would ASSERT+NULL-deref).
++      //
++      {
++        UINT8   DeqType       = (UINT8)((Ctrl >> 10) & 0x3f);
++        UINT64  EvtPtr        = (Deq != NULL) ? (((UINT64)Deq[0]) | LShiftU64 ((UINT64)Deq[1], 32)) : 0;
++        VOID    *RingSeg0Host = (Urb->Ring != NULL) ? (VOID *)Urb->Ring->RingSeg0 : NULL;
++        UINTN   RingTrbN      = (Urb->Ring != NULL) ? Urb->Ring->TrbNumber : 0;
++        UINT64  UrbTrbStartPci = (UINT64)UsbHcGetPciAddrForHostAddr (Xhc->MemPool, Urb->TrbStart, sizeof (TRB_TEMPLATE), FALSE);
++        UINT64  RingSeg0Pci    = (UINT64)UsbHcGetPciAddrForHostAddr (Xhc->MemPool, RingSeg0Host, sizeof (TRB_TEMPLATE), FALSE);
++        DEBUG ((
++          DEBUG_ERROR,
++          "HVLOG: NWOAS-XHC evtmatch deqType=%d evtTrbPtr=0x%lx urbTrbStart=0x%lx urbTrbNum=%d ringSeg0=0x%lx ringTrbN=%d\n",
++          DeqType, EvtPtr, UrbTrbStartPci, (UINT32)Urb->TrbNum, RingSeg0Pci, (UINT32)RingTrbN
++          ));
++      }
++    }
++  }
+   for (Index = 0; Index < Xhc->EventRing.TrbNumber; Index++) {
+     Status = XhcCheckNewEvent (Xhc, &Xhc->EventRing, ((TRB_TEMPLATE **)&EvtTrb));
+     if (Status == EFI_NOT_READY) {
+@@ -1179,6 +1425,11 @@ XhcCheckUrbResult (
+       goto EXIT;
+     }
+ 
++    //
++    // NWOAS: an event was dequeued (dequeue advanced) -- force ERDP re-arm at EXIT.
++    //
++    Consumed = TRUE;
++
+     //
+     // Only handle COMMAND_COMPLETETION_EVENT and TRANSFER_EVENT.
+     //
+@@ -1192,6 +1443,35 @@ XhcCheckUrbResult (
+     PhyAddr = (EFI_PHYSICAL_ADDRESS)(EvtTrb->TRBPtrLo | LShiftU64 ((UINT64)EvtTrb->TRBPtrHi, 32));
+     TRBPtr  = (TRB_TEMPLATE *)(UINTN)UsbHcGetHostAddrForPciAddr (Xhc->MemPool, (VOID *)(UINTN)PhyAddr, sizeof (TRB_TEMPLATE), FALSE);
+ 
++    //
++    // NWOAS v18 diag: a Type-32/33 completion IS being consumed here. Log whether its (host-converted)
++    // transfer-TRB pointer matches the currently-checked / pending URB via IsTransferRingTrb (the exact
++    // pointer-equality test the matcher below uses). The BCD wedge persists across two-pass AND single-pass
++    // consumers, so the completion is consumed but the URB is never Finished -- this splits the root:
++    //   matchUrb/matchPend==1 but Urb still not finished => Finished-logic / TrbEnd problem
++    //   matchUrb==matchPend==0 for the BCD read's completion => the consumed completion is for a DIFFERENT
++    //     transfer ring (FL1100 posts a TRBPtr that is not in this URB's ring), i.e. a real match-fail
++    //   (and if NO Type-32 consume line ever appears near the wedge => the BCD Transfer Event is never posted)
++    // Throttled 1/256. Reads only; IsTransferRingTrb is pure pointer math.
++    //
++    {
++      STATIC UINT32  mNwoasConsDbg = 0;
++      if (((mNwoasConsDbg++) & 0xFF) == 0) {
++        DEBUG ((
++          DEBUG_ERROR,
++          "HVLOG: NWOAS-XHC consume type=%d CC=%d TRBPtr=0x%lx matchUrb=%d matchPend=%d urbTrbStart=0x%lx urbTrbNum=%d pend=%d\n",
++          EvtTrb->Type,
++          EvtTrb->Completecode,
++          (UINT64)(UINTN)TRBPtr,
++          IsTransferRingTrb (Xhc, TRBPtr, Urb) ? 1 : 0,
++          ((Xhc->PendingUrb != NULL) && IsTransferRingTrb (Xhc, TRBPtr, Xhc->PendingUrb)) ? 1 : 0,
++          (UINT64)(UINTN)Urb->TrbStart,
++          (UINT32)Urb->TrbNum,
++          (Xhc->PendingUrb != NULL) ? 1 : 0
++          ));
++      }
++    }
++
+     //
+     // Update the status of URB including the pending URB, the URB that is currently checked,
+     // and URBs in the XHCI's async interrupt transfer list.
+@@ -1284,10 +1564,54 @@ XhcCheckUrbResult (
+       CheckedUrb->EndDone = TRUE;
+     }
+ 
++ #if NWOAS_TD_SHORT_FIN
++    //
++    // NWOAS fix: a matched terminal completion whose device delivered fewer bytes than the multi-TRB TD
++    // requested (SHORT_PACKET, or residual Length>0), or which already satisfies DataLen, ends the TD --
++    // the xHC will NOT post a further event at TrbEnd. Mark EndDone so StartDone&&EndDone finishes the URB.
++    //
++    if ((EvtTrb->Completecode == TRB_COMPLETION_SHORT_PACKET) ||
++        (EvtTrb->Length != 0) ||
++        (CheckedUrb->Completed >= CheckedUrb->DataLen))
++    {
++      CheckedUrb->EndDone = TRUE;
++    }
++
++ #endif
++
+     if (CheckedUrb->StartDone && CheckedUrb->EndDone) {
+       CheckedUrb->Finished = TRUE;
+       CheckedUrb->EvtTrb   = (TRB_TEMPLATE *)EvtTrb;
+     }
++
++    //
++    // NWOAS v19/v20 diag: a matched terminal completion (Success OR ShortPacket) did NOT finish the URB ->
++    // pinpoint. Finished needs StartDone(TRBPtr==TrbStart) AND EndDone(TRBPtr==TrbEnd). v19 proved the \BCD
++    // read is a 3-TRB bulk TD whose event lands on TrbStart and the rest never execute (short completion),
++    // so EndDone never sets. Log CC + residual(Length) + DataLen + Completed to make the short-completion
++    // unambiguous. Throttled 1/64. (With NWOAS_TD_SHORT_FIN=1 the fix above should finish it, so this stops firing.)
++    //
++    if (!CheckedUrb->Finished &&
++        ((EvtTrb->Completecode == TRB_COMPLETION_SUCCESS) || (EvtTrb->Completecode == TRB_COMPLETION_SHORT_PACKET)))
++    {
++      STATIC UINT32  mNwoasNoFin = 0;
++      if (((mNwoasNoFin++) & 0x3F) == 0) {
++        DEBUG ((
++          DEBUG_ERROR,
++          "HVLOG: NWOAS-XHC nofin TRBPtr=0x%lx TrbStart=0x%lx TrbEnd=0x%lx TrbNum=%d StartDone=%d EndDone=%d CC=%d resid=%d DataLen=0x%x Completed=0x%x\n",
++          (UINT64)(UINTN)TRBPtr,
++          (UINT64)(UINTN)CheckedUrb->TrbStart,
++          (UINT64)(UINTN)CheckedUrb->TrbEnd,
++          (UINT32)CheckedUrb->TrbNum,
++          CheckedUrb->StartDone ? 1 : 0,
++          CheckedUrb->EndDone ? 1 : 0,
++          EvtTrb->Completecode,
++          EvtTrb->Length,
++          (UINT32)CheckedUrb->DataLen,
++          (UINT32)CheckedUrb->Completed
++          ));
++      }
++    }
+   }
+ 
+ EXIT:
+@@ -1304,7 +1628,7 @@ EXIT:
+ 
+   PhyAddr = UsbHcGetPciAddrForHostAddr (Xhc->MemPool, Xhc->EventRing.EventRingDequeue, sizeof (TRB_TEMPLATE), FALSE);
+ 
+-  if ((XhcDequeue & (~0x0F)) != (PhyAddr & (~0x0F))) {
++  if (Consumed || ((XhcDequeue & (~0x0F)) != (PhyAddr & (~0x0F)))) {
+     //
+     // Some 3rd party XHCI external cards don't support single 64-bytes width register access,
+     // So divide it to two 32-bytes width register access.
+@@ -1343,9 +1667,13 @@ XhcExecTransfer (
+   BOOLEAN     Finished;
+   UINT64      TimeoutTicks;
+   UINT64      ElapsedTicks;
+-  UINT64      TicksDelta;
+-  UINT64      CurrentTick;
+-  BOOLEAN     IndefiniteTimeout;
++  UINT64      TicksDelta;
++  UINT64      CurrentTick;
++  BOOLEAN     IndefiniteTimeout;
++#if NWOAS_RERING_STUCK_TRANSFER
++  BOOLEAN     NwoasReRung;
++  UINT64      NwoasReRingTicks;
++#endif
+ 
+   Status            = EFI_SUCCESS;
+   Finished          = FALSE;
+@@ -1376,7 +1704,13 @@ XhcExecTransfer (
+                      )
+                    );
+   ElapsedTicks = 0;
+-  CurrentTick  = GetPerformanceCounter ();
++  CurrentTick  = GetPerformanceCounter ();
++#if NWOAS_RERING_STUCK_TRANSFER
++  NwoasReRung      = FALSE;
++  NwoasReRingTicks = XhcConvertTimeToTicks (
++                          XHC_MICROSECOND_TO_NANOSECOND (100 * XHC_1_MILLISECOND)
++                          );
++#endif
+ 
+   do {
+     Finished = XhcCheckUrbResult (Xhc, Urb);
+@@ -1391,8 +1725,46 @@ XhcExecTransfer (
+       TicksDelta = XhcConvertTimeToTicks (XHC_MICROSECOND_TO_NANOSECOND (XHC_1_MICROSECOND));
+     }
+ 
+-    ElapsedTicks += TicksDelta;
+-  } while (IndefiniteTimeout || ElapsedTicks < TimeoutTicks);
++    ElapsedTicks += TicksDelta;
++
++#if NWOAS_RERING_STUCK_TRANSFER
++    if (!CmdTransfer && !NwoasReRung && (ElapsedTicks >= NwoasReRingTicks)) {
++      VOID    *OutputContext;
++      UINT32  Route;
++      UINT32  RootPort;
++      UINT32  Speed;
++      UINT32  Address;
++
++      OutputContext = Xhc->UsbDevContext[SlotId].OutputContext;
++      Route         = 0;
++      RootPort      = 0;
++      Speed         = 0;
++      Address       = 0;
++      if (OutputContext != NULL) {
++        if (Xhc->HcCParams.Data.Csz == 0) {
++          Route    = ((DEVICE_CONTEXT *)OutputContext)->Slot.RouteString;
++          RootPort = ((DEVICE_CONTEXT *)OutputContext)->Slot.RootHubPortNum;
++          Speed    = ((DEVICE_CONTEXT *)OutputContext)->Slot.Speed;
++          Address  = ((DEVICE_CONTEXT *)OutputContext)->Slot.DeviceAddress;
++        } else {
++          Route    = ((DEVICE_CONTEXT_64 *)OutputContext)->Slot.RouteString;
++          RootPort = ((DEVICE_CONTEXT_64 *)OutputContext)->Slot.RootHubPortNum;
++          Speed    = ((DEVICE_CONTEXT_64 *)OutputContext)->Slot.Speed;
++          Address  = ((DEVICE_CONTEXT_64 *)OutputContext)->Slot.DeviceAddress;
++        }
++      }
++
++      DEBUG ((
++        DEBUG_ERROR,
++        "HVLOG: NWOAS-XHC rering slot=%d dci=%d bus=%d ep=0x%x dir=%d len=0x%lx route=0x%x rootport=%d speed=%d addr=%d\n",
++        SlotId, Dci, Urb->Ep.BusAddr, Urb->Ep.EpAddr, Urb->Ep.Direction,
++        (UINT64)Urb->DataLen, Route, RootPort, Speed, Address
++        ));
++      XhcRingDoorBell (Xhc, SlotId, Dci);
++      NwoasReRung = TRUE;
++    }
++#endif
++  } while (IndefiniteTimeout || ElapsedTicks < TimeoutTicks);
+ 
+   if (!Finished) {
+     Urb->Result = EFI_USB_ERR_TIMEOUT;
+@@ -1870,6 +2242,32 @@ XhcPollPortStatusChange (
+     return EFI_SUCCESS;
+   }
+ 
++  //
++  // NWOAS EXP-5 5c diag: the BCD-read transfer never completes because this port re-enumerates in a
++  // loop -- FL1100 keeps posting Port-Status-Change events (CSC/PRC), never a Transfer-Event. Log
++  // every port change WITH the raw connect bit so we can tell a REAL disconnect (CCS toggles 1->0->1)
++  // from a spurious/self-induced reset loop (CCS stays 1 while CSC/PRC keep firing). Cap at 40 lines.
++  //
++  {
++    STATIC UINT32  mNwoasPortN = 0;
++    if (mNwoasPortN < 40) {
++      mNwoasPortN++;
++      DEBUG ((
++        DEBUG_ERROR,
++        "HVLOG: NWOAS-PORT p%d PortStatus=0x%x(CCS=%d PED=%d) Change=0x%x(CSC=%d PRC=%d PEC=%d) n=%d\n",
++        Port,
++        PortState->PortStatus,
++        (PortState->PortStatus & USB_PORT_STAT_CONNECTION) != 0,
++        (PortState->PortStatus & USB_PORT_STAT_ENABLE) != 0,
++        PortState->PortChangeStatus,
++        (PortState->PortChangeStatus & USB_PORT_STAT_C_CONNECTION) != 0,
++        (PortState->PortChangeStatus & USB_PORT_STAT_C_RESET) != 0,
++        (PortState->PortChangeStatus & USB_PORT_STAT_C_ENABLE) != 0,
++        mNwoasPortN
++        ));
++    }
++  }
++
+   if (ParentRouteChart.Dword == 0) {
+     RouteChart.Route.RouteString = 0;
+     RouteChart.Route.RootPortNum = Port + 1;
+@@ -1887,6 +2285,23 @@ XhcPollPortStatusChange (
+ 
+   SlotId = XhcRouteStringToSlotId (Xhc, RouteChart);
+   if (SlotId != 0) {
++    //
++    // NWOAS EXP-5 5c FIX: on the tethered hv the FL1100 raises a spurious CSC+PRC (port-reset change)
++    // while the boot device stays connected AND enabled (CCS=1 PED=1). The stock path then DISABLES
++    // the working slot and re-enumerates, which re-inits the xHCI and thrashes the Event Ring cycle
++    // state (EventRingCCS flips 0<->1), so the completed \BCD-read Transfer Event (type 32 CC=Success
++    // -- it IS posted) never matches CCS and is never consumed -> bootmgr hangs forever. Diagnosed via
++    // NWOAS-XHC/NWOAS-PORT instrumentation. If the device is still connected+enabled, it did NOT really
++    // disconnect: keep the slot and return so the in-flight transfer can complete, instead of tearing
++    // the slot down. Only a real disconnect (CONNECTION clear) falls through to disable+re-enumerate.
++    //
++    if ((PortState->PortStatus & (USB_PORT_STAT_CONNECTION | USB_PORT_STAT_ENABLE)) ==
++        (USB_PORT_STAT_CONNECTION | USB_PORT_STAT_ENABLE))
++    {
++      DEBUG ((DEBUG_ERROR, "HVLOG: NWOAS-PORT KEEP slot %d (still connected+enabled; skip re-enum)\n", SlotId));
++      return EFI_SUCCESS;
++    }
++
+     if (Xhc->HcCParams.Data.Csz == 0) {
+       Status = XhcDisableSlotCmd (Xhc, SlotId);
+     } else {
+@@ -2060,6 +2475,39 @@ XhcSyncEventRing (
+   //
+   EvtTrb1 = EvtRing->EventRingDequeue;
+ 
++  //
++  // NWOAS EXP-5 5c FIX: on the tethered hv the repeated xHCI re-init / XhciDxe driver re-bind loop
++  // desyncs the software Event Ring Consumer Cycle State (EventRingCCS) from the FL1100 producer, so
++  // a real, completed Transfer Event (Type=32, CC=Success -- it IS posted) sitting at the dequeue is
++  // seen as "not yet produced" (CycleBit != CCS) and never consumed. The \BCD read therefore never
++  // finishes and bootmgr reports 0xc000000f ("required device not accessible"). Diagnosed via the
++  // NWOAS-XHC instrumentation (ringCCS/deqCyc/deqType/deqCC). A genuinely un-produced ring slot is
++  // ZEROED (Type==0); only a completion event (Transfer/Command Completion) carries Type 32/33. So
++  // if such a completion is parked at the dequeue with a mismatched cycle, CCS is stale -- resync it
++  // to the hardware's actual cycle so the event is consumed and the transfer can finish.
++  //
++ #ifndef NWOAS_V11_CCS_RESYNC
++  //
++  // NWOAS v16: the v11 resync below is DISABLED by default -- the 2026-07-10 v15-diag
++  // hardware run proved it THRASHES (9432x 0->1 + 7968x 1->0, UrbFin=0) rather than
++  // converging: it force-sets EventRingCCS to a parked completion's cycle every poll,
++  // but a completion TRB is NOT zeroed after consumption (xHCI reuses the slot, only the
++  // cycle bit distinguishes new vs stale), so an already-consumed Type-32 TRB from the
++  // previous lap (cycle of the old lap) makes this revert the legitimate wrap that
++  // XhcCheckNewEvent/the walk below performed. It corrupts the consumer cycle state.
++  // Set to 1 only to reproduce the old (broken) behavior.
++  //
++#define NWOAS_V11_CCS_RESYNC  0
++ #endif
++ #if NWOAS_V11_CCS_RESYNC
++  if ((EvtTrb1->CycleBit != EvtRing->EventRingCCS) &&
++      ((EvtTrb1->Type == TRB_TYPE_TRANS_EVENT) || (EvtTrb1->Type == TRB_TYPE_COMMAND_COMPLT_EVENT)))
++  {
++    DEBUG ((DEBUG_ERROR, "HVLOG: NWOAS-XHC CCS resync %d->%d (parked Type=%d completion)\n", EvtRing->EventRingCCS, EvtTrb1->CycleBit, EvtTrb1->Type));
++    EvtRing->EventRingCCS = EvtTrb1->CycleBit;
++  }
++ #endif
++
+   for (Index = 0; Index < EvtRing->TrbNumber; Index++) {
+     if (EvtTrb1->CycleBit != EvtRing->EventRingCCS) {
+       break;
+@@ -2171,16 +2619,38 @@ XhcCheckNewEvent (
+ 
+   *NewEvtTrb = EvtRing->EventRingDequeue;
+ 
++ #if NWOAS_SINGLEPASS_DRAIN
++  //
++  // NWOAS fix-A (canonical cycle-based consumer). A ring slot is "produced" iff its cycle
++  // bit == the consumer cycle state (CCS). The stock dequeue==enqueue test relies on the
++  // enqueue that XhcSyncEventRing precomputes by walking the ring -- but on a SATURATED ring
++  // (2026-07-10: BDS retries pile completions faster than they are consumed) that walk wraps
++  // all the way around, hits its `ASSERT(FALSE)` and leaves enqueue STALE, so dequeue==enqueue
++  // reads "empty" while real completions sit unconsumed (UrbFin=0 -> 0xc0000272). The cycle
++  // test never desyncs from the producer: toggle CCS on each wrap exactly as the FL1100
++  // toggles its PCS. XhcCheckUrbResult must NOT call XhcSyncEventRing under this gate (it would
++  // double-manage CCS); it is skipped there.
++  //
++  if (EvtRing->EventRingDequeue->CycleBit != EvtRing->EventRingCCS) {
++    return EFI_NOT_READY;
++  }
++
++ #else
+   if (EvtRing->EventRingDequeue == EvtRing->EventRingEnqueue) {
+     return EFI_NOT_READY;
+   }
+ 
++ #endif
++
+   EvtRing->EventRingDequeue++;
+   //
+   // If the dequeue pointer is beyond the ring, then roll-back it to the begining of the ring.
+   //
+   if ((UINTN)EvtRing->EventRingDequeue >= ((UINTN)EvtRing->EventRingSeg0 + sizeof (TRB_TEMPLATE) * EvtRing->TrbNumber)) {
+     EvtRing->EventRingDequeue = EvtRing->EventRingSeg0;
++ #if NWOAS_SINGLEPASS_DRAIN
++    EvtRing->EventRingCCS     = EvtRing->EventRingCCS ? 0 : 1;
++ #endif
+   }
+ 
+   return EFI_SUCCESS;
+diff --git a/MdeModulePkg/Bus/Usb/UsbBusDxe/UsbEnumer.c b/MdeModulePkg/Bus/Usb/UsbBusDxe/UsbEnumer.c
+index 1f422fa2da..977f2149f0 100644
+--- a/MdeModulePkg/Bus/Usb/UsbBusDxe/UsbEnumer.c
++++ b/MdeModulePkg/Bus/Usb/UsbBusDxe/UsbEnumer.c
+@@ -992,6 +992,26 @@ UsbEnumeratePort (
+   //
+   Child = UsbFindChild (HubIf, Port);
+ 
++  //
++  // NWOAS EXP-5 5c FIX (root of the re-enumerate/re-bind loop): on the tethered hv the FL1100 raises
++  // a spurious CSC (connect-status change) while the boot device stays connected AND enabled
++  // (CCS=1 PED=1). The stock path then REMOVES the working child device and re-enumerates on every
++  // such change -- tearing down the xHCI slot and the in-flight \BCD-read transfer, re-initing the
++  // controller and thrashing the Event Ring cycle state, so the read never finishes and the Windows
++  // Boot Manager reports 0xc000000f / 0xc0000272. Diagnosed via NWOAS-XHC/NWOAS-PORT instrumentation.
++  // If a child already exists AND the port is still connected+enabled, the device did NOT really
++  // disconnect: keep it and just clear the change, so the in-flight transfer can complete instead of
++  // being torn down. Only a real disconnect (CONNECTION clear) falls through to remove+re-enumerate.
++  //
++  if ((Child != NULL) &&
++      USB_BIT_IS_SET (PortState.PortStatus, USB_PORT_STAT_CONNECTION) &&
++      USB_BIT_IS_SET (PortState.PortStatus, USB_PORT_STAT_ENABLE))
++  {
++    DEBUG ((DEBUG_ERROR, "HVLOG: NWOAS-USB KEEP dev port %d (still connected+enabled; skip re-enum)\n", Port));
++    HubApi->ClearPortChange (HubIf, Port);
++    return EFI_SUCCESS;
++  }
++
+   if (Child != NULL) {
+     DEBUG ((DEBUG_INFO, "UsbEnumeratePort: device at port %d removed from root hub %p\n", Port, HubIf));
+     UsbRemoveDevice (Child);
+diff --git a/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c b/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c
+index c1f5eb4b7a..276549001e 100644
+--- a/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c
++++ b/MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c
+@@ -1086,6 +1086,80 @@ BmExpandPartitionDevicePath (
+   return FullPath;
+ }
+ 
++/**
++  Check whether a controller handle already has connected child controllers.
++
++  When a removable-device boot option points at the whole device,
++  BmExpandMediaDevicePath() calls gBS->ConnectController (Handle, NULL, NULL, TRUE)
++  to make sure the child partition/media handles are created and connected.
++
++  On some platforms re-issuing that recursive ConnectController against a
++  controller that is ALREADY connected (i.e. its children already exist) is not
++  a harmless no-op: it can re-bind the underlying host controller driver and
++  reset it in the middle of the in-flight boot-device read, making the read
++  fail.  (Observed on Apple Silicon with an FL1100 xHCI behind a tethered m1n1
++  hypervisor: the recursive reconnect re-runs XhcResetHC + XhcInitSched and
++  thrashes the xHCI Event Ring, leaving Windows Boot Manager in an endless
++  0xc0000272 retry loop.)
++
++  This routine lets the caller detect the "already connected" case so it can
++  skip the redundant reconnect while still performing the legitimate first
++  connect.  It mirrors the canonical HasChildren() test used by PartitionDxe:
++  partition/media child controllers open the parent controller's DiskIo
++  protocol with EFI_OPEN_PROTOCOL_BY_CHILD_CONTROLLER, so the presence of such
++  an open-information entry means the child handles already exist.  If DiskIo is
++  not present on the handle at all, no partition child can exist yet, so the
++  controller still needs its first connect.
++
++  @param[in] ControllerHandle  Handle of the controller to test (the whole
++                               removable device's BlockIo handle).
++
++  @retval TRUE   The controller already has connected child controllers; the
++                 recursive ConnectController would be redundant.
++  @retval FALSE  The controller has no child controllers (or cannot be queried);
++                 it still needs the legitimate first connect.
++**/
++BOOLEAN
++BmHandleHasConnectedChildren (
++  IN EFI_HANDLE  ControllerHandle
++  )
++{
++  EFI_STATUS                           Status;
++  EFI_OPEN_PROTOCOL_INFORMATION_ENTRY  *OpenInfoBuffer;
++  UINTN                                EntryCount;
++  UINTN                                Index;
++  BOOLEAN                              HasChildren;
++
++  OpenInfoBuffer = NULL;
++  EntryCount     = 0;
++
++  Status = gBS->OpenProtocolInformation (
++                  ControllerHandle,
++                  &gEfiDiskIoProtocolGuid,
++                  &OpenInfoBuffer,
++                  &EntryCount
++                  );
++  if (EFI_ERROR (Status) || (OpenInfoBuffer == NULL)) {
++    //
++    // DiskIo absent (or query failed) => no partition child can exist yet.
++    // Treat as "not connected" so the legitimate first connect still happens.
++    //
++    return FALSE;
++  }
++
++  HasChildren = FALSE;
++  for (Index = 0; Index < EntryCount; Index++) {
++    if ((OpenInfoBuffer[Index].Attributes & EFI_OPEN_PROTOCOL_BY_CHILD_CONTROLLER) != 0) {
++      HasChildren = TRUE;
++      break;
++    }
++  }
++
++  FreePool (OpenInfoBuffer);
++
++  return HasChildren;
++}
++
+ /**
+   Expand the media device path which points to a BlockIo or SimpleFileSystem instance
+   by appending EFI_REMOVABLE_MEDIA_FILE_NAME.
+@@ -1148,7 +1222,23 @@ BmExpandMediaDevicePath (
+   // should make sure all its children handles (its child partion or media handles)
+   // are created and connected.
+   //
+-  gBS->ConnectController (Handle, NULL, NULL, TRUE);
++  // NWOAS: Only issue the (legitimate) FIRST connect.  Re-issuing this recursive
++  // ConnectController against a controller whose children already exist is
++  // redundant, and on this platform (Apple Silicon FL1100 xHCI behind a tethered
++  // m1n1 hypervisor) it re-binds the USB host controller driver (XhcResetHC +
++  // XhcInitSched), resetting the controller in the middle of the in-flight boot
++  // read and breaking it -> Windows Boot Manager 0xc0000272 retry loop.  Skip the
++  // reconnect once the child partition/media handles are already present so the
++  // already-working controller/driver instance is left untouched.
++  //
++  if (!BmHandleHasConnectedChildren (Handle)) {
++    gBS->ConnectController (Handle, NULL, NULL, TRUE);
++  } else {
++    DEBUG ((
++      DEBUG_ERROR,
++      "HVLOG: NWOAS-BM skip redundant ConnectController on already-connected controller (child handles present)\n"
++      ));
++  }
+ 
+   //
+   // Issue a dummy read to the device to check for media change.
+diff --git a/MdeModulePkg/Library/UefiBootManagerLib/InternalBm.h b/MdeModulePkg/Library/UefiBootManagerLib/InternalBm.h
+index 594709ee47..eb4a955170 100644
+--- a/MdeModulePkg/Library/UefiBootManagerLib/InternalBm.h
++++ b/MdeModulePkg/Library/UefiBootManagerLib/InternalBm.h
+@@ -24,6 +24,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ 
+ #include <Protocol/PciRootBridgeIo.h>
+ #include <Protocol/BlockIo.h>
++#include <Protocol/DiskIo.h>                          // NWOAS: for gEfiDiskIoProtocolGuid (BmExpandMediaDevicePath reconnect gate)
+ #include <Protocol/LoadedImage.h>
+ #include <Protocol/SimpleFileSystem.h>
+ #include <Protocol/LoadFile.h>
+diff --git a/MdeModulePkg/Library/UefiBootManagerLib/UefiBootManagerLib.inf b/MdeModulePkg/Library/UefiBootManagerLib/UefiBootManagerLib.inf
+index 46575eba5d..89e7667f28 100644
+--- a/MdeModulePkg/Library/UefiBootManagerLib/UefiBootManagerLib.inf
++++ b/MdeModulePkg/Library/UefiBootManagerLib/UefiBootManagerLib.inf
+@@ -105,6 +105,7 @@
+   gEfiSimpleNetworkProtocolGuid                 ## SOMETIMES_CONSUMES
+   gEfiSimpleTextInProtocolGuid                  ## SOMETIMES_CONSUMES
+   gEfiBlockIoProtocolGuid                       ## SOMETIMES_CONSUMES
++  gEfiDiskIoProtocolGuid                        ## SOMETIMES_CONSUMES   ## NWOAS: reconnect gate in BmExpandMediaDevicePath
+   gEfiFirmwareVolume2ProtocolGuid               ## SOMETIMES_CONSUMES
+   gEfiDevicePathProtocolGuid                    ## SOMETIMES_CONSUMES
+   gEfiBootLogoProtocolGuid                      ## SOMETIMES_CONSUMES
+diff --git a/MdePkg/Include/AArch64/AArch64Mmu.h b/MdePkg/Include/AArch64/AArch64Mmu.h
+index 763dc53908..aa273eee17 100644
+--- a/MdePkg/Include/AArch64/AArch64Mmu.h
++++ b/MdePkg/Include/AArch64/AArch64Mmu.h
+@@ -13,6 +13,9 @@
+ // Memory Attribute Indirection register Definitions
+ //
+ #define MAIR_ATTR_DEVICE_MEMORY                0x0ULL
++// NWOAS: Device-nGnRE (posted-write / early-ack). Apple PCIe MMIO *must* use nGnRE,
++// not the default nGnRnE, or accesses to a PCIe BAR raise an L2C bus error / SError.
++#define MAIR_ATTR_DEVICE_MEMORY_NGNRE          0x04ULL
+ #define MAIR_ATTR_NORMAL_MEMORY_NON_CACHEABLE  0x44ULL
+ #define MAIR_ATTR_NORMAL_MEMORY_WRITE_THROUGH  0xBBULL
+ #define MAIR_ATTR_NORMAL_MEMORY_WRITE_BACK     0xFFULL
+@@ -58,6 +61,8 @@
+ #define TT_ATTR_INDX_MEMORY_NON_CACHEABLE  (0x1 << 2)
+ #define TT_ATTR_INDX_MEMORY_WRITE_THROUGH  (0x2 << 2)
+ #define TT_ATTR_INDX_MEMORY_WRITE_BACK     (0x3 << 2)
++// NWOAS: MAIR index 4 = Device-nGnRE (see MAIR_ATTR_DEVICE_MEMORY_NGNRE)
++#define TT_ATTR_INDX_DEVICE_MEMORY_NGNRE   (0x4 << 2)
+ 
+ #define TT_AP_MASK   (0x3UL << 6)
+ #define TT_AP_NO_RW  (0x0UL << 6)
+diff --git a/MdePkg/Include/Library/ArmLib.h b/MdePkg/Include/Library/ArmLib.h
+index 642b5a1a54..50710756b6 100644
+--- a/MdePkg/Include/Library/ArmLib.h
++++ b/MdePkg/Include/Library/ArmLib.h
+@@ -43,6 +43,11 @@ typedef enum {
+ 
+   ARM_MEMORY_REGION_ATTRIBUTE_WRITE_THROUGH,
+   ARM_MEMORY_REGION_ATTRIBUTE_DEVICE,
++
++  // NWOAS: Device-nGnRE (posted-write). Apple PCIe MMIO regions must use this
++  // instead of ARM_MEMORY_REGION_ATTRIBUTE_DEVICE (nGnRnE), or a CPU access to a
++  // PCIe BAR raises an L2C bus error / SError.
++  ARM_MEMORY_REGION_ATTRIBUTE_DEVICE_NGNRE,
+ } ARM_MEMORY_REGION_ATTRIBUTES;
+ 
+ typedef struct {
+diff --git a/MdePkg/Library/BaseMemoryLibOptDxe/Arm/MemLibGuid.c b/MdePkg/Library/BaseMemoryLibOptDxe/Arm/MemLibGuid.c
+index 32d30cb7ce..42553b242c 100644
+--- a/MdePkg/Library/BaseMemoryLibOptDxe/Arm/MemLibGuid.c
++++ b/MdePkg/Library/BaseMemoryLibOptDxe/Arm/MemLibGuid.c
+@@ -80,8 +80,18 @@ CompareGuid (
+   IN CONST GUID  *Guid2
+   )
+ {
+-  ASSERT (Guid1 != NULL);
+-  ASSERT (Guid2 != NULL);
++  //
++  // NWOAS stage-8 fix: tolerate a NULL GUID instead of ASSERT()->CpuDeadLoop (DEBUG build)
++  // or a NULL dereference (RELEASE build). run19's wedge PC was exactly this ASSERT
++  // (MemLibGuid.c:84, "Guid2 != NULL"): during winload's SetVariable the variable-policy
++  // path reached CompareGuid() with a NULL GUID and hung forever in the assert's dead loop
++  // -- the "loader->kernel handoff hang" the AppleWOA community has never passed. A NULL
++  // pointer can never equal a real 128-bit GUID, so returning FALSE (no match) is the
++  // correct and safe result and lets the boot proceed.
++  //
++  if ((Guid1 == NULL) || (Guid2 == NULL)) {
++    return FALSE;
++  }
+ 
+   return InternalMemCompareGuid (Guid1, Guid2);
+ }

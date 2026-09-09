@@ -25,15 +25,25 @@ retained. All eight CPU cores execute Windows workloads, and Windows sees
 at boot and selects performance-core P-state 12. S193/S200 boot and checksum
 tests passed with both initial and late host CPU-state writes removed.
 
-Official Cinebench 2026.1.3 ARM64 CPU multi-core completed at **1905.281 points**
-(S196, one run, 629.8-second render, native exit 0). This is native ARM64 CPU
-execution under the current EL2-mediated system. A matching macOS baseline has
-not been measured. CPU speed/name metadata in Windows remains incorrect.
+Official Cinebench 2026.1.3 ARM64 CPU multi-core completed at **1888.454 points**
+(S218 on S216, one run, 635.4-second render, native exit0, no timeout). The prior
+S196 run scored1905.281; the0.883% difference is not an isolated improvement or
+regression measurement. This is native ARM64 CPU execution under the current
+EL2-mediated system. A matching same-Mini macOS baseline has not been measured.
+CPU speed/name metadata in Windows remains incorrect.
+
+The S215/S216 source-built guest prefix and UEFI guard their fixed BootArgs/ADT
+copies against overlap with the running firmware and reserve their lifetime
+before OS allocation. Two S216 Windows boots passed short integration, and
+10GiB was verified word by word over three passes. The second boot also passed
+five-minute active reads and a thirty-minute mixed CPU/read soak. A recovered static DTS also
+rebuilds the exact existing DTB; the complete S216 pipeline reproduces the same
+payload. The DTB's historical upstream revision remains unconfirmed.
 
 The storage path still presents an emulated NVMe interface, with a target-side
 fast data path and host-side control/service transport. The S163 50µs interrupt
-reassert delay passed the recorded 30-minute soak; it mitigates a watchdog
-failure without establishing its complete cause. A dedicated 256MiB write-through
+reassert delay passed the recorded 30-minute soak; these bounded passes follow earlier watchdog
+failures, whose complete cause remains unresolved. A dedicated 256MiB write-through
 file passed verification of every 64-bit word in S193 and S200, with identical
 SHA-256 hashes. These bounded tests are not a production stability claim.
 
@@ -44,9 +54,9 @@ split. The live keyboard and trackpad were enumerated under USB-A; an empty
 USB-C root hub does not demonstrate USB-C device-transfer success.
 
 Start with the [session record](NWOAS/NWOAS-STATUS-2026-09-10-SESSION.md),
-[Cinebench evidence](NWOAS/nwoas_scripts/bench-s196/result.json),
+[Cinebench evidence](NWOAS/nwoas_scripts/bench-s218/result.json),
 [host CPU-init removal](NWOAS/nwoas_scripts/cpufreq-s193/hardware-result.json), and
-[companion source patches](NWOAS/companion-patches/2026-09-10/README.md).
+[companion source patches](NWOAS/nwoas_scripts/publish-s217/companion/README.md).
 Historical stage files preserve unsuccessful experiments and are not current
 installation instructions. Build success alone is not hardware success.
 
@@ -91,3 +101,5 @@ Historical root `NWOAS/autounattend.xml` contains automatic disk-wipe directives
 do not reuse it for the current dual-boot work. The current guarded Setup package
 is under `NWOAS/nwoas_scripts/setup-repair/`. No Windows binaries or modified
 installation images are included in this update.
+
+The subsequent [S223 FD-tail configuration](NWOAS/nwoas_scripts/loader-s223/README.md) passed eight-core integration, 10 GiB memory over three passes, 15 minutes of mixed CPU/read checks and five minutes of active reads. It preserves S216 code bytes while supplying the missing 480 KiB copy tail. S223 has no Cinebench result and remains host-mediated. See the [morning handoff](NWOAS/NWOAS-MORNING-2026-09-10.md).

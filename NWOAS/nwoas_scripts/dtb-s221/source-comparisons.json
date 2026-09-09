@@ -1,0 +1,30 @@
+{
+  "existing_sha256": "ecc93b24740d80007d31986a43983c36eef47dd8b0b105b663c25a7b51190f76",
+  "matches": false,
+  "comparisons": [
+    {
+      "repository": "AsahiLinux/devicetrees",
+      "commit": "db67c1514f77d84ce0684cac1ceedd1e7a01ba6e",
+      "result": "Not a candidate: source lacks observed downstream DCP/audio descriptions"
+    },
+    {
+      "repository": "AsahiLinux/linux",
+      "commit": "c7ff53ef45b2f879576f7bbeb163828d04f5f491",
+      "result": "Compiled; byte mismatch",
+      "sha256": "b0c2f143cf6a8eb208adbe2e541de506b23f2afdfc6b058cc6c557f280bd48e7"
+    },
+    {
+      "repository": "AsahiLinux/linux",
+      "commit": "f845e1678c82708b89a67236ca82927e11a1d4e8",
+      "result": "Compiled with source-equivalent float32 cell conversion; byte and normalized-tree mismatch",
+      "sha256": "d13cda1c991df15e8b1b0e01037a154a74df43b2afddfa34d6e548eb8194b35f"
+    },
+    {
+      "repository": "AsahiLinux/linux",
+      "commit": "ed2201483aa4e94868164306412cd821633cedf6",
+      "result": "Compiled with source-equivalent float32 cells; byte mismatch",
+      "sha256": "895b8da0afd0a2740b9fb1471661ef3f4946b404a3aee3f7018cba11648e9d28"
+    }
+  ],
+  "runtime_changed": false
+}

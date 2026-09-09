@@ -1,5 +1,10 @@
 # S197 guest m1n1 prefix rebuild (offline, not boot tested)
 
+> Later hardware work: the compat prefix booted once in S203, then the same
+> placement policy allowed the pre-Windows S204/S211 handoff collision. S215
+> adds an explicit placement guard; use its separate hardware results. The
+> source-only report below records the initial S197 work, not current validation.
+
 Follow-up to the S193 provenance finding: the 1376256-byte prefix in front of
 every UEFI payload since July is a guest m1n1 tagged
 `v1.0.2-1471-g59fb544-dirty` whose exact source was never recorded. S197
@@ -140,7 +145,7 @@ that matters for the handoff (`git diff 59fb544..HEAD` on `src/payload.c`,
 not 2 MiB aligned in guest physical memory. With the S189 guest base
 (`0x83e7dc000`) the old FD sat at `0x83e92c000` and the new one sits at
 `0x83e9f8000`; neither is 2 MiB aligned, so both take the same copy branch. The
-copy length is the header's `image_size` (0x100e0000, 269 MiB, the FDF comment
+copy length is the header's `image_size` (0x100e0000, 256.875 MiB, the FDF comment
 says "30 MB" but encodes 0x100e0000), which over-reads past the 30 MiB FD into
 SEPFW/preoslog/boot-args and unmapped-but-RAM guest memory, exactly as before.
 `guest_base` is recomputed by `hv.load_raw` on every boot from `heap_top`, the
@@ -208,7 +213,7 @@ Not validated (unknowns):
 - Boot. No hardware, USB, or launcher was touched.
 - Whether the guest's `cpufreq_init()`, `usb_init` HPM transactions, or the
   display deferral behave acceptably under the host HV: hardware only.
-- The larger prefix moves the FD by 0xcc000 bytes; the 269 MiB `load_kernel`
+- The larger prefix moves the FD by 0xcc000 bytes; the 256.875 MiB `load_kernel`
   over-read window moves with it. Same code path, different addresses.
 - `kboot_prepare_dt` allocates from the guest heap, which starts at
   `cur_boot_args.top_of_kernel_data` set by `hv.load_raw`; the larger image

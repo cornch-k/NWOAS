@@ -1,0 +1,36 @@
+{
+  "stage": "S209",
+  "author": "main agent",
+  "status": "source-only; not integrated",
+  "tests": [
+    "PASS: directed cases and 10,000 seeded stateful differential operations; register/PCI bytes, IRQ levels/counts, flush counts agree",
+    "PASS plain: callback failures, queue enable/shutdown, mask/INTx, unsupported doorbells and malformed access matrix",
+    "PASS ASan+UBSan: same directed failure/bounds matrix",
+    "PASS: freestanding AArch64 object has no undefined imports"
+  ],
+  "sources": {
+    "test_differential.py": "fee3513d51d6a3189fd38a3b31c05237932f2f002596c4b79519ee03cb5d38c2",
+    "test_model.c": "670e28a40a9a5dd1f4d4443295a1bf694db1ec40e6f5c4432d509b947a115c78",
+    "model.c": "2927046481983a91842974e62b810bedf8560cd1b6ea825cf5788f7fce5f98b3",
+    "test_bridge.c": "fce5c398afa48633ea4cb14f7a68034f39d8f44e3406e4306a343881b590f175",
+    "test_trace.py": "6918f9ed90d355fbc906fa588c285fbf30c1847e675ce5e38e1cdebbfd666bc1",
+    "model.h": "8f3ef1dd39a84c16eb9185bdfb3cd1d8b3b80b16d3b7ff8ce266acc3421196f0",
+    "test.sh": "ed7c4799c49c1688fb9beeed598b751ddf3cef22ac50cc15e445282d20fa7c1f"
+  },
+  "reference_sha256": {
+    "nwoas_scripts/nvme-s139/controller.py": "ac4e5745935f8bda6186841246dbf2e8865806876d4ccb27109d4c1e173168d6",
+    "nwoas_scripts/nvme-s124/controller.py": "c3685dde6542f26225dcc3a6c55ecc329fb4afd10930fdd886b9d0e3006e3926"
+  },
+  "arm64_object_sha256": "e9c0c4de2fcda3299e546a34fcd97f4a4b2da5fb56284d40ebf0bc60edc22448",
+  "runtime_host_dependencies_removed": 0,
+  "differential_comparisons_include": "PCI/register bytes, IRQ level/count, shutdown flush count, admin SQ/CQ addresses/depths/active state",
+  "trace_result": {
+    "status": "PASS C/Python control-access equivalence",
+    "reads": 267,
+    "writes": 48,
+    "unimplemented_doorbells_returned_not_handled": 16,
+    "logged_read_values_matched": 267,
+    "logged_read_value_differences": [],
+    "limitation": "Not full controller replay: omitted admin command bodies/completions, target fastpath and capped logging. Matching logged reads does not prove those paths."
+  }
+}
