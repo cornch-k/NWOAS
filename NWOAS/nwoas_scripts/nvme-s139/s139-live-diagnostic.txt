@@ -1,0 +1,664 @@
+=== S138 LIVE DIAGNOSTIC 2022-05-07 18:08:47.68 ===
+--- BOOT ---
+--- CPU ---
+
+
+CurrentClockSpeed=30
+MaxClockSpeed=30
+Name=Not Specified
+NumberOfCores=8
+NumberOfLogicalProcessors=8
+
+
+
+--- PROBLEM DEVICES ---
+Microsoft PnP 유틸리티
+
+인스턴스 ID:                ACPI\APPL8900\0
+장치 설명:         알 수 없음
+클래스 이름:                 알 수 없음
+클래스 GUID:                 알 수 없음
+제조업체 이름:          알 수 없음
+상태:                     문제
+문제 코드:               28 (0x1C) [CM_PROB_FAILED_INSTALL]
+문제 상태:             0xC0000490
+하드웨어 ID:               ACPI\VEN_APPL&DEV_8900
+                            ACPI\APPL8900
+                            *APPL8900
+
+인스턴스 ID:                ACPI\APPL0100\0
+장치 설명:         알 수 없음
+클래스 이름:                 알 수 없음
+클래스 GUID:                 알 수 없음
+제조업체 이름:          알 수 없음
+상태:                     문제
+문제 코드:               28 (0x1C) [CM_PROB_FAILED_INSTALL]
+문제 상태:             0xC0000490
+하드웨어 ID:               ACPI\VEN_APPL&DEV_0100
+                            ACPI\APPL0100
+                            *APPL0100
+
+--- USB ---
+Microsoft PnP 유틸리티
+
+인스턴스 ID:                ACPI\PNP0D10\0
+장치 설명:         Standard USB 3.0 확장 가능한 호스트 컨트롤러 - 1.0(Microsoft)
+클래스 이름:                 USB
+클래스 GUID:                 {36fc9e60-c465-11cf-8056-444553540000}
+제조업체 이름:          일반 USB xHCI 호스트 컨트롤러
+상태:                     시작됨
+드라이버 이름:                usbxhci.inf
+하드웨어 ID:               ACPI\VEN_PNP&DEV_0D10
+                            ACPI\PNP0D10
+                            *PNP0D10
+일치하는 드라이버:
+    드라이버 이름:            usbxhci.inf
+    공급자 이름:          Microsoft
+    클래스 이름:             USB
+    클래스 GUID:             {36fc9e60-c465-11cf-8056-444553540000}
+    드라이버 버전:         07/19/2022 10.0.22621.317
+    서명자 이름:            Microsoft Windows
+    일치하는 장치 ID:     ACPI\PNP0D10
+    드라이버 순위:            00800001
+    드라이버 상태:          최고 순위 / 설치됨
+
+인스턴스 ID:                USB\VID_0781&PID_5591\4C531001421008123553
+장치 설명:         USB 대용량 저장 장치
+클래스 이름:                 USB
+클래스 GUID:                 {36fc9e60-c465-11cf-8056-444553540000}
+제조업체 이름:          Compatible USB storage device
+상태:                     시작됨
+드라이버 이름:                usbstor.inf
+하드웨어 ID:               USB\VID_0781&PID_5591&REV_0100
+                            USB\VID_0781&PID_5591
+호환 가능 ID:             USB\COMPAT_VID_0781&Class_08&SubClass_06&Prot_50
+                            USB\COMPAT_VID_0781&Class_08&SubClass_06
+                            USB\COMPAT_VID_0781&Class_08
+                            USB\Class_08&SubClass_06&Prot_50
+                            USB\Class_08&SubClass_06
+                            USB\Class_08
+일치하는 드라이버:
+    드라이버 이름:            usbstor.inf
+    공급자 이름:          Microsoft
+    클래스 이름:             USB
+    클래스 GUID:             {36fc9e60-c465-11cf-8056-444553540000}
+    드라이버 버전:         06/21/2006 10.0.22621.1
+    서명자 이름:            Microsoft Windows
+    일치하는 장치 ID:     USB\Class_08&SubClass_06&Prot_50
+    드라이버 순위:            00FF2003
+    드라이버 상태:          최고 순위 / 설치됨
+
+인스턴스 ID:                USB\VID_3434&PID_D030\5&26df9ba9&0&2
+장치 설명:         USB Composite Device
+클래스 이름:                 USB
+클래스 GUID:                 {36fc9e60-c465-11cf-8056-444553540000}
+제조업체 이름:          (표준 USB 호스트 컨트롤러)
+상태:                     시작됨
+드라이버 이름:                usb.inf
+하드웨어 ID:               USB\VID_3434&PID_D030&REV_=204
+                            USB\VID_3434&PID_D030
+호환 가능 ID:             USB\COMPAT_VID_3434&DevClass_00&SubClass_00&Prot00
+                            USB\COMPAT_VID_3434&DevClass_00&SubClass_00
+                            USB\COMPAT_VID_3434&DevClass_00
+                            USB\DevClass_00&SubClass_00&Prot_00
+                            USB\DevClass_00&SubClass_00
+                            USB\DevClass_00
+                            USB\COMPOSITE
+일치하는 드라이버:
+    드라이버 이름:            usb.inf
+    공급자 이름:          Microsoft
+    클래스 이름:             USB
+    클래스 GUID:             {36fc9e60-c465-11cf-8056-444553540000}
+    드라이버 버전:         06/21/2006 10.0.22621.105
+    서명자 이름:            Microsoft Windows
+    일치하는 장치 ID:     USB\COMPOSITE
+    드라이버 순위:            00FF2006
+    드라이버 상태:          최고 순위 / 설치됨
+
+인스턴스 ID:                USB\ROOT_HUB30\4&20a5d118&0&0
+장치 설명:         USB 루트 허브(USB 3.0)
+클래스 이름:                 USB
+클래스 GUID:                 {36fc9e60-c465-11cf-8056-444553540000}
+제조업체 이름:          (표준 USB 허브)
+상태:                     시작됨
+드라이버 이름:                usbhub3.inf
+하드웨어 ID:               USB\ROOT_HUB30&VIDPNP&PID0D10&REV0000
+                            USB\ROOT_HUB30&VIDPNP&PID0D10
+                            USB\ROOT_HUB30
+일치하는 드라이버:
+    드라이버 이름:            usbhub3.inf
+    공급자 이름:          Microsoft
+    클래스 이름:             USB
+    클래스 GUID:             {36fc9e60-c465-11cf-8056-444553540000}
+    드라이버 버전:         05/06/2022 10.0.22621.1
+    서명자 이름:            Microsoft Windows
+    일치하는 장치 ID:     USB\ROOT_HUB30
+    드라이버 순위:            00800002
+    드라이버 상태:          최고 순위 / 설치됨
+
+--- STORAGE ---
+Microsoft PnP 유틸리티
+
+인스턴스 ID:                ROOT\spaceport\0000
+장치 설명:         Microsoft Storage Spaces Controller
+클래스 이름:                 SCSIAdapter
+클래스 GUID:                 {4d36e97b-e325-11ce-bfc1-08002be10318}
+제조업체 이름:          Microsoft
+상태:                     시작됨
+드라이버 이름:                spaceport.inf
+하드웨어 ID:               Root\Spaceport
+호환 가능 ID:             DETECTEDInternal\spaceport
+                            DETECTED\spaceport
+일치하는 드라이버:
+    드라이버 이름:            spaceport.inf
+    공급자 이름:          Microsoft
+    클래스 이름:             SCSIAdapter
+    클래스 GUID:             {4d36e97b-e325-11ce-bfc1-08002be10318}
+    드라이버 버전:         06/21/2006 10.0.22621.317
+    서명자 이름:            Microsoft Windows
+    일치하는 장치 ID:     Root\Spaceport
+    드라이버 순위:            00FF0000
+    드라이버 상태:          최고 순위 / 설치됨
+
+인스턴스 ID:                PCI\VEN_1234&DEV_0010&SUBSYS_00101234&REV_01\3&2411e6fe&0&00
+장치 설명:         Standard NVM Express Controller
+클래스 이름:                 SCSIAdapter
+클래스 GUID:                 {4d36e97b-e325-11ce-bfc1-08002be10318}
+제조업체 이름:          Standard NVM Express Controller
+상태:                     시작됨
+드라이버 이름:                stornvme.inf
+하드웨어 ID:               PCI\VEN_1234&DEV_0010&SUBSYS_00101234&REV_01
+                            PCI\VEN_1234&DEV_0010&SUBSYS_00101234
+                            PCI\VEN_1234&DEV_0010&CC_010802
+                            PCI\VEN_1234&DEV_0010&CC_0108
+호환 가능 ID:             PCI\VEN_1234&DEV_0010&REV_01
+                            PCI\VEN_1234&DEV_0010
+                            PCI\VEN_1234&CC_010802
+                            PCI\VEN_1234&CC_0108
+                            PCI\VEN_1234
+                            PCI\CC_010802
+                            PCI\CC_0108
+일치하는 드라이버:
+    드라이버 이름:            stornvme.inf
+    공급자 이름:          Microsoft
+    클래스 이름:             SCSIAdapter
+    클래스 GUID:             {4d36e97b-e325-11ce-bfc1-08002be10318}
+    드라이버 버전:         06/21/2006 10.0.22621.457
+    서명자 이름:            Microsoft Windows
+    일치하는 장치 ID:     PCI\CC_010802
+    드라이버 순위:            00FF2005
+    드라이버 상태:          최고 순위 / 설치됨
+
+--- RECENT BUGCHECKS ---
+Event[0]
+  Log Name: System
+  Source: Microsoft-Windows-Wininit
+  Date: 2022-05-07T18:07:20.1530000Z
+  Event ID: 15
+  Task: N/A
+  Level: 경고
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+Credential Guard 및/또는 VBS 키 격리가 구성되었지만 보안 커널이 실행되고 있지 않습니다. 해당 항목 없이 계속합니다.
+
+Event[1]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-Power
+  Date: 2022-05-07T18:07:19.3130000Z
+  Event ID: 41
+  Task: N/A
+  Level: 위험
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+시스템이 비정상적으로 종료된 후 다시 부팅되었습니다. 이 오류는 시스템이 응답을 멈추었거나 손상되었거나 예기치 않게 전원 공급이 중단되면 발생할 수 있습니다.
+
+Event[2]
+  Log Name: System
+  Source: EventLog
+  Date: 2022-05-07T18:07:20.7650000Z
+  Event ID: 6008
+  Task: N/A
+  Level: 오류
+  Opcode: N/A
+  Keyword: 클래식 
+  User: N/A
+  User Name: N/A
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+?2022-?05-?07의 오후 6:07:16에서 이전에 예기치 않은 시스템 종료가 있었습니다.
+
+Event[3]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-Boot
+  Date: 2022-05-07T18:07:17.6040000Z
+  Event ID: 153
+  Task: N/A
+  Level: 정보
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+가상화 기반 보안(정책: 0)은 disabled입니다.
+
+Event[4]
+  Log Name: System
+  Source: Microsoft-Windows-Wininit
+  Date: 2022-05-07T18:07:15.8580000Z
+  Event ID: 15
+  Task: N/A
+  Level: 경고
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+Credential Guard 및/또는 VBS 키 격리가 구성되었지만 보안 커널이 실행되고 있지 않습니다. 해당 항목 없이 계속합니다.
+
+Event[5]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-Boot
+  Date: 2022-05-07T18:07:13.8440000Z
+  Event ID: 153
+  Task: N/A
+  Level: 정보
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+가상화 기반 보안(정책: 0)은 disabled입니다.
+
+Event[6]
+  Log Name: System
+  Source: EventLog
+  Date: 2022-05-07T17:43:17.9400000Z
+  Event ID: 6008
+  Task: N/A
+  Level: 오류
+  Opcode: N/A
+  Keyword: 클래식 
+  User: N/A
+  User Name: N/A
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+?2022-?05-?07의 오후 5:43:12에서 이전에 예기치 않은 시스템 종료가 있었습니다.
+
+Event[7]
+  Log Name: System
+  Source: Microsoft-Windows-Wininit
+  Date: 2022-05-07T17:43:14.7720000Z
+  Event ID: 15
+  Task: N/A
+  Level: 경고
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+Credential Guard 및/또는 VBS 키 격리가 구성되었지만 보안 커널이 실행되고 있지 않습니다. 해당 항목 없이 계속합니다.
+
+Event[8]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-Power
+  Date: 2022-05-07T17:43:13.3860000Z
+  Event ID: 41
+  Task: N/A
+  Level: 위험
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+시스템이 비정상적으로 종료된 후 다시 부팅되었습니다. 이 오류는 시스템이 응답을 멈추었거나 손상되었거나 예기치 않게 전원 공급이 중단되면 발생할 수 있습니다.
+
+Event[9]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-Boot
+  Date: 2022-05-07T17:43:10.4730000Z
+  Event ID: 153
+  Task: N/A
+  Level: 정보
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+가상화 기반 보안(정책: 0)은 disabled입니다.
+
+Event[10]
+  Log Name: System
+  Source: Microsoft-Windows-WER-SystemErrorReporting
+  Date: 2022-05-07T17:43:09.7330000Z
+  Event ID: 1001
+  Task: N/A
+  Level: 오류
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+컴퓨터가 오류 검사 후 다시 부팅되었습니다. 오류 검사: 0x00000133 (0x0000000000000000, 0x0000000000000501, 0x0000000000000500, 0xfffff802feb19338). 덤프 저장 위치: C:\Windows\Minidump\050722-5031-01.dmp. 보고서 ID: a50550a8-a544-4c6a-b11a-08a666bae045
+
+Event[11]
+  Log Name: System
+  Source: Microsoft-Windows-Wininit
+  Date: 2022-05-07T17:43:09.1150000Z
+  Event ID: 15
+  Task: N/A
+  Level: 경고
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+Credential Guard 및/또는 VBS 키 격리가 구성되었지만 보안 커널이 실행되고 있지 않습니다. 해당 항목 없이 계속합니다.
+
+Event[12]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-Power
+  Date: 2022-05-07T17:43:07.6690000Z
+  Event ID: 41
+  Task: N/A
+  Level: 위험
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+시스템이 비정상적으로 종료된 후 다시 부팅되었습니다. 이 오류는 시스템이 응답을 멈추었거나 손상되었거나 예기치 않게 전원 공급이 중단되면 발생할 수 있습니다.
+
+Event[13]
+  Log Name: System
+  Source: EventLog
+  Date: 2022-05-07T17:43:12.4010000Z
+  Event ID: 6008
+  Task: N/A
+  Level: 오류
+  Opcode: N/A
+  Keyword: 클래식 
+  User: N/A
+  User Name: N/A
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+?2022-?05-?07의 오후 5:43:04에서 이전에 예기치 않은 시스템 종료가 있었습니다.
+
+Event[14]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-Boot
+  Date: 2022-05-07T17:43:05.2880000Z
+  Event ID: 153
+  Task: N/A
+  Level: 정보
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+가상화 기반 보안(정책: 0)은 disabled입니다.
+
+Event[15]
+  Log Name: System
+  Source: Microsoft-Windows-Wininit
+  Date: 2022-05-07T17:20:27.0450000Z
+  Event ID: 15
+  Task: N/A
+  Level: 경고
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+Credential Guard 및/또는 VBS 키 격리가 구성되었지만 보안 커널이 실행되고 있지 않습니다. 해당 항목 없이 계속합니다.
+
+Event[16]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-Boot
+  Date: 2022-05-07T17:20:22.5390000Z
+  Event ID: 153
+  Task: N/A
+  Level: 정보
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+가상화 기반 보안(정책: 0)은 disabled입니다.
+
+Event[17]
+  Log Name: System
+  Source: Microsoft-Windows-Wininit
+  Date: 2022-05-07T17:04:58.1100000Z
+  Event ID: 15
+  Task: N/A
+  Level: 경고
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+Credential Guard 및/또는 VBS 키 격리가 구성되었지만 보안 커널이 실행되고 있지 않습니다. 해당 항목 없이 계속합니다.
+
+Event[18]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-Power
+  Date: 2022-05-07T17:04:55.8940000Z
+  Event ID: 41
+  Task: N/A
+  Level: 위험
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+시스템이 비정상적으로 종료된 후 다시 부팅되었습니다. 이 오류는 시스템이 응답을 멈추었거나 손상되었거나 예기치 않게 전원 공급이 중단되면 발생할 수 있습니다.
+
+Event[19]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-Boot
+  Date: 2022-05-07T17:04:52.9950000Z
+  Event ID: 153
+  Task: N/A
+  Level: 정보
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+가상화 기반 보안(정책: 0)은 disabled입니다.
+
+Event[20]
+  Log Name: System
+  Source: EventLog
+  Date: 2022-05-07T17:05:03.1400000Z
+  Event ID: 6008
+  Task: N/A
+  Level: 오류
+  Opcode: N/A
+  Keyword: 클래식 
+  User: N/A
+  User Name: N/A
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+?2022-?05-?07의 오후 5:05:00에서 이전에 예기치 않은 시스템 종료가 있었습니다.
+
+Event[21]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-General
+  Date: 2022-05-07T17:05:29.9190000Z
+  Event ID: 11
+  Task: N/A
+  Level: 정보
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-21-3558603868-863408990-1210660833-1000
+  User Name: DESKTOP-QOVIAEB\defaultuser0
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+\SystemRoot\System32\AppLocker\AppCache.dat 하이브(TM: {5e40226b-cddc-11ec-baa6-ca3b5c73e1d0}, RM: {5e40226a-cddc-11ec-baa6-ca3b5c73e1d0})에 대한 TxR 초기화 단계를 마쳤습니다. 결과=0xC0000022(내부 코드=7).
+
+Event[22]
+  Log Name: System
+  Source: Microsoft-Windows-Wininit
+  Date: 2022-05-07T17:04:51.7640000Z
+  Event ID: 15
+  Task: N/A
+  Level: 경고
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+Credential Guard 및/또는 VBS 키 격리가 구성되었지만 보안 커널이 실행되고 있지 않습니다. 해당 항목 없이 계속합니다.
+
+Event[23]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-Boot
+  Date: 2022-05-07T17:04:50.0470000Z
+  Event ID: 153
+  Task: N/A
+  Level: 정보
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: DESKTOP-QOVIAEB
+  Description: 
+가상화 기반 보안(정책: 0)은 disabled입니다.
+
+Event[24]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-General
+  Date: 2022-05-07T17:04:35.9420000Z
+  Event ID: 11
+  Task: N/A
+  Level: 정보
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: WIN-DAATC9B2HAK
+  Description: 
+\??\C:\Windows\System32\SMI\Store\Machine\SCHEMA.DAT 하이브(TM: {52f8dc84-cdd7-11ec-8680-00224848b4d3}, RM: {52f8dc83-cdd7-11ec-8680-00224848b4d3})에 대한 TxR 초기화 단계를 마쳤습니다. 결과=0xC01A000D(내부 코드=0).
+
+Event[25]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-General
+  Date: 2022-05-07T17:01:42.7830000Z
+  Event ID: 11
+  Task: N/A
+  Level: 정보
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: WIN-DAATC9B2HAK
+  Description: 
+\??\C:\Windows\System32\config\COMPONENTS 하이브(TM: {52f8dc52-cdd7-11ec-8680-00224848b4d3}, RM: {52f8dc51-cdd7-11ec-8680-00224848b4d3})에 대한 TxR 초기화 단계를 마쳤습니다. 결과=0xC01A000D(내부 코드=0).
+
+Event[26]
+  Log Name: System
+  Source: Microsoft-Windows-Wininit
+  Date: 2022-05-07T17:01:32.7740000Z
+  Event ID: 15
+  Task: N/A
+  Level: 경고
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: WIN-DAATC9B2HAK
+  Description: 
+Credential Guard 및/또는 VBS 키 격리가 구성되었지만 보안 커널이 실행되고 있지 않습니다. 해당 항목 없이 계속합니다.
+
+Event[27]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-General
+  Date: 2022-05-07T17:01:32.4700000Z
+  Event ID: 11
+  Task: N/A
+  Level: 정보
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: WIN-DAATC9B2HAK
+  Description: 
+\??\C:\Users\Default\NTUSER.DAT 하이브(TM: {52f8dc78-cdd7-11ec-8680-00224848b4d3}, RM: {52f8dc77-cdd7-11ec-8680-00224848b4d3})에 대한 TxR 초기화 단계를 마쳤습니다. 결과=0xC01A000D(내부 코드=0).
+
+Event[28]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-General
+  Date: 2022-05-07T17:01:26.5480000Z
+  Event ID: 11
+  Task: N/A
+  Level: 정보
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: WIN-DAATC9B2HAK
+  Description: 
+\SystemRoot\System32\config\DRIVERS 하이브(TM: {52f8dc60-cdd7-11ec-8680-00224848b4d3}, RM: {52f8dc5f-cdd7-11ec-8680-00224848b4d3})에 대한 TxR 초기화 단계를 마쳤습니다. 결과=0xC01A000D(내부 코드=0).
+
+Event[29]
+  Log Name: System
+  Source: Microsoft-Windows-Kernel-Boot
+  Date: 2022-05-07T17:01:12.4410000Z
+  Event ID: 153
+  Task: N/A
+  Level: 정보
+  Opcode: 정보 
+  Keyword: N/A
+  User: S-1-5-18
+  User Name: NT AUTHORITY\SYSTEM
+  Computer: WIN-DAATC9B2HAK
+  Description: 
+가상화 기반 보안(정책: 0)은 disabled입니다.
+
+--- DUMPS ---
+ C 드라이브의 볼륨: Windows
+ 볼륨 일련 번호: 1CEA-E590
+
+ C:\Windows\Minidump 디렉터리
+
+2022-05-07  오후 05:43    <DIR>          .
+2022-05-07  오후 05:43    <DIR>          ..
+2022-05-07  오후 05:43           228,759 050722-5031-01.dmp
+               1개 파일             228,759 바이트
+파일을 찾을 수 없습니다.
+ C 드라이브의 볼륨: Windows
+ 볼륨 일련 번호: 1CEA-E590
+
+ C:\Windows 디렉터리
+
+파일을 찾을 수 없습니다.
+
+ C:\ 디렉터리
+
+파일을 찾을 수 없습니다.
+=== COMPLETE ===

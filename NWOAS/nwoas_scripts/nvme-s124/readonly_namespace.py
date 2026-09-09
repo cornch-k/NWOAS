@@ -29,6 +29,7 @@ class ReadOnlyNamespace:
             raise ValueError('invalid namespace capacity')
         self.block_count=block_count
         self.read_block=read_block
+        self.mdts=4 # 2^(12+4) = 64 KiB; experiments may raise this explicitly.
 
     @staticmethod
     def _fields(command):
@@ -62,7 +63,7 @@ class ReadOnlyNamespace:
             model=b'NWOAS ANS2 READ ONLY BRIDGE'
             data[24:64]=model.ljust(40,b' ')
             data[64:72]=b'S92     '
-            data[77]=4 # MDTS=64KiB with4KiB minimum pages
+            data[77]=self.mdts
             struct.pack_into('<H',data,78,1) # controller ID
             struct.pack_into('<I',data,80,0x00010300) # NVMe1.3
             data[512]=0x66 # SQ entry size64 bytes

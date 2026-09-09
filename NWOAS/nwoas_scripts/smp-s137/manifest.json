@@ -1,0 +1,7 @@
+{
+  "hypervisor": "/Volumes/X31/NWOAS/m1n1_windows/build/m1n1-s137-vgic-trace.bin",
+  "bytes": 2146304,
+  "sha256": "a1d8f34381283082ecebbf40004f3f0b1146a2fe46c0896ec8e3acdf90fc6dc6",
+  "base": "S133 single-owner eight-core hypervisor",
+  "change": "trace effective GICD_ICENABLER SPI transitions; retain S133 AIC behavior"
+}

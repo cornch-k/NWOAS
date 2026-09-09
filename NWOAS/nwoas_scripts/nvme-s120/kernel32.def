@@ -1,0 +1,21 @@
+LIBRARY kernel32.dll
+EXPORTS
+GetStdHandle
+WriteFile
+ReadFile
+CreateFileW
+GetFileSizeEx
+CloseHandle
+GetCommandLineW
+GetLastError
+GetTickCount64
+GetProcessHeap
+HeapAlloc
+HeapFree
+ExitProcess
+VirtualAlloc
+VirtualFree
+GetDiskFreeSpaceW
+SetFilePointerEx
+SetEndOfFile
+FlushFileBuffers

@@ -29,3 +29,11 @@ __pycache__/
 *.bgra
 *.pcap
 *.pcapng
+*.[Ee][Xx][Ee]
+*.[Bb][Ii][Nn]
+*.[Dd][Ll][Ll]
+*.[Ss][Yy][Ss]
+*.[Cc][Aa][Tt]
+*.zip
+*.log
+**/symbols/

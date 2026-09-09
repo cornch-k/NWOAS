@@ -1,0 +1,128 @@
+{
+  "experiment": "S95",
+  "target": "ListContainer: \n    J274AP\n    Macmini9,1\n    AppleARM",
+  "writes_to_storage": false,
+  "logical_block_bytes": 4096,
+  "namespace": 1,
+  "adt": {
+    "/arm-io/ans": {
+      "compatible": "ListContainer: \n    iop,ascwrap-v4",
+      "registers": [
+        [
+          "0x277400000",
+          "0x6c000"
+        ],
+        [
+          "0x277050000",
+          "0x4000"
+        ],
+        [
+          "0x200000000",
+          "0x0"
+        ],
+        [
+          "0x27bcc0000",
+          "0x60000"
+        ],
+        [
+          "0x279000000",
+          "0x1000000"
+        ],
+        [
+          "0x27bb90000",
+          "0xc000"
+        ],
+        [
+          "0x27bd47c00",
+          "0x4000"
+        ]
+      ],
+      "interrupts": "ListContainer: \n    584\n    583\n    586\n    585\n    590"
+    },
+    "/arm-io/sart-ans": {
+      "compatible": "ListContainer: \n    sart,coastguard",
+      "registers": [
+        [
+          "0x27bc50000",
+          "0x10000"
+        ]
+      ],
+      "interrupts": "None"
+    }
+  },
+  "status": "PRIMARY_GPT_AND_BACKUP_HEADER_CRC_PASS",
+  "gpt": {
+    "current_lba": 1,
+    "backup_lba": 61279343,
+    "first_usable": 6,
+    "last_usable": 61279338,
+    "disk_guid": "898f172d-77bf-4007-b865-ac81a141eb3c",
+    "entries_lba": 2,
+    "entry_count": 128,
+    "entry_bytes": 128,
+    "entries_crc": 2529810552
+  },
+  "partitions": [
+    {
+      "index": 1,
+      "type_guid": "69646961-6700-11aa-aa11-00306543ecac",
+      "guid": "56f38f44-5c55-48da-aff0-97af9bb0a578",
+      "start_lba": 6,
+      "end_lba": 128005,
+      "bytes": 524288000,
+      "name": "iBootSystemContainer",
+      "attributes": "0x0"
+    },
+    {
+      "index": 2,
+      "type_guid": "7c3457ef-0000-11aa-aa11-00306543ecac",
+      "guid": "c624fd70-53bd-4c27-adc7-1ac2f9288cbc",
+      "start_lba": 128006,
+      "end_lba": 53838942,
+      "bytes": 219999997952,
+      "name": "",
+      "attributes": "0x0"
+    },
+    {
+      "index": 3,
+      "type_guid": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+      "guid": "3939b91f-5b3e-4dd8-a312-e5f8ba052cbc",
+      "start_lba": 53839104,
+      "end_lba": 53915903,
+      "bytes": 314572800,
+      "name": "EFI system partition",
+      "attributes": "0x0"
+    },
+    {
+      "index": 4,
+      "type_guid": "e3c9e316-0b5c-4db8-817d-f92df00215ae",
+      "guid": "f0209f89-df33-4058-9ea7-c4d6e5bfa654",
+      "start_lba": 53915904,
+      "end_lba": 53919999,
+      "bytes": 16777216,
+      "name": "Microsoft reserved partition",
+      "attributes": "0x0"
+    },
+    {
+      "index": 5,
+      "type_guid": "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+      "guid": "ba299001-fd61-4331-9a34-1ef2ab85987f",
+      "start_lba": 53920000,
+      "end_lba": 59968511,
+      "bytes": 24774705152,
+      "name": "Basic data partition",
+      "attributes": "0x0"
+    },
+    {
+      "index": 6,
+      "type_guid": "52637672-7900-11aa-aa11-00306543ecac",
+      "guid": "59130d35-2432-4fcb-8206-7efdf9903d4d",
+      "start_lba": 59968630,
+      "end_lba": 61279338,
+      "bytes": 5368664064,
+      "name": "RecoveryOSContainer",
+      "attributes": "0x0"
+    }
+  ],
+  "disk_bytes": 251000193024
+}

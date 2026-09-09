@@ -1,0 +1,17 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+GetStdHandle
+WriteFile
+ReadFile
+CreateFileW
+SetFilePointerEx
+GetFileSizeEx
+VirtualAlloc
+VirtualFree
+CreateThread
+WaitForMultipleObjects
+CloseHandle
+QueryPerformanceCounter
+QueryPerformanceFrequency
+GetActiveProcessorCount
+ExitProcess

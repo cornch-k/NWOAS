@@ -1,0 +1,8 @@
+{
+  "hypervisor": "/Volumes/X31/NWOAS/m1n1_windows/build/m1n1-s136-vgic-mask.bin",
+  "bytes": 2146304,
+  "sha256": "b4a2f0d65e2a784da8b4ca2d944d5a2e2300df2c546a48d55f9ea5a9118130be",
+  "base": "S133 single-owner eight-core hypervisor",
+  "change": "GICD_ICENABLER SPI disable now masks the matching AIC interrupt",
+  "upstream_evidence": "origin/bugfix/vgic_fixes commit 1b3f004b carries the same polarity correction"
+}

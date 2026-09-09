@@ -1,0 +1,7 @@
+{
+  "hypervisor": "/Volumes/X31/NWOAS/m1n1_windows/build/m1n1-s141-1m-nvme.bin",
+  "bytes": 2146304,
+  "sha256": "e3be86394ccc2d9c779147244d45bf9068d9118a3e2d93a22ad3268b8f9dbdfd",
+  "base": "S133 single-owner eight-core hypervisor plus S140 CPU P-state module",
+  "change": "raise direct ANS PRP transfer ceiling from 16 to 256 4-KiB pages"
+}

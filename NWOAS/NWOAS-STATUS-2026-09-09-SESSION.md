@@ -128,6 +128,14 @@ X31이 처음에는 USB/디스크 목록 모두에 없었으나 사용자 재연
 
 사용자 취침으로 작업 중단. 5분 heartbeat는 PAUSED 상태를 유지한다. 종료할 경우 Windows 메뉴에서 정상 종료하며 강제 전원 차단은 피한다.
 
+## S130 저장장치 직렬 로그 병목 개선 (2026-09-09 10:19 KST)
+
+S129 데스크톱 로그는 102,912 I/O doorbell에서 누적 `host_ms/db=3.7`, `guest_ms/db=15.4`, 약 52 IOPS였고 성공한 I/O 하나마다 CMD 및 여러 MMIO 줄을 115200 직렬 콘솔에 출력했다. 요청당 출력량으로 계산한 직렬 처리 상한이 관측 IOPS와 같은 규모이므로 첫 병목으로 확정했다.
+
+`nvme-s130/quiet_log.py`와 `usb-s130-guest-test.sh`를 추가했다. S124 저장 의미론, GPT/Windows-zone 쓰기 가드, S126 전달 채널, S129 UEFI payload는 그대로 두고 성공 CMD와 routine MMIO만 샘플링한다. 오류·CFS·큐 생성·컨트롤러 상태 변경은 전부 보존한다. 새 샘플링 테스트 5개와 기존 NVMe 테스트 37개 PASS, shell/py_compile PASS.
+
+첫 S130 실기 PID62883, 로그 `logs/usb-s130-20260909-101930.omjAtK`, session43943. 첫 실행에 남아 있던 요청별 INTMS/INTMC 두 줄 출력 상태에서도 초기 누적 지연이 약 19.1ms/I/O에서 5.5ms/I/O로 감소해 약 3.5배 개선, 이후 약 5.5ms/I/O 수준을 유지했다. 소스는 INTMS/INTMC도 샘플링하도록 추가 보완했고 테스트 PASS했으나 현재 실행은 시작 시 로드된 이전 함수이므로 최종 정책 실기 결과는 다음 정상 재부팅에서 확인해야 한다. 현재 실행은 중단하지 않았고 fatal marker 없음. 메모리 4.1GB는 OS-facing GetMemoryMap에서 4GB 이상 Conventional RAM을 숨기는 USB DMA 우회와 직접 연결됨. CPU 1개는 MADT가 AP1..7을 명시적으로 disabled한 결과이며, 두 제한은 아직 변경하지 않음.
+
 - 관찰 2026-09-09T01:56:28+09:00: 재개 부팅 PID67002 활성. SSD 읽기·쓰기·flush와 로그 갱신 지속, 전체 현재 로그 fatal marker 없음, 새 NWOS 연결 없음. 강제 조작/별도 UART 접속/작업 큐 제출 없이 유지. 변화 알림 생략.
 
 - 2026-09-09T02:00:09+09:00: 사용자 요청으로 5분 관찰 자동화 nwoas PAUSED. 실행 중인 Mac mini/guest 프로세스는 중단하지 않음.
@@ -138,3 +146,217 @@ X31이 처음에는 USB/디스크 목록 모두에 없었으나 사용자 재연
 
 ## OOBE 오프라인 설정 명령 후 재부팅 — 2026-09-09T02:13:31+09:00
 사용자 OOBE\BYPASSNRO 실행 보고. 기존 PID67002 자연 종료, Device not configured 확인. 동일 S129 하네스 한 번 재개: logs/usb-s129-20260909-021315.QCTzXY, exec session94705. readiness/chainload 통과 후 guest 시작 단계. 5분 자동 관찰은 PAUSED 유지. 오프라인 선택지 및 계정 생성 아직 미확인.
+## S131 eight-core candidate prepared (2026-09-09)
+
+- The first S130 desktop run reduced observed host-relayed NVMe service time from roughly 19.1 ms/I/O at the S129 baseline to 3.7-5.7 ms/I/O, depending on workload. The Windows desktop later stopped responding after about 46,340 reads; the hypervisor stayed alive and no CFS, WHEA, BugCheck, SError, panic, or traceback marker appeared.
+- CPU enumeration was then promoted to the next bottleneck. The current UEFI source explicitly disabled MADT GICC entries 1-7. S131 enables all eight M1 GICC entries while retaining S129 internal-SSD-first boot and the 4 GiB USB DMA safety window.
+- `m1n1_windows/src/hv_psci.c` also repeatedly initialized `psci_cpu_data_array[0]` for every CPU power-domain node. S131 indexes that array by `node_index` so each AP starts with its own PSCI state.
+- Candidate hypervisor: `m1n1_windows/build/m1n1-s131-psci-index.bin`, 2,146,304 bytes, SHA-256 `0c612607debfbf5524a0f2c1431e551b8604ea24d1ad2c59e2c68dfd7d518967`.
+- Candidate payload: `m1n1_windows/m1n1-payload-s131-8cpu.bin`, SHA-256 `4e87a1d2bf362e309884a0539c6023c49c6da01bb77894a35109a88e430389b1`.
+- Launcher: `nwoas_scripts/usb-s131-guest-test.sh`. The old S103/S129 pair remains the exact one-core rollback path. Hardware validation is still required; a successful build is not proof that Windows brings up all APs stably.
+- Preflight found that the old PSCI path wrote the Windows entry point directly into `spin_table.target`, which both bypassed EL2/vGIC AP initialization and was rejected by the existing corrupted-target guard. The final S131 HV routes `CPU_ON` through `hv_start_secondary()`, keeps the asynchronous X0-X3 frame in persistent per-CPU storage, and fixes the guest-active mask to set `BIT(cpu)` for the AP rather than `BIT(smp_id())` for CPU0.
+
+## S131 hardware result and S132 lifecycle repair
+
+- S131 hardware boot proved UEFI started CPU1-CPU7 and all seven reached `HV: Entering guest secondary ... at 0x83e4c0000`, with per-core vGIC initialization and Apple system-register handling visible on cpu1-cpu7.
+- The run later stopped at Windows `PSCI DEBUG: turning on CPU1` followed by a second `HV: Initializing secondary 1`. Root cause: UEFI AP shutdown used the old PSCI `CPU_OFF` implementation, which physically slept the AP but did not clear `hv_started_cpus[]` or `hv_cpus_in_guest`; Windows therefore hit a double-start deadlock.
+- S132 routes guest `CPU_OFF` to `hv_exit_cpu(index)`. The normal EL2 exception-exit path now clears the guest-active state and returns the AP to m1n1's parking loop before Windows `CPU_ON` calls `hv_start_secondary()`.
+- S132 HV: `m1n1_windows/build/m1n1-s132-psci-lifecycle.bin`, 2,146,304 bytes, SHA-256 `19fd219568a06c23cc6c73f08288a970d052e82ecc76d51f876c6eeeb332833c`.
+- S132 retains the S131 UEFI payload SHA-256 `4e87a1d2bf362e309884a0539c6023c49c6da01bb77894a35109a88e430389b1`; launcher is `nwoas_scripts/usb-s132-guest-test.sh`. Hardware validation remains pending.
+## S133 — single-owner 8-core bring-up (2026-09-09 10:59 KST)
+
+- S131/S132의 CPU1 정지는 AP의 물리 동작 실패가 아니었다. Windows의 Apple AIC HAL이
+  먼저 PMGR `CPU_START`를 써서 firmware RVBAR로 AP1-7을 진입시킨 뒤, 같은 Windows
+  부팅에서 PSCI `CPU_ON`을 다시 호출해 이미 guest 안에 있는 CPU1을 재초기화하면서
+  `HV: Initializing secondary 1`에서 교착했다.
+- S133은 MADT 8-core와 C PSCI 경로를 그대로 유지하면서
+  `nwoas_scripts/smp-s133/pmgr_gate.py`로 Python PMGR dispatch만 차단한다. AP는 m1n1
+  spin table에 남고, 이후 PSCI가 전달한 실제 Windows AP entry에서 한 번만 시작된다.
+- `hv_start_secondary()`가 재시작 전에 `hv_should_exit[cpu]`를 지우도록 보강했다.
+  PMCC 진단은 600줄에서 32줄로 제한했다.
+- 실기기 S133 결과: `NWOAS-S133 gate PMGR AP start` 뒤 CPU1-7 각각에 대해
+  `PSCI DEBUG: turning on`, `HV: Initializing secondary`, `HV: Entering guest secondary`
+  순서가 모두 완료됐다. 각 AP 진입은 정확히 1회였고 S131/S132의 CPU1 교착은 재현되지
+  않았다.
+- 5분 시점까지 evtdump heartbeat가 CPU0, CPU6, CPU7에서 이어졌고 WHEA, BugCheck,
+  SError, panic, traceback, CPU exit 표식은 없었다. NVMe 누적 I/O는 27,648 doorbell까지
+  진행했고 마지막 누적치는 host 1.8ms/I/O, guest 1.8ms/I/O였다. 화면/작업 관리자상의
+  8 logical processors 확인은 사용자가 돌아온 뒤 필요하다.
+- 증거 스냅샷:
+  `nwoas_scripts/logs/usb-s133-20260909-105937.8cpu-5min.log`, SHA-256
+  `cc3046f6c6db371ec6be599342ac0e142b06d3b15c4b8e8ce3bb78b10f3b1734`.
+- 이 실기기 실행에는 시작 시 로드된 S130 로깅 정책이 적용되어 `S97`이 64 I/O마다,
+  `S93`이 128 blocks마다 출력됐다. 다음 실행용 소스는 각각 초기 milestone 이후
+  4096 간격으로 낮추고 FLUSH도 표본화했다. 로직 변경 없이 직렬 출력만 줄인 변경이며
+  NVMe S124 37개 + S130 5개 테스트가 통과했다.
+- S133 HV:
+  `m1n1_windows/build/m1n1-s133-single-owner-smp.bin`, 2,146,304 bytes,
+  SHA-256 `e8b9590d0ec3b55e710623e53d735a70d1a353ba5d929de024a005cb2e2ff153`.
+- 동일 실행은 10분 시점까지 연속 생존했다. 마지막 heartbeat는 600초였고 CPU0-7이
+  NVMe 처리에 참여한 로그가 남았다. 이 시점에도 WHEA, BugCheck, SError, panic,
+  traceback, CPU exit 표식은 없었다. 화면의 응답성과 작업 관리자 8 logical processors는
+  사용자가 돌아온 뒤 확인해야 한다.
+- `nwoas_scripts/smp-s133/summarize_log.py`는 실행 중인 장치를 건드리지 않고 S133 로그의
+  PMGR gate 수, CPU1-7 단일 진입, 마지막 heartbeat/NVMe 통계, fatal marker를 요약한다.
+
+## 다음 병목/드라이버 진단 준비
+
+- `nwoas_scripts/s134-windows-inventory/run-as-admin.cmd`를 준비했다. Windows에서 한 번
+  실행하면 `C:\NWOAS\S134-Windows-inventory.zip`에 CPU/core/clock 메타데이터, CPU별
+  3초 표본, PnP 문제 장치와 hardware ID, network/storage/driver/power/BCD 정보를 모은다.
+  시스템 설정은 바꾸지 않는다. 현재 WINARM USB가 맥북에 연결되어 있지 않아 전송은
+  아직 하지 않았다.
+- 전송용 묶음은 `nwoas_scripts/NWOAS-S134-Windows-inventory.zip`, SHA-256
+  `4eb683af5ae1c3317c35a5e5dbf23704ad3aae7bb16cac967381549eb387904c`이다.
+- 로컬 AppleWOA 원격 refs를 fetch만 했다. `apple_silicon_platforms_mu`의 새
+  `feature/dart_updates` 브랜치는 이름과 달리 현재 Apple DART 완성본이 아니라 Microsoft
+  SMMUv3 코드를 가져온 템플릿 단계다. 현 S133에 병합할 수 있는 즉시 사용 가능한
+  PCIe/DART 해결책으로 보지 않는다.
+- 내장 Wi-Fi/BT는 PCIe port0, BCM57762 Ethernet은 PCIe port2 아래에 있으나 현재
+  DSDT의 `PCI0._STA`가 0이라 Windows에 보이지 않는다. 먼저 정상 동작하는 USB 경로로
+  네트워크를 확보하고, 전체 RAM과 내장 네트워크는 PCIe DART/Windows DMA 소유권을
+  해결하는 별도 단계로 다룬다.
+- `0.04 GHz`의 명백한 펌웨어 입력 문제도 찾았다. SMBIOS Type 4에서 `MaxSpeed=3228`
+  MHz이지만 `CurrentSpeed=0`이었다. ACPI `_CPC`나 PMGR 제어를 추가하지 않고
+  `CurrentSpeed=3228`만 넣은 S135 payload를 별도로 빌드했다:
+  `m1n1_windows/m1n1-payload-s135-8cpu-speed.bin`, 32,342,016 bytes, SHA-256
+  `73f9623d6cf8060c387e2a87119391ed66a49f93ec70b4cd628dc40a8df93e11`.
+  안정 기준 S131 payload는 빌드 전후 SHA-256
+  `4e87a1d2bf362e309884a0539c6023c49c6da01bb77894a35109a88e430389b1`로 보존됐다.
+  실행기는 `nwoas_scripts/usb-s135-guest-test.sh`이며 S134 WMI 결과를 먼저 수집한 뒤
+  다음 정상 재부팅에서 시험한다.
+- 최신 `m1n1_windows` 원격 refs도 fetch만 했다. `origin/bugfix/vgic_fixes`의
+  `1b3f004b`가 guest `GICD_ICENABLER` 처리에서 `aic_set_mask(..., true)`를 쓰는 동일한
+  극성 수정을 포함한다. 현재 소스에 이미 default-off gate로 준비돼 있던 그 한 변경만
+  켠 S136 후보를 빌드했다: `m1n1_windows/build/m1n1-s136-vgic-mask.bin`, 2,146,304
+  bytes, SHA-256 `b4a2f0d65e2a784da8b4ca2d944d5a2e2300df2c546a48d55f9ea5a9118130be`.
+  빌드 후 `src/hv_vgic.c`가 원래 SHA-256
+  `f5ad1c11d3de4308256af12b81038ad302c2ec43000c737088b5e63c617f18e6`로 복구됐음을
+  확인했다. `nwoas_scripts/usb-s136-guest-test.sh`는 S131 payload와 115200 baud를
+  유지해 이 변경만 A/B한다. 현재 S133이 화면에서도 정상이라면 시험하지 않는다.
+- 다음 부팅부터 `uefi-s125/link_module.py`가 host-RAM `NWOASLINK` 디스크에
+  `S134.CMD`와 `COLLECT.PS1`을 함께 싣는다. 따라서 S134 진단 전달에는 물리 WINARM
+  USB를 맥북/맥미니 사이에서 옮길 필요가 없다. 현재 실행은 모듈을 이미 메모리에
+  로드했으므로 이 파일 추가가 보이지 않으며, 다음 실행부터 적용된다.
+  34,603,008-byte FAT 이미지 생성 검사와 transport-s123 11개 단위 테스트가 통과했다.
+
+## 11:29-11:36 KST — S136 회귀 및 S137 관찰 빌드
+
+- S133 장기 정지 로그를 141,785바이트, SHA-256
+  `28bc974b22ce3e5d2f44619b0973b2821b23b1d490d805e4f518af60b9a75336`로
+  보존했다. 정확한 PID 69602만 SIGTERM으로 종료한 뒤 단일
+  `macvdmtool reboot serial`과 NOP 검증이 통과했다.
+- S136은 UEFI 진입 직후 `pc misaligned` 예외와 guest HVC#0을 거쳐 EL2
+  shell로 빠졌다. 이 한 번의 결과만으로 vGIC polarity 변경이 원인이라고
+  확정하지 않는다. 후속 S137 trace에서 유효한 `[spi-dis]` 전이가 아직
+  하나도 나오지 않아 전송/부팅 비결정성도 남아 있다.
+- S137은 S133 AIC 동작을 그대로 두고 유효한 GICD_ICENABLER SPI 전이만
+  `[spi-dis]`로 출력한다. 빌드는
+  `m1n1_windows/build/m1n1-s137-vgic-trace.bin`, 2,146,304바이트,
+  SHA-256 `a1d8f34381283082ecebbf40004f3f0b1146a2fe46c0896ec8e3acdf90fc6dc6`다.
+- 현재 실행 로그는
+  `nwoas_scripts/logs/usb-s137-20260909-113313.1KXG5s`다. PMGR 직접 시작
+  7개는 모두 gate됐고 CPU0-7 모두 NVMe relay 작업을 수행했으며 IRQ
+  900/857/698 enable을 관찰했다. fatal marker는 없다.
+- 화면은 Windows 자동 복구(`Windows가 제대로 로드되지 않은 것 같습니다`)
+  로 진입했다. 연속 강제 재부팅 이력과 일치한다. 현재 run을 유지하고
+  `고급 복구 옵션 보기 -> 계속(Windows 11로 계속)`으로 정상 부팅을 한 번
+  끝까지 완료해 자동복구 카운터를 끊는 것이 다음 단계다.
+- 사용자가 `계속`을 선택한 뒤 S137을 추가 전원 재부팅 없이 다시
+  chainload했다. CPU0-7 NVMe activity와 32,768+ I/O를 확인했으나 약 3분
+  40초 후 사용자가 `DPC_WATCHDOG` 블루스크린을 확인했고 guest가 자체
+  재시작했다. 직전에는 NVMe queue 재생성과 2건의 write가 완료됐다.
+  따라서 8-core startup 자체는 성공하지만 Windows DPC/interrupt progress가
+  로그인 무렵 watchdog 제한을 넘는 것이 현재 핵심 실패다.
+- 블루스크린 재시작으로 돌아온 proxy에서 전원 재부팅 없이 안정 기준
+  S130(S103 HV + S129 1-core SSD-first payload)을 chainload했다. 실행 로그는
+  `nwoas_scripts/logs/usb-s130-20260909-114146.q380wQ`다. 210초 시점
+  32,768 I/O, USBSTS `0x18`, fatal marker 없음으로 진행 중이다. 바탕화면에
+  도달하면 S134 inventory와 crash dump/event log를 먼저 회수한다.
+
+## S138 crash dump 회수 및 S139 8-core NVMe DPC 수정 (2026-09-09 12:36 KST)
+
+- S138은 S103 HV와 one-core SSD-first UEFI를 사용하고 ACPI XHC1을 숨겨 USB-A
+  FL1100만 Windows에 노출한 복구 구성이다. Windows 바탕화면과 `NWOS.EXE`
+  연결을 확인했고, 약 37분 동안 139,264 I/O doorbell을 처리한 뒤 job 5
+  `shutdown /s /t 0`으로 정상 종료했다.
+- S138에서 S137의 `C:\Windows\Minidump\050722-5031-01.dmp`를 host link로
+  회수했다. 228,759 bytes, SHA-256
+  `df6934636e259ba8c0475a765c64b680e3fa4ee0cf62c2ce78637b9d3729f01c`.
+  dump header의 processor count는 8이며 bugcheck는 `0x133`, parameter는
+  `0, 0x501, 0x500, 0xfffff802feb19338`이다. 따라서 S137은 모든 CPU를 시작한
+  뒤 단일 DPC/ISR watchdog을 초과했다.
+- 같은 Windows 인스턴스의 `stornvme.sys`와 `storport.sys` 및 Microsoft symbol
+  server PDB를 회수해 triage stack을 해석했다. 정확한 경로는
+  `stornvme!NVMeCompletionDpcRoutine` ->
+  `storport!StorPortWriteRegisterUlong` -> `storport!RaidpAdapterDpcRoutine`이다.
+  `StorPortWriteRegisterUlong+0x18`은 `dsb sy` 뒤 CQ head doorbell MMIO를 쓴다.
+- 기존 S124 controller는 그 CQ-head acknowledgement 처리 안에서 `process()`를
+  호출해 물리 SSD I/O와 새 CQE 생성을 동기 수행했다. Windows completion DPC가
+  CQ를 비울 때 즉시 다시 채우고 IRQ를 재assert하므로 DPC가 끝나지 않을 수 있다.
+- `nwoas_scripts/nvme-s139/controller.py`는 CQ-head doorbell을 CQE retire와 IRQ
+  level 갱신만 하는 경로로 바꿨다. 물리 I/O는 SQ-tail doorbell에서만 수행한다.
+  회귀 테스트 3개와 py_compile이 통과했다. S130의 기본 controller 선택은 그대로고,
+  `NWOAS_CONTROLLER_DIR`이 있을 때만 S139 구현을 선택한다.
+- S139 payload는 S131 MADT8/SSD-first 구성에 XHC1 `_STA=0`을 합친
+  `m1n1_windows/m1n1-payload-s139-8cpu-usba.bin`, 32,342,016 bytes,
+  SHA-256 `5dc5b108f5b8cc2a6cc80f53881b27696d5b695732683979e5b6948f5c18d953`다.
+  S131 원본 payload는 SHA-256
+  `4e87a1d2bf362e309884a0539c6023c49c6da01bb77894a35109a88e430389b1`로 복구됐다.
+- 실기 S139 로그는 `nwoas_scripts/logs/usb-s139-20260909-123635.ARYdmj`,
+  run_guest PID 87561이다. CPU1-7이 각각 정확히 한 번 PSCI로 시작됐고 CPU0-7이
+  NVMe trap 처리에 참여했다. S137 실패점인 32,768 I/O를 넘어 40,960 I/O까지
+  진행했으며 fatal/bugcheck/CFS/traceback은 없다. 콘치님이 Windows 바탕화면
+  도달을 직접 확인했다. `NWOS.EXE` 재연결 후 Windows가 보고하는 processor 수와
+  부하 안정성을 수집하는 것이 다음 단계다.
+
+## S139 두 번째 실기와 S140 CPU P-state 수정 (2026-09-09 13:22 KST)
+
+- 첫 S139은 Windows가 SQ1-4 네 개를 하나의 256-entry CQ1에 연결했다. CQ ack에서
+  물리 I/O를 실행하지 않도록 바꾼 뒤에도 CQ가 꽉 차면 네 SQ backlog를 다시 진행할
+  경로가 없어 약 49,152 I/O에서 멈췄다. S139 controller가 I/O queue pair를 하나만
+  광고하도록 `MAX_Q=1`로 제한했고 회귀 테스트 3개가 통과했다.
+- 두 번째 S139은 CQ1/SQ1 하나로 데스크톱과 NWOS 링크에 도달했고 Windows는
+  8 cores/8 logical processors를 보고했다. 그러나 `CurrentClockSpeed=30`,
+  `MaxClockSpeed=30`이었고 WinSAT 읽기 부하에서 S137과 같은 0x133 p1=0 단일 DPC
+  watchdog이 재현됐다. PowerShell Start-Job CPU 시험은 worker StackOverflowException
+  때문에 유효하지 않으며 PASS로 취급하지 않는다.
+- 원인은 UEFI raw chainload가 Linux payload 경로의 `cpufreq_init()` 호출을 건너뛰는
+  것이었다. S140 모듈은 기존 m1n1 T8103 구현을 guest 진입 전에 호출하고 두 cluster
+  레지스터를 검증한다. 첫 실기에서 E cluster는 P5를 유지했고 P cluster는 P1에서
+  P7로 바뀌었다. rc=0, 두 busy bit=0이었으며 CPU1-7도 모두 한 번씩 시작됐다.
+- S140 Windows 네이티브 ARM64 검증은 `active=8`, 8 threads, 총 2억 회 연산을
+  143,122 us에 완료했다. 실행 파일은 `cpufreq-s140/CPUSTRES.EXE`, SHA-256
+  `e2f64d3934f1ba3641603ca0816016a754f3accfea6a4de91e4e1b8f58267a8c`다.
+- 8개 native thread의 no-buffering NTFS 읽기도 64 MiB를 3,497,229 us에 실패 없이
+  완료했다. `DISKREAD.EXE` SHA-256은
+  `a1e67c80dc1a5324441eda162091d361df0fa1d9367f584f011a4dea00d0b5f9`다.
+  약 19.2 MiB/s이므로 CPU 수정 뒤의 다음 병목은 동기 ANS relay다.
+- 그 직후 0x133이 다시 발생했지만 subtype은 p1=1(누적 DISPATCH_LEVEL 시간)이었고,
+  직전 로그에서 FL1100 IRQ698이 PENDING/outstanding 상태로 반복됐다. 사용자가 같은
+  시점에 WINARM2 USB를 분리했으므로 hot-unplug USB DPC가 원인일 가능성이 크다.
+  디스크 시험 완료와 crash를 같은 원인으로 단정하지 말고 새 minidump stack으로
+  구분해야 한다. 첫 S140 로그는
+  `nwoas_scripts/logs/usb-s140-20260909-130523.89pff5`다.
+- S141은 Windows MDTS와 m1n1 direct PRP 상한을 64 KiB/16 pages에서
+  1 MiB/256 pages로 함께 올리는 격리 후보다. HV는
+  `m1n1_windows/build/m1n1-s141-1m-nvme.bin`, SHA-256
+  `e3be86394ccc2d9c779147244d45bf9068d9118a3e2d93a22ad3268b8f9dbdfd`다.
+  기존 default 64 KiB는 유지했고 nvme-s124 37 tests가 통과했다. S140 USB 분리 crash
+  dump를 회수하고 USB가 빠진 S140에서 재현 여부를 확인하기 전에는 S141을 부팅하지 않는다.
+- 현재 두 번째 S140은 `nwoas_scripts/logs/usb-s140-20260909-132239.ecSHRl`에서
+  부팅했고 P1->P7 검증과 CPU1-7 시작을 다시 확인했다. Windows 바탕화면에서
+  `D:\NWOS.EXE`를 실행한 직후 UAC가 나타나기 전에 화면과 입력이 정지했다.
+  NWOS link의 `events.jsonl`은 생성되지 않았으므로 agent는 시작되지 않았다.
+- 두 번째 S140 정지 시점의 I/O는 28,672건이다. FL1100은 `outst=0`, LR698 없음으로
+  USB-A 인터럽트가 원인이라는 증거는 없었다. 반면 Apple 내장 xHCI는
+  `IMAN=0x3`, `USBSTS=0x1019`, `pending=1`을 반복했다. 마지막 timer-injection
+  guest PC는 `0xfffff8007a6b964c`, `0xfffff8007a4faf60`이며 그 뒤 HV 로그와
+  exception trap이 함께 끊겼다. `run_guest` 프로세스는 살아 있으므로 host 도구
+  종료가 아니라 guest timer/vGIC 또는 CPU progress 정지로 분류한다.
+- Microsoft symbol server에서 이 Windows kernel용 `ntkrnlmp.pdb`를 회수했다.
+  GUID는 `{80ED6679-0B46-EB0C-0BAD-A234C31EBC45}`이고 로컬 파일 SHA-256은
+  `eb1db249fbfcb3194d4d648628dd961eac5b1cbf19a47a2fde7cdcbe6cf075d8`이다.
+  다음 세션은 마지막 PC의 symbol resolution, one-core rescue로 새 0x133 dump 회수,
+  NWOS 자동 시작 설치 순서로 재개한다. S141 1 MiB NVMe 후보는 이 정지 원인을
+  분리하기 전까지 보류한다.

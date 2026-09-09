@@ -1,0 +1,7 @@
+{
+  "payload": "/Volumes/X31/NWOAS/m1n1_windows/m1n1-payload-s138-usba-rescue.bin",
+  "bytes": 32342016,
+  "sha256": "bbab18cb7af139288fb19f2a13f39a74d52a8201184d4a22a4761f2c3708ee3e",
+  "base": "S129 one-core SSD-first payload",
+  "change": "XHC1 _STA=0; retain USB-A FL1100 for stable recovery input"
+}

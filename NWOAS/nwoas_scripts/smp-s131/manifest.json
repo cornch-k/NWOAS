@@ -1,0 +1,7 @@
+{
+  "payload": "/Volumes/X31/NWOAS/m1n1_windows/m1n1-payload-s131-8cpu.bin",
+  "sha256": "4e87a1d2bf362e309884a0539c6023c49c6da01bb77894a35109a88e430389b1",
+  "bytes": 32342016,
+  "base": "S129 SSD-first UEFI/NVMe candidate",
+  "change": "Enable all eight M1 GICC entries in MADT; preserve 4 GiB USB DMA safety window"
+}

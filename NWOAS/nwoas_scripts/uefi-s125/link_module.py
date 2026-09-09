@@ -19,6 +19,13 @@ class TransportReadOnly:
 _root=Path('/Volumes/X31/NWOAS/nwoas_scripts')
 _files={'NWESP.EXE':(_root/'uefi-s125/NWESP.EXE').read_bytes(),
         'NWOS.EXE':(_root/'native-link-s125/NWOS.EXE').read_bytes(),
+        'CPUSTRES.EXE':(_root/'cpufreq-s140/CPUSTRES.EXE').read_bytes(),
+        'DISKREAD.EXE':(_root/'cpufreq-s140/DISKREAD.EXE').read_bytes(),
+        'CPU140.CMD':b'@echo off\r\n%~dp0CPUSTRES.EXE\r\n',
+        # S134: deliver the Windows inventory collector on the host-RAM tools
+        # namespace. This avoids moving the physical WINARM USB between Macs.
+        'COLLECT.PS1':(_root/'s134-windows-inventory/collect.ps1').read_bytes(),
+        'S134.CMD':b'@echo off\r\npowershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0COLLECT.PS1"\r\npause\r\n',
         'R124.BIN':(_root/'nvme-s124/R124.BIN').read_bytes(),
         'P124.BIN':(_root/'nvme-s124/P124.BIN').read_bytes(),
         'NWAGENT.EXE':(_root/'transport-s123/NWAGENT.EXE').read_bytes(),

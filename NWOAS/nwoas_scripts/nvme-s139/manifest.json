@@ -1,0 +1,7 @@
+{
+  "payload": "/Volumes/X31/NWOAS/m1n1_windows/m1n1-payload-s139-8cpu-usba.bin",
+  "bytes": 32342016,
+  "sha256": "5dc5b108f5b8cc2a6cc80f53881b27696d5b695732683979e5b6948f5c18d953",
+  "base": "S131 eight-core SSD-first payload",
+  "change": "XHC1 _STA=0; retain FL1100 USB-A while testing S139 NVMe DPC fix"
+}

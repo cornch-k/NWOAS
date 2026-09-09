@@ -1,0 +1,199 @@
+bugcheck=0x133 params=['0x0', '0x501', '0x500', '0xfffff802feb19338']
+processors=8 sp=0xfffff802fd3e22f0 pc=0xfffff802fe056f1c module=(18446735290465779712, 'ntoskrnl.exe')
+stack_file=0xcaf0+0xc40 top=0xfffff802fd3c83c0
+stack module candidates:
+  file+0x008 0xfffff802fe073dc0 ntoskrnl.exe+0x273dc0
+  file+0x018 0xfffff802fe0028dc ntoskrnl.exe+0x2028dc
+  file+0x098 0xfffff80304189000 CLASSPNP.SYS+0x49000
+  file+0x0c8 0xfffff803033e2e80 storport.sys+0x2e80
+  file+0x0e8 0xfffff802fe012444 ntoskrnl.exe+0x212444
+  file+0x168 0xfffff803033ed8e0 storport.sys+0xd8e0
+  file+0x1b8 0xfffff803033b8924 stornvme.sys+0x18924
+  file+0x1c8 0xfffff803033ed8fc storport.sys+0xd8fc
+  file+0x3e8 0xfffff803033b86fc stornvme.sys+0x186fc
+  file+0x3f8 0xfffff803033b8794 stornvme.sys+0x18794
+  file+0x498 0xfffff802fe08c834 ntoskrnl.exe+0x28c834
+  file+0x530 0xfffff803033b8370 stornvme.sys+0x18370
+  file+0x558 0xfffff802feb1ac98 ntoskrnl.exe+0xd1ac98
+  file+0x570 0xfffff802feb1aa80 ntoskrnl.exe+0xd1aa80
+  file+0x580 0xfffff802feb33b80 ntoskrnl.exe+0xd33b80
+  file+0x590 0xfffff802feb1adc0 ntoskrnl.exe+0xd1adc0
+  file+0x5c0 0xfffff802feb33d5c ntoskrnl.exe+0xd33d5c
+  file+0x5d0 0xfffff802feb19008 ntoskrnl.exe+0xd19008
+  file+0x5f8 0xfffff802feb19188 ntoskrnl.exe+0xd19188
+  file+0x648 0xfffff802feb33d5c ntoskrnl.exe+0xd33d5c
+  file+0x650 0xfffff802feb33b80 ntoskrnl.exe+0xd33b80
+  file+0x6f8 0xfffff802fe08ebf0 ntoskrnl.exe+0x28ebf0
+  file+0x700 0xfffff802feb33b80 ntoskrnl.exe+0xd33b80
+  file+0x708 0xfffff802feb1aa2c ntoskrnl.exe+0xd1aa2c
+  file+0x720 0xfffff802feb19040 ntoskrnl.exe+0xd19040
+  file+0x730 0xfffff802feb1aa80 ntoskrnl.exe+0xd1aa80
+  file+0x738 0xfffff802fea4c000 ntoskrnl.exe+0xc4c000
+  file+0x750 0xfffff802feb1a000 ntoskrnl.exe+0xd1a000
+  file+0x758 0xfffff802feb19040 ntoskrnl.exe+0xd19040
+  file+0x760 0xfffff802feb1aa2c ntoskrnl.exe+0xd1aa2c
+  file+0x778 0xfffff802fe2aa618 ntoskrnl.exe+0x4aa618
+  file+0x788 0xfffff802fe2aa5a0 ntoskrnl.exe+0x4aa5a0
+  file+0x7c0 0xfffff802feb33b80 ntoskrnl.exe+0xd33b80
+  file+0x7c8 0xfffff802feb1aa80 ntoskrnl.exe+0xd1aa80
+  file+0x840 0xfffff803033b8370 stornvme.sys+0x18370
+  file+0x850 0xfffff8030340af50 storport.sys+0x2af50
+  file+0x860 0xfffff803033b8370 stornvme.sys+0x18370
+  file+0x958 0xfffff802fe2aa5c4 ntoskrnl.exe+0x4aa5c4
+  file+0x970 0xfffff802feb33b80 ntoskrnl.exe+0xd33b80
+  file+0x9a8 0xfffff802fe2aa71c ntoskrnl.exe+0x4aa71c
+  file+0x9e0 0xfffff802fec01888 ntoskrnl.exe+0xe01888
+  file+0x9e8 0xfffff802fec01000 ntoskrnl.exe+0xe01000
+modules:
+  0xfffff802fde00000-0xfffff802fee3d000 ntoskrnl.exe
+  0xfffff802fd510000-0xfffff802fd515000 hal.dll
+  0xfffff802fd520000-0xfffff802fd52b000 kdcom.dll
+  0xfffff802fd560000-0xfffff802fd5c5000 CLFS.SYS
+  0xfffff802fd530000-0xfffff802fd557000 tm.sys
+  0xfffff802fd5d0000-0xfffff802fd5ec000 PSHED.dll
+  0xfffff802fd5f0000-0xfffff802fd5fd000 BOOTVID.dll
+  0xfffff80302b10000-0xfffff80302b7e000 FLTMGR.SYS
+  0xfffff80302bb0000-0xfffff80302c04000 msrpc.sys
+  0xfffff80302b80000-0xfffff80302ba7000 ksecdd.sys
+  0xfffff80302a00000-0xfffff80302b02000 clipsp.sys
+  0xfffff80302c10000-0xfffff80302c20000 cmimcext.sys
+  0xfffff80302c20000-0xfffff80302c37000 werkernel.sys
+  0xfffff80302c40000-0xfffff80302d17000 CI.dll
+  0xfffff80302d20000-0xfffff80302dd2000 cng.sys
+  0xfffff80302de0000-0xfffff80302ea2000 Wdf01000.sys
+  0xfffff80302ed0000-0xfffff80302ee2000 WppRecorder.sys
+  0xfffff80302eb0000-0xfffff80302ec5000 WDFLDR.SYS
+  0xfffff80302ef0000-0xfffff80302efe000 PRM.sys
+  0xfffff80302f00000-0xfffff80302f25000 acpiex.sys
+  0xfffff80302f30000-0xfffff80302f86000 mssecflt.sys
+  0xfffff80302f90000-0xfffff80303056000 ACPI.sys
+  0xfffff80303060000-0xfffff8030306c000 WMILIB.SYS
+  0xfffff80303080000-0xfffff80303097000 WindowsTrustedRT.sys
+  0xfffff803030a0000-0xfffff803030ab000 WindowsTrustedRTProxy.sys
+  0xfffff803030b0000-0xfffff803030c6000 pcw.sys
+  0xfffff803030d0000-0xfffff803030dc000 RADARM.sys
+  0xfffff803030e0000-0xfffff80303167000 pci.sys
+  0xfffff80303170000-0xfffff8030318c000 vdrvroot.sys
+  0xfffff80303190000-0xfffff803031c1000 pdc.sys
+  0xfffff803031d0000-0xfffff803031e8000 CEA.sys
+  0xfffff803031f0000-0xfffff80303220000 partmgr.sys
+  0xfffff80303220000-0xfffff803032ef000 spaceport.sys
+  0xfffff803032f0000-0xfffff8030330b000 volmgr.sys
+  0xfffff80303310000-0xfffff80303374000 volmgrx.sys
+  0xfffff80303380000-0xfffff8030339f000 mountmgr.sys
+  0xfffff803033a0000-0xfffff803033d4000 stornvme.sys
+  0xfffff803033e0000-0xfffff803034f3000 storport.sys
+  0xfffff80303530000-0xfffff8030354b000 fileinfo.sys
+  0xfffff80303550000-0xfffff80303592000 Wof.sys
+  0xfffff803035a0000-0xfffff8030360b000 WdFilter.sys
+  0xfffff80303610000-0xfffff80303931000 Ntfs.sys
+  0xfffff80303940000-0xfffff8030394d000 Fs_Rec.sys
+  0xfffff80303950000-0xfffff80303aac000 ndis.sys
+  0xfffff80303ab0000-0xfffff80303b40000 NETIO.SYS
+  0xfffff80303b40000-0xfffff80303b74000 ksecpkg.sys
+  0xfffff80303b80000-0xfffff80303e63000 tcpip.sys
+  0xfffff80303e70000-0xfffff80303ef4000 fwpkclnt.sys
+  0xfffff80303f00000-0xfffff80303f24000 wfplwfs.sys
+  0xfffff80303f30000-0xfffff80303ff2000 fvevol.sys
+  0xfffff80304000000-0xfffff8030400b000 volume.sys
+  0xfffff80304010000-0xfffff8030407d000 volsnap.sys
+  0xfffff80304080000-0xfffff803040cc000 rdyboost.sys
+  0xfffff803040d0000-0xfffff803040f4000 mup.sys
+  0xfffff80304100000-0xfffff80304113000 iorate.sys
+  0xfffff80304120000-0xfffff8030413f000 disk.sys
+  0xfffff80304140000-0xfffff803041b6000 CLASSPNP.SYS
+  0xfffff80da1e00000-0xfffff80da1e24000 crashdmp.sys
+  0xfffff80da1f30000-0xfffff80da1f61000 cdrom.sys
+  0xfffff80da1f70000-0xfffff80da1f86000 filecrypt.sys
+  0xfffff80da1f90000-0xfffff80da1f9f000 tbs.sys
+  0xfffff80da1fa0000-0xfffff80da1faa000 Null.SYS
+  0xfffff80da1fb0000-0xfffff80da1fba000 Beep.SYS
+  0xfffff80da51a0000-0xfffff80da5607000 dxgkrnl.sys
+  0xfffff80da5610000-0xfffff80da562f000 watchdog.sys
+  0xfffff80da5630000-0xfffff80da5644000 BasicDisplay.sys
+  0xfffff80da5650000-0xfffff80da5662000 BasicRender.sys
+  0xfffff80da5670000-0xfffff80da568b000 Npfs.SYS
+  0xfffff80da5690000-0xfffff80da56a2000 Msfs.SYS
+  0xfffff80da56b0000-0xfffff80da56d6000 CimFS.SYS
+  0xfffff80da56e0000-0xfffff80da5703000 tdx.sys
+  0xfffff80da5710000-0xfffff80da5721000 TDI.SYS
+  0xfffff80da5730000-0xfffff80da577e000 netbt.sys
+  0xfffff80da5780000-0xfffff80da5794000 afunix.sys
+  0xfffff80da4c00000-0xfffff80da4cb1000 afd.sys
+  0xfffff80da4cc0000-0xfffff80da4cdd000 vwififlt.sys
+  0xfffff80da4ce0000-0xfffff80da4d0d000 pacer.sys
+  0xfffff80da4d10000-0xfffff80da4d22000 ndiscap.sys
+  0xfffff80da4d30000-0xfffff80da4d46000 netbios.sys
+  0xfffff80da4d50000-0xfffff80da4e02000 Vid.sys
+  0xfffff80da4e10000-0xfffff80da4e32000 winhvr.sys
+  0xfffff80da4e40000-0xfffff80da4ec4000 rdbss.sys
+  0xfffff80da4ed0000-0xfffff80da4f56000 csc.sys
+  0xfffff80da4f60000-0xfffff80da4f73000 nsiproxy.sys
+  0xfffff80da4f80000-0xfffff80da4f8f000 npsvctrig.sys
+  0xfffff80da4f90000-0xfffff80da4f9f000 mssmbios.sys
+  0xfffff80da4fa0000-0xfffff80da4fc9000 dfsc.sys
+  0xfffff80da4fd0000-0xfffff80da4ff0000 dam.sys
+  0xfffff80da4ff0000-0xfffff80da4fff000 KMPDC.sys
+  0xfffff80da5000000-0xfffff80da506c000 fastfat.SYS
+  0xfffff80da5070000-0xfffff80da5088000 bam.sys
+  0xfffff80da5090000-0xfffff80da50e3000 ahcache.sys
+  0xfffff80da50f0000-0xfffff80da5102000 CompositeBus.sys
+  0xfffff80da5110000-0xfffff80da511f000 kdnic.sys
+  0xfffff80da5120000-0xfffff80da5134000 umbus.sys
+  0xfffff80da1fc0000-0xfffff80da2055000 USBXHCI.SYS
+  0xfffff80da5140000-0xfffff80da5182000 ucx01000.sys
+  0xfffff80da57a0000-0xfffff80da57da000 fxppm.sys
+  0xfffff80da57e0000-0xfffff80da57ee000 NdisVirtualBus.sys
+  0xfffff80da57f0000-0xfffff80da57fc000 swenum.sys
+  0xfffff80da2060000-0xfffff80da20dd000 ks.sys
+  0xfffff80da5190000-0xfffff80da519f000 rdpbus.sys
+  0xfffff80da20e0000-0xfffff80da2186000 UsbHub3.sys
+  0xfffff80da2190000-0xfffff80da219f000 USBD.SYS
+  0xfffff80db3a30000-0xfffff80db3a59000 USBSTOR.SYS
+  0xfffff80db3a60000-0xfffff80db3a8d000 usbccgp.sys
+  0xfffff80db3a90000-0xfffff80db3aa2000 hidusb.sys
+  0xfffff80db3ab0000-0xfffff80db3aef000 HIDCLASS.SYS
+  0xfffff80db3af0000-0xfffff80db3b03000 HIDPARSE.SYS
+  0xfffff80db3b10000-0xfffff80db3b21000 mouhid.sys
+  0xfffff80db3b30000-0xfffff80db3b43000 mouclass.sys
+  0xffffb4c406640000-0xffffb4c4066c9000 win32k.sys
+  0xfffff80db3b50000-0xfffff80db3b5c000 WIN32KSGD.SYS
+  0xffffb4c405c00000-0xffffb4c405f17000 win32kbase.sys
+  0xfffff80db3b60000-0xfffff80db3b73000 kbdhid.sys
+  0xfffff80db3b80000-0xfffff80db3b94000 kbdclass.sys
+  0xffffb4c405f20000-0xffffb4c4062ba000 win32kfull.sys
+  0xfffff80db3400000-0xfffff80db3504000 dxgmms2.sys
+  0xfffff80db3510000-0xfffff80db352b000 monitor.sys
+  0xfffff80db3550000-0xfffff80db3561000 dump_storport.sys
+  0xfffff80db35b0000-0xfffff80db35e4000 dump_stornvme.sys
+  0xffffb4c4062c0000-0xffffb4c4062fd000 cdd.dll
+  0xfffff80db3610000-0xfffff80db362c000 dump_dumpfve.sys
+  0xfffff80db3630000-0xfffff80db366a000 appid.sys
+  0xfffff80db3670000-0xfffff80db367b000 applockerfltr.sys
+  0xfffff80db3680000-0xfffff80db3694000 bfs.sys
+  0xfffff80db36a0000-0xfffff80db36ca000 luafv.sys
+  0xfffff80db36d0000-0xfffff80db3707000 wcifs.sys
+  0xfffff80db3710000-0xfffff80db3792000 cldflt.sys
+  0xfffff80db37a0000-0xfffff80db37b9000 storqosflt.sys
+  0xfffff80db37c0000-0xfffff80db37e7000 bindflt.sys
+  0xfffff80db37f0000-0xfffff80db3842000 WUDFRd.sys
+  0xfffff80db3850000-0xfffff80db385f000 WpdUpFltr.sys
+  0xfffff80db3860000-0xfffff80db3872000 condrv.sys
+  0xfffff80db3880000-0xfffff80db389a000 lltdio.sys
+  0xfffff80db38a0000-0xfffff80db38b9000 mslldp.sys
+  0xfffff80db38c0000-0xfffff80db38de000 rspndr.sys
+  0xfffff80db38e0000-0xfffff80db38fd000 wanarp.sys
+  0xfffff80db3900000-0xfffff80db396d000 msquic.sys
+  0xfffff80dc6800000-0xfffff80dc698a000 HTTP.sys
+  0xfffff80dc6990000-0xfffff80dc69b3000 bowser.sys
+  0xfffff80dc69c0000-0xfffff80dc69da000 mpsdrv.sys
+  0xfffff80dc5a00000-0xfffff80dc5a9a000 mrxsmb.sys
+  0xfffff80dc5aa0000-0xfffff80dc5ae8000 mrxsmb20.sys
+  0xfffff80dc5af0000-0xfffff80dc5b04000 mmcss.sys
+  0xfffff80dc5b10000-0xfffff80dc5b24000 tcpipreg.sys
+  0xfffff80dc5b30000-0xfffff80dc5b5c000 Ndu.sys
+  0xfffff80dc5b60000-0xfffff80dc5c17000 peauth.sys
+  0xfffff80dc5c20000-0xfffff80dc5c76000 srvnet.sys
+  0xfffff80dc5c80000-0xfffff80dc5c9d000 wtd.sys
+  0xfffff80dc5ca0000-0xfffff80dc5d64000 srv2.sys
+  0xfffff80dc5d70000-0xfffff80dc5d89000 WdNisDrv.sys

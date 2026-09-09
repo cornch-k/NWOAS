@@ -1,0 +1,7 @@
+{
+  "payload": "/Volumes/X31/NWOAS/m1n1_windows/m1n1-payload-s135-8cpu-speed.bin",
+  "sha256": "73f9623d6cf8060c387e2a87119391ed66a49f93ec70b4cd628dc40a8df93e11",
+  "bytes": 32342016,
+  "base": "S131/S133 MADT8 SSD-first UEFI payload",
+  "change": "SMBIOS Type 4 CurrentSpeed 0 -> 3228 MHz; no CPU control or ACPI _CPC change"
+}

@@ -1,6 +1,6 @@
 {
   "payload": "/Volumes/X31/NWOAS/m1n1_windows/m1n1-payload-s129-ssd-first.bin",
-  "sha256": "f317a251a193c804a4ef6a0e7c142885c9365eebcc8200157083618b45f6273a",
+  "sha256": "bbab18cb7af139288fb19f2a13f39a74d52a8201184d4a22a4761f2c3708ee3e",
   "bytes": 32342016,
   "change": "S128 plus Internal Storage registered before USB in temporary firmware boot order; original sources restored; installed OS boot untested"
 }

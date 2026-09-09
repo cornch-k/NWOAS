@@ -1,0 +1,103 @@
+/** @file
+ * NWOAS: IORT.aslc  --  IO Remapping Table for Mac mini (J274 / Apple T8103, M1).
+ *
+ * §3.2 ROOT-CAUSE EXPERIMENT (Model 2): the synthetic ACPI0004/PNP0D10 xHCI (SCB0/XHC0)
+ * gets NO functional DMA adapter from Windows ARM64 -> Wdf01000.sys' IoGetDmaAdapter ->
+ * AllocateCommonBuffer(DCBAA) returns NULL -> DCBAAP stays 0, HSE=0 (no DMA even attempted),
+ * even though usbxhci RAN (HCRST done, INTE=1, CNR=0). Addressing is DECISIVELY ruled out
+ * (2026-07-11: with ONLY <4GB DART-backed RAM visible, DCBAAP STILL 0).
+ *
+ * On Windows ARM64 the per-device DMA-adapter creation path is IORT-shaped by design
+ * (IOMMU_DEVICE_CREATION_CONFIGURATION_ACPI: InputMappingBase/MappingsCount == an IORT
+ * ID-mapping entry, documented "required for ACPI devices on ARM64 systems"). The RPi4
+ * reference implementation this DSDT was cloned from (edk2-platforms Xhci.asl + Iort.aslc)
+ * ships EXACTLY this: an ACPI0004 container + PNP0D10 child + _DMA, AND an IORT with a
+ * single Named Component node for "\_SB_.SCB0.XHC0". NWOAS had the _DMA/_CCA half but was
+ * MISSING the IORT half. This table adds only that half.
+ *
+ * SAFETY (no MSI re-enable): NumIdMappings=0, IdReference=0 -> the node has ZERO output
+ * references. There is NO ITS-Group node (Type 0) and NO SMMU node (Type 3/4) in this table,
+ * so nothing can build an MSI/ITS domain. INTx via DSDT _CRS Interrupt(){698} and the PCIe
+ * _PRT are untouched. This preserves the "IORT omitted to force INTx" INTENT while supplying
+ * the DMA-master metadata Windows needs; an IORT that contains only Named-Component nodes has
+ * no bearing on interrupt delivery mode (RPi4 proves this: full IORT + plain SPI interrupts).
+ *
+ * PCIe UNAFFECTED: PCI0 is hidden (_STA=0). No Root-Complex node (Type 2) is emitted, so
+ * pci.sys behavior is identical to the current no-IORT state.
+ *
+ * ObjectName MUST exactly match the device's full ACPI namespace path in padded-namestring
+ * form: "\_SB_.SCB0.XHC0" (_SB -> "_SB_"; SCB0/XHC0 already 4 chars). Windows resolves the
+ * node to the live device by this path to attach the DMA properties.
+ *
+ * AddressSizeLimit is DMA-address-ceiling metadata in BITS. Per ARM DEN0049E.b, when the
+ * device also has a _DMA object (ours does), _DMA takes PRECEDENCE, so this value is not
+ * address-critical for correctness; it is set >= the current _DMA window to avoid the
+ * pftf/RPi4#123 "IORT smaller than _DMA -> truncation" class of bug. (Our _DMA Max is
+ * 0xB_FFFF_FFFF ~ 36 bits; 40 is a safe ceiling above it.)
+ *
+ * Sources: tianocore/edk2-platforms Platform/RaspberryPi/AcpiTables/Iort.aslc + Xhci.asl;
+ * MdePkg IoRemappingTable.h (node layout); MS IOMMU_DEVICE_CREATION_CONFIGURATION_ACPI docs.
+ *
+ * HONESTY: this is a sourced, high-confidence HYPOTHESIS, not a proven fact about
+ * usbxhci/Wdf01000 internals. Build success != boot success. Pass signal is real-hardware
+ * kernel-stage FL1100 DCBAAP != 0 (<4GB) AND USBCMD.RS=1, real success = mouse cursor moves.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause-Patent
+ */
+
+#include <Library/AcpiLib.h>
+#include <IndustryStandard/Acpi64.h>
+#include <IndustryStandard/IoRemappingTable.h>
+#include <Acpi/AcpiHeader.h>
+
+//
+// Padded ACPI namestring of the xHCI device. 15 chars + NUL = 16.
+//
+#define NWOAS_XHC0_OBJECT_NAME  "\\_SB_.SCB0.XHC0"
+
+#pragma pack(1)
+typedef struct {
+  EFI_ACPI_6_0_IO_REMAPPING_NAMED_COMP_NODE  Node;
+  UINT8                                      ObjectName[sizeof (NWOAS_XHC0_OBJECT_NAME)];
+} NWOAS_IORT_NAMED_COMP_NODE;
+
+typedef struct {
+  EFI_ACPI_6_0_IO_REMAPPING_TABLE  Iort;
+  NWOAS_IORT_NAMED_COMP_NODE       Xhci;
+} NWOAS_IORT_TABLE;
+#pragma pack()
+
+NWOAS_IORT_TABLE Iort = {
+  {
+    __ACPI_HEADER (
+      EFI_ACPI_6_4_IO_REMAPPING_TABLE_SIGNATURE,
+      NWOAS_IORT_TABLE,
+      EFI_ACPI_IO_REMAPPING_TABLE_REVISION_00
+    ),
+    1,                                          // NumNodes
+    OFFSET_OF (NWOAS_IORT_TABLE, Xhci),         // NodeOffset
+    0                                           // Reserved
+  },
+  {
+    {
+      {
+        EFI_ACPI_IORT_TYPE_NAMED_COMP,          // Type (1 = Named Component)
+        sizeof (NWOAS_IORT_NAMED_COMP_NODE),    // Length (node + ObjectName)
+        0,                                      // Revision
+        0,                                      // Identifier
+        0,                                      // NumIdMappings  -- ZERO: no ITS/SMMU ref (NO MSI)
+        0                                       // IdReference
+      },
+      0,                                        // Flags (bit0 Stall = 0)
+      0,                                        // CacheCoherent (0 = non-coherent, matches _CCA=0)
+      0,                                        // AllocationHints
+      0,                                        // Reserved
+      0,                                        // MemoryAccessFlags
+      40                                        // AddressSizeLimit (bits) -- >= _DMA 36-bit window
+    },
+    NWOAS_XHC0_OBJECT_NAME                       // "\_SB_.SCB0.XHC0\0"
+  }
+};
+
+// Prevent the optimizer from stripping the table (same idiom as MCFG.aslc / FADT.aslc).
+VOID* CONST ReferenceAcpiTable = &Iort;
