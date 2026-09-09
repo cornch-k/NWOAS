@@ -964,7 +964,7 @@ DeviceBootManagerPriorityBoot (
     // Front Page Boot Option
     //DEBUG ((DEBUG_INFO, "[Bds] enter UFP\n"));
     //Status = SdBootOptionsLibGetUFPMenu (BootOption, "VOL-");
-  // } else 
+  // } else
   if (AltDeviceBoot) {
     // Alternate boot or Network Unlock option
     if (FrontPageBoot) {

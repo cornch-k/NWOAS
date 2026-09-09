@@ -13,6 +13,7 @@ from controller import Controller
 from writable_namespace import WindowWritableNamespace
 import readonly_namespace as _readonly_namespace
 import writable_namespace as _writable_namespace
+import prp as _prp
 from quiet_log import QuietLogSampler
 from m1n1.utils import irange
 from m1n1.hv.types import TraceMode
@@ -81,6 +82,7 @@ if MAX_TRANSFER not in (65536,1048576):raise ValueError('unsupported NWOAS_MAX_T
 MAX_BLOCKS=MAX_TRANSFER//4096
 _readonly_namespace.MAX_TRANSFER=MAX_TRANSFER
 _writable_namespace.MAX_TRANSFER=MAX_TRANSFER
+_prp.LIMIT=MAX_TRANSFER
 memory=GuestMemory()
 # S101: proxy-request watchdog. Records the request in flight; a thread reports to the log file
 # (stderr, not via the proxy) if one reply is overdue, so a mini-side hang names the request.
@@ -123,7 +125,7 @@ def backend_direct(write,lba,n,prp1,prp2):
         direct_fallback+=1
         if direct_fallback<=8 or direct_fallback%256==0:hv.log(f'[S101] DIRECT refused -> copy path: {"W" if write else "R"} lba={lba} n={n} prp1={prp1:x} prp2={prp2:x} count={direct_fallback}')
     return ok
-nsbuf=u.memalign(0x4000,0x10000)
+nsbuf=u.memalign(0x4000,MAX_TRANSFER)
 reads=0
 def backend(lba,n=1):
     global reads

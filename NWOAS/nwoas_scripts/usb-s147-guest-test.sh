@@ -1,0 +1,55 @@
+#!/bin/bash
+# S147: 1 MiB NVMe with matching Python, Windows MDTS, and target C ceilings.
+set -eu
+ROOT=/Volumes/X31/NWOAS
+M1N1="$ROOT/m1n1_windows"
+DEV=/dev/cu.usbmodemC07HL05SQ6NY1
+VUART=/dev/cu.usbmodemC07HL05SQ6NY3
+PY="$M1N1/.venv-hv/bin/python3"
+HV="$M1N1/build/m1n1-s147-nvme-1m-split-cdc.bin"
+PAYLOAD="$M1N1/m1n1-payload-s139-8cpu-usba.bin"
+LOG=$(mktemp "$ROOT/nwoas_scripts/logs/usb-s147-$(date '+%Y%m%d-%H%M%S').XXXXXX")
+
+export M1N1DEVICE="$DEV" M1N1_KEEP_BAUD=1 M1N1_SPLIT_CONSOLE=1 PYTHONDONTWRITEBYTECODE=1
+export PYTHONPATH="$M1N1/proxyclient:$ROOT/nwoas_scripts"
+export NWOAS_LINK_DIR="$LOG.link"
+export NWOAS_CONTROLLER_DIR="$ROOT/nwoas_scripts/nvme-s139"
+export NWOAS_MAX_TRANSFER=1048576
+export NWOAS_EXCLUDE_WINDOW=1 NWOAS_WIN_BASE=0 NWOAS_WIN_SIZE=0x100000000 NWOAS_LOG="$LOG"
+export NWOAS_DCP_LOG="$LOG.dcp" NWOAS_HV_IMAGE="$HV"
+
+echo "Log: $LOG"
+[ -e "$DEV" ] || { echo 'STOP: direct CDC proxy missing'; exit 1; }
+[ -e "$VUART" ] || { echo 'STOP: direct CDC diagnostic pipe missing'; exit 1; }
+[ "$(stat -f %z "$HV")" -eq 2146304 ]
+[ "$(shasum -a 256 "$HV" | awk '{print $1}')" = 42c399c27d49e9876f0ee73419aca7a0012e41be7f6c14af089a0c1fc1c6f1b5 ]
+[ "$(stat -f %z "$PAYLOAD")" -eq 32342016 ]
+[ "$(shasum -a 256 "$PAYLOAD" | awk '{print $1}')" = 5dc5b108f5b8cc2a6cc80f53881b27696d5b695732683979e5b6948f5c18d953 ]
+if /usr/sbin/lsof -t "$DEV" "$VUART" >/dev/null 2>&1; then echo 'STOP: CDC pipe busy'; exit 1; fi
+shasum -a 256 "$HV" "$PAYLOAD" "$ROOT/nwoas_scripts/cpufreq-s140/init.py" \
+    "$ROOT/nwoas_scripts/nvme-s139/controller.py" >> "$LOG"
+echo '[S147] matched 1MiB NVMe ceilings + split CDC filtered diagnostics' | tee -a "$LOG"
+
+VUART_PID=
+cleanup() {
+    if [ -n "$VUART_PID" ]; then
+        kill "$VUART_PID" >/dev/null 2>&1 || true
+        wait "$VUART_PID" >/dev/null 2>&1 || true
+    fi
+}
+trap cleanup EXIT HUP INT TERM
+
+"$PY" -u "$ROOT/nwoas_scripts/recovery-s126/proxy_ready.py" >> "$LOG" 2>&1
+"$PY" -u "$M1N1/proxyclient/tools/chainload.py" -r "$HV" >> "$LOG" 2>&1
+grep -qa 'Proxy is alive again\|WARNING: chainload confirm' "$LOG" || exit 2
+"$PY" -u "$ROOT/nwoas_scripts/baud-s144/capture_vuart.py" \
+    --port "$VUART" --output "$LOG.vuart" &
+VUART_PID=$!
+
+"$PY" -u "$M1N1/proxyclient/tools/run_guest.py" -r \
+    --pre-init-script "$M1N1/tahoe_dcp_guest_hook.py" \
+    -m "$ROOT/nwoas_scripts/cpufreq-s140/init.py" \
+    -m "$ROOT/nwoas_scripts/rescue-s138/pcie_usba_only.py" \
+    -m "$ROOT/nwoas_scripts/smp-s133/pmgr_gate.py" \
+    -m "$ROOT/nwoas_scripts/nvme-s130/guest_module.py" \
+    -m "$ROOT/nwoas_scripts/uefi-s125/link_module.py" "$PAYLOAD" >> "$LOG" 2>&1

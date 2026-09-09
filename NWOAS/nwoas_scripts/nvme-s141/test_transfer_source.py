@@ -13,3 +13,5 @@ def test_default_transfer_ceiling_remains_64k():
 def test_candidate_is_explicitly_bounded_to_1m():
     assert "MAX_TRANSFER not in (65536,1048576)" in GUEST
     assert "MAX_BLOCKS=MAX_TRANSFER//4096" in GUEST
+    assert "_prp.LIMIT=MAX_TRANSFER" in GUEST
+    assert "nsbuf=u.memalign(0x4000,MAX_TRANSFER)" in GUEST

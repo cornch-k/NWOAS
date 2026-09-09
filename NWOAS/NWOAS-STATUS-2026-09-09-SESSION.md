@@ -360,3 +360,38 @@ S129 데스크톱 로그는 102,912 I/O doorbell에서 누적 `host_ms/db=3.7`, 
   다음 세션은 마지막 PC의 symbol resolution, one-core rescue로 새 0x133 dump 회수,
   NWOS 자동 시작 설치 순서로 재개한다. S141 1 MiB NVMe 후보는 이 정지 원인을
   분리하기 전까지 보류한다.
+
+## S144-S148 — USB CDC 분리, 1 MiB NVMe 정합, 진단 핫패스 제거 (2026-09-09 19:42 KST)
+
+- 직접 연결은 물리 UART가 아니라 DWC3 USB CDC bulk endpoint다. `CDC_SET_LINE_CODING`은
+  descriptor 값을 저장할 뿐 endpoint 전송률을 바꾸지 않는다. NOP 왕복 중앙값은
+  115200 표기에서 0.162479 ms, 1,500,000 표기에서 0.187209 ms였다. 결과는
+  `nwoas_scripts/logs/baud-s144-nop-20260909-184557.json`에 있다. 따라서 표기 baud를
+  올리는 방식은 성능 개선 수단이 아니다.
+- `M1N1_SPLIT_CONSOLE=1`은 NY1을 UART proxy 전용, NY3을 console 전용으로 분리한다.
+  S144의 raw guest UART 전달은 수 초 만에 784 KiB를 만들었고, S145부터 NY3에는
+  `HVLOG:`만 전달한다. 전체 guest UART tail은 target의 128 KiB ring에 남는다.
+- S141은 Windows/Python에 1 MiB MDTS를 광고했지만 target C의
+  `NVME_MAX_BLOCKS=16` 때문에 실제 256-block 요청을 거부했다. `src/nvme.c`에
+  `NWOAS_NVME_MAX_BLOCKS` 빌드 상한을 추가했고, S147은 target/Python/MDTS 모두
+  256 blocks로 맞췄다. S147은 기존 실패 지점인 1 MiB bootloader read를 통과해
+  Windows 사용자 공간과 8 cores/8 logical processors에 도달했다.
+- S147 검증은 CPU 90,724 us, 64 MiB 읽기 88,224 us였다. S146 64 KiB 기준의
+  85,839 us와 실질 차이가 없었다. 이 64 MiB 도구 결과는 캐시 영향 가능성이 있으므로
+  원시 SSD 처리량으로 단정하지 않는다.
+- S147 워치독 직전 별도 진단 채널에는 `NWOAS-TINJ`, `NWOAS-ISRPC`,
+  `[usb-bridge]`, `[fl1100-bridge]` 상태가 반복됐다. S148은
+  `NWOAS_HOTPATH_LOG=0`에서 이 네 출력과 불필요한 FL1100 상태 read를 컴파일 제외한다.
+  bugcheck, CFS, USB PHY 재연결 같은 오류·복구 출력은 유지한다.
+- S148 HV는 `m1n1_windows/build/m1n1-s148-perf-quiet-nvme-1m.bin`, 2,146,304 bytes,
+  SHA-256 `8628b608e8b65299ae6ad6162377e19525f8731c2bea1e833a1b2b77a5e019c0`다.
+  launcher는 `nwoas_scripts/usb-s148-guest-test.sh`, 실기 로그는
+  `nwoas_scripts/logs/usb-s148-20260909-192343.nbUp64`이다.
+- S148은 Windows worker까지 부팅했고 반복 핫패스 출력 네 종류는 모두 0건이다.
+  검증은 8 cores/8 logical processors, CPU 90,645 us, 64 MiB 읽기 87,477 us,
+  실패 0건이었다. 이번 부팅 뒤 새 Event 1001은 없었다.
+- 출력 제거 뒤에도 누적 NVMe host 처리시간은 약 1.2 ms/I/O doorbell로 S147과 같다.
+  로그/baud 가설은 기각됐다. 남은 주 병목은 guest MMIO trap -> MacBook Python ->
+  USB proxy request -> target ANS2의 동기 왕복이다. 다음 단계는 부팅·admin 경로를
+  Python에 남긴 채 Windows가 구성한 I/O SQ/CQ만 EL2 C fast path로 인계하는 격리
+  실험이다.

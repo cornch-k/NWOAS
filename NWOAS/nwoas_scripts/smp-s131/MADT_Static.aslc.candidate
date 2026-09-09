@@ -1,21 +1,21 @@
 /**
  * Copyright (c) 2025 AppleWOA authors.
- * 
+ *
  * Module Name:
  *     MADT_Static.aslc
- * 
+ *
  * Abstract:
  *     Multiple APIC Description Table. Implements the
  *     MADT table for the Mac Mini platform -
- *     This is only a temporary implementation 
+ *     This is only a temporary implementation
  *     until dynamic allocations in AcpiPlatformDxe are implemented.
- * 
+ *
  * Environment:
  *     UEFI firmware/runtime services.
- * 
+ *
  * License:
  *     SPDX-License-Identifier: BSD-2-Clause-Patent OR MIT
- * 
+ *
 */
 
 #include <Library/AcpiLib.h>
