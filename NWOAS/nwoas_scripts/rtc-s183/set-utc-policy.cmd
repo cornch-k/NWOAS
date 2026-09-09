@@ -1,0 +1,3 @@
+@echo off
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $p='HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation'; $b='C:\ProgramData\NWOAS\RTC-timezone-before.reg'; if(Test-Path -LiteralPath $b){throw 'Existing backup must be inspected first'}; & reg.exe export 'HKLM\SYSTEM\CurrentControlSet\Control\TimeZoneInformation' $b; if($LASTEXITCODE -ne 0){throw 'Registry backup failed'}; New-ItemProperty -LiteralPath $p -Name RealTimeIsUniversal -PropertyType DWord -Value 1 -Force | Out-Null; Get-ItemProperty -LiteralPath $p | Select RealTimeIsUniversal,TimeZoneKeyName | Format-List"
+exit /b %errorlevel%

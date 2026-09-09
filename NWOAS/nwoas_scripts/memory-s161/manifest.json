@@ -1,0 +1,13 @@
+{
+  "payload": "/Volumes/X31/NWOAS/nwoas_scripts/memory-s161/m1n1-payload-s161-8cpu-usba.bin",
+  "bytes": 32342016,
+  "sha256": "c7b725851cdf3bbb1e192fcbcc8edac9642fb5ef1c0ffbe862ff39bd06d29271",
+  "change": "S102 backing normalization; 8 CPUs; XHC1 hidden; same Windows RAM cap",
+  "source_sha256": {
+    "Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c": "03eb8896cc9f84b04924f5029333fee004b4b8dc2790bded9a5c99349ce8a71c",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c": "d14b5f0497a85ef08fd44e6268c3db79f29106faa3404555bde322dff2438d6e",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c": "3c6eba83b53aa7b3330b5e308f2ce2ac8b864e1e888bc1e4b02a377191b9d370",
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c": "bcfcbdcd083f90906d421a976045abf524c468213d1bc5cced71eb94d6fb46ca",
+    "Platform/MacMini2020Pkg/AcpiTables/DSDT.asl": "4129263c97bdb78f9cbe58e01eea1ff618a610c1f47e984bb38435155d2fcbed"
+  }
+}

@@ -1,0 +1,221 @@
+{
+  "log": "nwoas_scripts/logs/usb-s163g50-20260910-012616.VFQrah.link/job-2.log",
+  "preboot_status": {
+    "E": 5,
+    "P": 7
+  },
+  "qpc_hz": 24000000,
+  "runs": 5,
+  "samples": [
+    {
+      "cpu": 0,
+      "elapsed_us": 87195,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85464,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85630,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85612,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 90271,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 90638,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 90253,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 90287,
+      "checksum": 14985380435595321180
+    },
+    {
+      "cpu": 0,
+      "elapsed_us": 86994,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85395,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85408,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85271,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 90320,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 90279,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 90087,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 90302,
+      "checksum": 14985380435595321180
+    },
+    {
+      "cpu": 0,
+      "elapsed_us": 87017,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85579,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85635,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85604,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 90315,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 90303,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 90306,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 90278,
+      "checksum": 14985380435595321180
+    },
+    {
+      "cpu": 0,
+      "elapsed_us": 87020,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85565,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85489,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85628,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 90294,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 90300,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 90275,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 90294,
+      "checksum": 14985380435595321180
+    },
+    {
+      "cpu": 0,
+      "elapsed_us": 87078,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85539,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85394,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85387,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 90228,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 90276,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 90202,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 90265,
+      "checksum": 14985380435595321180
+    }
+  ],
+  "cpu_median_us": {
+    "0": 87020,
+    "1": 85539,
+    "2": 85489,
+    "3": 85604,
+    "4": 90294,
+    "5": 90300,
+    "6": 90253,
+    "7": 90287
+  }
+}

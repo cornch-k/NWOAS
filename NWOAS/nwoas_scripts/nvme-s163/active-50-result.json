@@ -1,0 +1,14 @@
+{
+  "session": "nwoas_scripts/logs/usb-s163g50-20260910-012616.VFQrah.link",
+  "job": 3,
+  "pass": true,
+  "samples": 1979,
+  "elapsed_ms": 300079,
+  "nominal_read_bytes": 132808441856,
+  "disk_us": {
+    "min": 130332,
+    "median": 138505,
+    "max": 1181356
+  },
+  "host_background": "During part of this soak only, official Cinebench archive download to X31 limited4MiB/s, nice15. No deployment."
+}

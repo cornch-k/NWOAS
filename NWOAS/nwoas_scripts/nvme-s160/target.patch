@@ -1,0 +1,81 @@
+--- a/src/hv_vm.c
++++ b/src/hv_vm.c
+@@ -1238,6 +1238,7 @@
+     bool irq_enabled;
+     bool cache_enabled;
+     bool link_busy;
++    bool local_mask_allowed; /* S160: no pending Python-owned interrupt source. */
+     u32 mask;
+     u64 sq_base;
+     u64 cq_base;
+@@ -1268,6 +1269,8 @@
+     u32 ns2_calls;
+     u32 max_sq_backlog;
+     u32 cq_ack_writes;
++    u32 local_mask_reads;
++    u32 local_mask_writes;
+ } nwoas_nvme_diag;
+ 
+ void nwoas_nvme_dump_latency(void)
+@@ -1283,6 +1286,9 @@
+            nwoas_nvme_diag.in_flight_since ?
+                mrs(CNTPCT_EL0) - nwoas_nvme_diag.in_flight_since : 0,
+            nwoas_nvme_fp.sq_head, nwoas_nvme_fp.sq_tail, nwoas_nvme_fp.cq_pending);
++    printf("HVLOG: S160 NVME mask local_reads=%u local_writes=%u mask=0x%x eligible=%u\n",
++           nwoas_nvme_diag.local_mask_reads, nwoas_nvme_diag.local_mask_writes,
++           nwoas_nvme_fp.mask, nwoas_nvme_fp.local_mask_allowed);
+ }
+ 
+ extern void nwoas_nvme_set_fast_irq(u64 level);
+@@ -1506,6 +1512,7 @@
+     if (action == 2) {
+         nwoas_nvme_fp.irq_enabled = flags & BIT(1);
+         nwoas_nvme_fp.cache_enabled = flags & BIT(2);
++        nwoas_nvme_fp.local_mask_allowed = flags & BIT(3);
+         nwoas_nvme_fp.mask = flags >> 32;
+         nwoas_nvme_fastpath_update_irq();
+         return nwoas_nvme_fp.faulted ? 2 : nwoas_nvme_fp.armed;
+@@ -1521,6 +1528,11 @@
+         return nwoas_nvme_diag.max_ns2_ticks;
+     if (action == 7)
+         return nwoas_nvme_diag.max_sq_backlog | ((u64)nwoas_nvme_diag.cq_ack_writes << 32);
++    if (action == 8)
++        return (0x53313630ULL << 32) | nwoas_nvme_fp.mask;
++    if (action == 9)
++        return nwoas_nvme_diag.local_mask_reads |
++               ((u64)nwoas_nvme_diag.local_mask_writes << 32);
+     if (action != 1 || !sq_base || !cq_base || (sq_base & 0xfff) || (cq_base & 0xfff) ||
+         sq_size < 2 || sq_size > NWOAS_NVME_MAX_IO_DEPTH ||
+         cq_size < 2 || cq_size > NWOAS_NVME_MAX_IO_DEPTH)
+@@ -1559,6 +1571,7 @@
+     nwoas_nvme_fp.cq_generation = cq_generation;
+     nwoas_nvme_fp.irq_enabled = flags & BIT(1);
+     nwoas_nvme_fp.cache_enabled = flags & BIT(2);
++    nwoas_nvme_fp.local_mask_allowed = flags & BIT(3);
+     nwoas_nvme_fp.mask = flags >> 32;
+     nwoas_nvme_fp.lifecycle_epoch++;
+     nwoas_nvme_fp.armed = true;
+@@ -1577,6 +1590,23 @@
+     u64 off = ipa - NWOAS_NVME_BAR;
+     if (width != 2)
+         return false;
++    /* Keep admin/host IRQ handling on its existing path while it is pending.
++     * The Python fallback pulls this mask before any register/PCI operation. */
++    if (!nwoas_nvme_fp.faulted && nwoas_nvme_fp.local_mask_allowed &&
++        (off == 0x0c || off == 0x10)) {
++        if (write) {
++            if (off == 0x0c)
++                nwoas_nvme_fp.mask |= (u32)*val;
++            else
++                nwoas_nvme_fp.mask &= ~(u32)*val;
++            nwoas_nvme_diag.local_mask_writes++;
++            nwoas_nvme_fastpath_update_irq();
++        } else {
++            *val = nwoas_nvme_fp.mask;
++            nwoas_nvme_diag.local_mask_reads++;
++        }
++        return true;
++    }
+     if (!write) {
+         if (nwoas_nvme_fp.faulted && off == 0x1c) {
+             *val = 3; /* CSTS.RDY | CSTS.CFS */

@@ -1,0 +1,23 @@
+FILE=cb-s196.err bytes=0
+SHA256          E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855       C:\Users\Public\Documents\NWO...
+FILE=cb-s196.out bytes=12104
+Version / Build        : 2026.1.3 / 2026_benchmark_1659ae2c9f3b_2626460137
+Processor              : 8(8)x Not Specified
+Binary Architecture    : arm
+Thread Count           : 8
+CPU Speed (MHz)        : 30.000
+Command line arguments : "g_CinebenchCpuXTest=true"
+Minimum test duration: 600000.0 ms seconds.
+DURINGRENDERING Preparation time 6376.6 ms
+RENDERPROGRESSTYPE::AFTERRENDERING 629828.2 ms
+renderTime 629828.2 ms
+Values: {1905.281} -> Avg/Deviation: 1905.281/0.000
+CB 1905.28 (0.00)
+SHA256          A19FC7A060C9D30C46CBAAAF55496D67B36C92E550AB29F9B1901A4069FB10F5       C:\Users\Public\Documents\NWO...
+FILE=cb-s196.result bytes=148
+START_UTC=2026-09-09T20:31:45.0065299Z PID=4820 SESSION=1
+NATIVE_EXIT=0 TIMEOUT=False ELAPSED_S=658.9438152
+END_UTC=2026-09-09T20:42:43.9752816Z
+SHA256          5A99D3CFDBF953E4089A49F4D7504E2332B4FB587B5AB1212FB917C524F8A960       C:\Users\Public\Documents\NWO...
+FILE=cb-s196.wrapper bytes=640
+SHA256          7C9B96E83DB57282A9F979D7526F7FA4ABFF63F882D3239A001ED74B805CEE35       C:\Users\Public\Documents\NWO...

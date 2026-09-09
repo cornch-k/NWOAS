@@ -1,0 +1,175 @@
+{
+  "session": "nwoas_scripts/logs/usb-s163-20260910-004716.Z3njqz.link",
+  "job": 2,
+  "pass_": false,
+  "completed_exit0": false,
+  "samples": [
+    {
+      "number": 1,
+      "guest_time": "2022-05-07T20:09:36.4379305+09:00",
+      "valid": true,
+      "cpu_us": 90521,
+      "disk_us": 392645
+    },
+    {
+      "number": 2,
+      "guest_time": "2022-05-07T20:10:37.0160550+09:00",
+      "valid": true,
+      "cpu_us": 125995,
+      "disk_us": 395057
+    },
+    {
+      "number": 3,
+      "guest_time": "2022-05-07T20:11:37.5629300+09:00",
+      "valid": true,
+      "cpu_us": 120992,
+      "disk_us": 391394
+    },
+    {
+      "number": 4,
+      "guest_time": "2022-05-07T20:12:38.0941800+09:00",
+      "valid": true,
+      "cpu_us": 127621,
+      "disk_us": 394926
+    },
+    {
+      "number": 5,
+      "guest_time": "2022-05-07T20:13:38.6326893+09:00",
+      "valid": true,
+      "cpu_us": 143301,
+      "disk_us": 390858
+    },
+    {
+      "number": 6,
+      "guest_time": "2022-05-07T20:14:39.1944281+09:00",
+      "valid": true,
+      "cpu_us": 128320,
+      "disk_us": 392916
+    },
+    {
+      "number": 7,
+      "guest_time": "2022-05-07T20:15:39.7401645+09:00",
+      "valid": true,
+      "cpu_us": 112911,
+      "disk_us": 392143
+    },
+    {
+      "number": 8,
+      "guest_time": "2022-05-07T20:16:40.2686554+09:00",
+      "valid": true,
+      "cpu_us": 128278,
+      "disk_us": 390777
+    },
+    {
+      "number": 9,
+      "guest_time": "2022-05-07T20:17:40.8022346+09:00",
+      "valid": true,
+      "cpu_us": 143464,
+      "disk_us": 390362
+    },
+    {
+      "number": 10,
+      "guest_time": "2022-05-07T20:18:41.3630365+09:00",
+      "valid": true,
+      "cpu_us": 129293,
+      "disk_us": 389302
+    },
+    {
+      "number": 11,
+      "guest_time": "2022-05-07T20:19:41.8966909+09:00",
+      "valid": true,
+      "cpu_us": 126897,
+      "disk_us": 397946
+    },
+    {
+      "number": 12,
+      "guest_time": "2022-05-07T20:20:42.4430204+09:00",
+      "valid": true,
+      "cpu_us": 128445,
+      "disk_us": 391788
+    },
+    {
+      "number": 13,
+      "guest_time": "2022-05-07T20:21:42.9747042+09:00",
+      "valid": true,
+      "cpu_us": 144034,
+      "disk_us": 389863
+    },
+    {
+      "number": 14,
+      "guest_time": "2022-05-07T20:22:43.5219261+09:00",
+      "valid": true,
+      "cpu_us": 128713,
+      "disk_us": 391375
+    },
+    {
+      "number": 15,
+      "guest_time": "2022-05-07T20:23:44.0844273+09:00",
+      "valid": true,
+      "cpu_us": 128487,
+      "disk_us": 390737
+    },
+    {
+      "number": 16,
+      "guest_time": "2022-05-07T20:24:44.6177798+09:00",
+      "valid": true,
+      "cpu_us": 142250,
+      "disk_us": 391798
+    },
+    {
+      "number": 17,
+      "guest_time": "2022-05-07T20:25:45.1670512+09:00",
+      "valid": true,
+      "cpu_us": 143880,
+      "disk_us": 395972
+    },
+    {
+      "number": 18,
+      "guest_time": "2022-05-07T20:26:45.7152208+09:00",
+      "valid": true,
+      "cpu_us": 127522,
+      "disk_us": 392201
+    },
+    {
+      "number": 19,
+      "guest_time": "2022-05-07T20:27:46.2464704+09:00",
+      "valid": true,
+      "cpu_us": 143677,
+      "disk_us": 392104
+    },
+    {
+      "number": 20,
+      "guest_time": "2022-05-07T20:28:46.8045992+09:00",
+      "valid": true,
+      "cpu_us": 128173,
+      "disk_us": 392868
+    },
+    {
+      "number": 21,
+      "guest_time": "2022-05-07T20:29:47.3413510+09:00",
+      "valid": true,
+      "cpu_us": 127956,
+      "disk_us": 392176
+    },
+    {
+      "number": 22,
+      "guest_time": "2022-05-07T20:30:47.8882263+09:00",
+      "valid": true,
+      "cpu_us": 143694,
+      "disk_us": 389201
+    }
+  ],
+  "note": "Repeated read-only 64MiB test and bounded CPU work; not a general SSD benchmark or lifetime stability proof.",
+  "cpu_us": {
+    "min": 90521,
+    "median": 128382.5,
+    "max": 144034
+  },
+  "disk_us": {
+    "min": 389201,
+    "median": 391951.0,
+    "max": 397946
+  },
+  "guest_timestamp_span_s": 1271.450296,
+  "host_queue_to_last_log_write_s": 1274.901683807373
+}

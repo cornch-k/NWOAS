@@ -1,0 +1,45 @@
+#/** @file
+#
+#  NWOAS boot-seeded EFI RealTimeClock library (S181 CANDIDATE, OFFLINE).
+#
+#  Reads ADT /chosen "nwoas,rtc-snapshot" once at DXE init and advances the
+#  UTC epoch with CNTPCT_EL0. SetTime and wakeup are unsupported. No PMU/SMC
+#  access. Missing seed => GetTime returns EFI_NOT_READY.
+#
+#  Intended consumer (candidate build only, via module-scoped override in
+#  AppleSiliconPkg.dsc.inc for EmbeddedPkg/RealTimeClockRuntimeDxe):
+#    RealTimeClockLib|AppleSiliconPkg/Library/NwoasSeedRealTimeClockLib/NwoasSeedRealTimeClockLib.inf
+#
+#  SPDX-License-Identifier: MIT
+#
+#**/
+
+[Defines]
+  INF_VERSION                    = 0x0001001B
+  BASE_NAME                      = NwoasSeedRealTimeClockLib
+  FILE_GUID                      = 6D2F1B4A-8C3E-4E5B-9A17-2B5E0C7D4F31
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 0.1
+  LIBRARY_CLASS                  = RealTimeClockLib
+
+[Sources.common]
+  NwoasSeedRealTimeClockLib.c
+  NwoasRtcSeedCore.c
+  NwoasRtcSeedCore.h
+
+[Packages]
+  ArmPkg/ArmPkg.dec
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  AppleSiliconPkg/AppleSiliconPkg.dec
+
+[LibraryClasses]
+  ArmGenericTimerCounterLib
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  AppleDTLib
+
+# NwoasRtcSeedCore.c is shared with the host test build and uses only
+# <stdint.h>/<stddef.h>; no BUILD_EPOCH or shell-dependent flags are needed.

@@ -1,0 +1,13 @@
+{
+  "pass_": true,
+  "run": "nwoas_scripts/logs/cpufreq-s193-nohost-20260910-054545.sKqH3f.link",
+  "job": 10,
+  "hv": "S163 gap50",
+  "payload": "S189 with S140 init omitted",
+  "file_bytes": 268435456,
+  "write_us": 135722,
+  "read_us": 204941,
+  "words_verified": 33554432,
+  "artifact_sha256": "effd43ff105cb5d4ede2d72a9f415eac02557012f0b419254688f53f47fa2bb8",
+  "note": "Single 256MiB owned-file write-through and all-word readback; not sustained throughput or raw disk benchmark."
+}

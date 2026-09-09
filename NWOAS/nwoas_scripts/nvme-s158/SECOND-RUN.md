@@ -1,0 +1,10 @@
+
+## S158 uninterrupted second run and power/space mitigation (23:35 KST)
+
+Current live run: logs/usb-s158-20260909-232239.ykRAuz,TTY session75853. Both capture and guest remain active; capture now ignores ttySIGINT, launcher preserves capture onINT. No interactive HV pauses or display recommits in this run. User confirmed desktop visible after prior BSOD. Jobs1..6 all exit0, including six idle liveness samples spaced60seconds over5minutes. No new bugcheck observed as of this checkpoint. This is a short baseline, not a complete stability proof.
+
+Newest on-disk dump is still S151050722-3109-01; latest S158 subtype1 crash did not produce a newer saved minidump. Its serial bugcheck/latency lines are retained. Second exported copy has identical SHA256; do not present it as a new crash dump. System event41 records unclean restart. Old volmgr46 exists but not proven to belong to latest crash.
+
+Power configuration showed Modern Standby(S0 low power idle) support advertised and ACsleep/display idle both300seconds. Backed up scheme to C:\Windows\Temp\NWOAS-S158-POWER-BEFORE.pow. Set AC/DC automaticstandby and displaytimeouts to0; powercfg /hibernate off completed. These are test-session mitigations, not a validated power-management driver fix. Windows removed managed hiberfil.sys875245568bytes; freeC rose321830912→1196785664bytes. No user/source files removed. C is only24774701056bytes(testpartition), not half the256GBSSD. C:\S117SRC still holds install.swm3987720636bytes and install2.swm564691107bytes. Preserve these installation sources pending verified off-device backup; long-term partition layout remains unfinished.
+
+S159 submission-defer candidate prepared/built/tested in independent detachedworktree, not applied to running hardware or mainrepo source. README under nvme-s159 has SHA/build/test caveats. Existing old source test requiring inline submission deliberately no longer fits;21otherspass and actual-C newcontract testpasses. Main repo stays S158 latency instrumentation with existing uncommitted changes. No gitpush this segment.

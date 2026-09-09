@@ -1,0 +1,26 @@
+{
+  "started": 1788983382.719916,
+  "guest_adt_changed": false,
+  "pmu_writes": false,
+  "shared_buffer": 9661906944,
+  "region_base": 9661579264,
+  "region_size": 1048576,
+  "clkm": "fa437e3d2804",
+  "direct_counter": "5e88fc7a5008",
+  "offset": "e370ae9e2831",
+  "cntpct0": 345577004,
+  "cntpct1": 345720053,
+  "cntfrq": 24000000,
+  "epoch": 1788983385,
+  "subticks": 13533,
+  "host_delta_s": 2.2141261100769043,
+  "plausible": true,
+  "response_headers": [
+    4132669,
+    4132669
+  ],
+  "quiesce": "complete",
+  "finished": 1788983382.78961,
+  "direct_minus_twice_clkm_ticks": 106,
+  "interpretation": "SMC CLKM in33.15 matches half directPMU32.16 within sequentialread latency; current UTC plus persistentoffset is plausible, no host calendar was applied."
+}

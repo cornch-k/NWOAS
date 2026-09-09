@@ -1,0 +1,97 @@
+{
+  "source": "S192 tested candidate plus S163 HV gap50 build flags; runtime launchers separate",
+  "hv_build_flags": "EXTRA_CFLAGS=-DNWOAS_NVME_MAX_BLOCKS=256 -DNWOAS_NVME_REASSERT_US=50",
+  "components": [
+    {
+      "component": "m1n1_windows",
+      "base_commit": "bddf7f06f033a7411834ac61381d8c997034f532",
+      "patch": "m1n1_windows.patch",
+      "sha256": "a3f6c5741f1d96db30ee88d3e2148763214d582ddcb50b67c080834e70b65851",
+      "files": [
+        "proxyclient/tools/run_guest.py",
+        "src/hv_exc.c",
+        "src/hv_vm.c",
+        "src/nwoas_stage8.inc"
+      ],
+      "apply_check": "PASS against clean temporary index"
+    },
+    {
+      "component": "apple_silicon_platforms_mu",
+      "base_commit": "35034bea7e054a7c07ad05c5fcf1731ab50b860e",
+      "patch": "apple_silicon_platforms_mu.patch",
+      "sha256": "cfd6f6ca00738275f8d19703f7723d54b19592d594613b3fb4c7e7029de29d5b",
+      "files": [
+        "Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc",
+        "Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c",
+        "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c",
+        "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf",
+        "Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasCpuPstate.h",
+        "Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasGuestRam.h",
+        "Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasSplitMemoryMap.h",
+        "Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.c",
+        "Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.inf",
+        "Silicon/Apple/AppleSiliconPkg/Library/MsBootOptionsLib/MsBootOptionsLib.c",
+        "Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasHardwareBootRtcLib.c",
+        "Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasHardwareBootRtcLib.inf",
+        "Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasRtcSeedCore.c",
+        "Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasRtcSeedCore.h",
+        "Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/nwoas_sera_rtc.c",
+        "Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/nwoas_sera_rtc.h",
+        "Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c",
+        "Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc",
+        "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c"
+      ],
+      "apply_check": "PASS against clean temporary index"
+    },
+    {
+      "component": "MU_BASECORE",
+      "base_commit": "ba9f76c16f0f170d233f25ffb52e6ab66d7873c2",
+      "patch": "MU_BASECORE.patch",
+      "sha256": "fa42cb197c4cf230a89dacba548ab32458436679023e1996fb73763c496379d5",
+      "files": [
+        "MdeModulePkg/Bus/Pci/NonDiscoverablePciDeviceDxe/NonDiscoverablePciDeviceIo.c",
+        "MdeModulePkg/Bus/Pci/XhciDxe/Xhci.c",
+        "MdeModulePkg/Bus/Pci/XhciDxe/XhciSched.c",
+        "MdeModulePkg/Bus/Usb/UsbBusDxe/UsbEnumer.c",
+        "MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c",
+        "MdeModulePkg/Library/UefiBootManagerLib/InternalBm.h",
+        "MdeModulePkg/Library/UefiBootManagerLib/UefiBootManagerLib.inf",
+        "MdePkg/Include/AArch64/AArch64Mmu.h",
+        "MdePkg/Include/Library/ArmLib.h",
+        "MdePkg/Library/BaseMemoryLibOptDxe/Arm/MemLibGuid.c"
+      ],
+      "apply_check": "PASS against clean temporary index"
+    },
+    {
+      "component": "ARM_TIANO",
+      "base_commit": "bd7850321a762c1eb2f0a3b11bcac0265c863741",
+      "patch": "ARM_TIANO.patch",
+      "sha256": "a9d17be061fdf028cf0047b9a7b513f6e624600aa2ccc61b2d923784b813180d",
+      "files": [
+        "ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.c",
+        "ArmPkg/Drivers/CpuDxe/AArch64/Mmu.c",
+        "ArmPkg/Library/ArmMmuLib/AArch64/ArmMmuLibCore.c"
+      ],
+      "apply_check": "PASS against clean temporary index"
+    }
+  ],
+  "tested_payload": {
+    "stage": "S192",
+    "bytes": 32342016,
+    "sha256": "b67313c48e057e3c1e608521b69a611e129328c04554785e429f4a4211d4c7c9"
+  },
+  "tested_hv": {
+    "stage": "S163gap50",
+    "bytes": 2162688,
+    "sha256": "bd8f16f286c8d1141df4a17d9b85eafdd4c2d39d5680c6ed75b63429f061d166"
+  },
+  "uefi_submodules": {
+    "Common/MU": "aea10a3baca8e48cfe76d869fa88460eadc5cfce",
+    "Common/MU_DFCI": "9e06f210708c23257b3d57ff5ad02af02cdca1d5",
+    "Common/MU_OEM_SAMPLE": "79efd1522566cca0169870addba3d57c3224694a",
+    "Common/TIANO": "50e18df38333cc220f5b8d30cd9946a7bd384c30",
+    "MU_BASECORE": "ba9f76c16f0f170d233f25ffb52e6ab66d7873c2",
+    "Silicon/ARM/TIANO": "bd7850321a762c1eb2f0a3b11bcac0265c863741",
+    "mu_feature_debugger": "cf5dadba437b32475eef22059496c051c1fe0386"
+  }
+}

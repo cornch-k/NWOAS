@@ -1,0 +1,3 @@
+# USB review correction
+
+Fable5.1 initial integration review used stale pre-wideDART assumptions and predicted Run suppression. Revised review explicitly withdrew missing-highRAM, unpopulatedtransfercontexts, sticky-failure andTTBR1..3claims after inspectingcurrentUEFI339L1/wholeadvertisedhighRAMidentitymap. Original candidate therefore has noestablishedRunblocker. CRCRhardwarepointerreadback0isrealdiagnosticgap: latch64/32bitwritesin futurevariant. Existingmemorycoverage includescommandring evenwhenhardwareCRCRread0; currentcheckskips0anddoesnotclaimentirestructurevalidation. DART0unchanged/DART1DAPFbypasspreserved aredeliberatevariant,hardwareunverified. BeforeRun cachecleanproposal isseparatecoherencyexperiment, notsilentlymixedintocurrentcontrol.

@@ -1,0 +1,57 @@
+{
+  "session": "S205",
+  "purpose": "independent clean rebuild of m1n1-s163-eoi-gap50.bin",
+  "worktree": "/Volumes/X31/NWOAS/m1n1-rebuild-s205",
+  "base_commit": "bddf7f06f033a7411834ac61381d8c997034f532",
+  "build_tag": "v1.0.2-1474-gbddf7f06-dirty",
+  "companion_patch": {
+    "path": "nwoas_scripts/publish-s198/companion/m1n1_windows.patch",
+    "sha256": "a3f6c5741f1d96db30ee88d3e2148763214d582ddcb50b67c080834e70b65851"
+  },
+  "rust_fatfs_commit": "4eccb50d011146fbed20e133d33b22f3c27292e7",
+  "extra_cflags": "-DNWOAS_NVME_MAX_BLOCKS=256 -DNWOAS_NVME_REASSERT_US=50",
+  "tools": [
+    "date: 2026-09-09T21:03:24Z",
+    "worktree: /Volumes/X31/NWOAS/m1n1-rebuild-s205",
+    "commit: bddf7f06f033a7411834ac61381d8c997034f532",
+    "describe (patched): v1.0.2-1474-gbddf7f06-dirty",
+    "patch: /Volumes/X31/NWOAS/nwoas_scripts/publish-s198/companion/m1n1_windows.patch",
+    "patch sha256: a3f6c5741f1d96db30ee88d3e2148763214d582ddcb50b67c080834e70b65851",
+    "patch files: proxyclient/tools/run_guest.py src/hv_exc.c src/hv_vm.c src/nwoas_stage8.inc",
+    "rust-fatfs: 4eccb50d011146fbed20e133d33b22f3c27292e7 (tree 0a4c434a256bc7b0e6e7594aa9ff1dde0d4f875b)",
+    "artwork gitlink: 80d14f8b6f485b310e305a84b4b806361518ddd1 (not needed: data/*.bin are tracked)",
+    "Homebrew clang version 20.1.8",
+    "Homebrew LLD 20.1.8 (compatible with GNU linkers)",
+    "llvm-objcopy, compatible with GNU objcopy Homebrew LLVM version 20.1.8 ",
+    "rustc 1.88.0 (6b00bc388 2025-06-23)",
+    "cargo 1.88.0 (873a06493 2025-05-10)",
+    "GNU Make 4.4.1",
+    "make flags: TOOLCHAIN=/opt/homebrew/opt/llvm/bin/ LLDDIR=/opt/homebrew/opt/lld/bin/ USE_CLANG=1 EXTRA_CFLAGS='-DNWOAS_NVME_MAX_BLOCKS=256 -DNWOAS_NVME_REASSERT_US=50' -j2 (nice 19), CARGO_BUILD_JOBS=2, CARGO_NET_OFFLINE=true",
+    "CFG (Makefile): RELEASE unset, CHAINLOADING unset, BUILDSTD unset, LOGO unset",
+    "stable reference: /Volumes/X31/NWOAS/m1n1_windows-s159/build/m1n1-s163-eoi-gap50.bin sha256 bd8f16f286c8d1141df4a17d9b85eafdd4c2d39d5680c6ed75b63429f061d166 size 2162688"
+  ],
+  "outputs": {
+    "m1n1.bin": {
+      "sha256": "bd8f16f286c8d1141df4a17d9b85eafdd4c2d39d5680c6ed75b63429f061d166",
+      "bytes": 2162688
+    },
+    "m1n1-raw.elf": {
+      "sha256": "a16d4c354b75ac8d52ff30259ac113fe4e012cb413816667fbccde397ba7862b",
+      "bytes": 4347816
+    },
+    "m1n1.macho": {
+      "sha256": "223798fca37043b7e2e34a6e2cf8ce25f51998edff953d1bb91480418c0c93a0",
+      "bytes": 884736
+    },
+    "m1n1.elf": {
+      "sha256": "afbf70cde8596a2c7aedf4ea2681427f7eaa7ffad9e054255c5140a6a245996b",
+      "bytes": 3070072
+    }
+  },
+  "stable_reference": {
+    "path": "/Volumes/X31/NWOAS/m1n1_windows-s159/build/m1n1-s163-eoi-gap50.bin",
+    "sha256": "bd8f16f286c8d1141df4a17d9b85eafdd4c2d39d5680c6ed75b63429f061d166",
+    "bytes": 2162688
+  },
+  "identical": true
+}

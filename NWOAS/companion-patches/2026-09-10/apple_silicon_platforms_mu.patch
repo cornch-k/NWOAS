@@ -1,0 +1,2792 @@
+diff --git a/Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc b/Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc
+index 77d23a7..b86a950 100644
+--- a/Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc
++++ b/Silicon/Apple/AppleSiliconPkg/AppleSiliconPkg.dsc.inc
+@@ -609,7 +609,7 @@
+   MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystemRuntimeDxe.inf
+   EmbeddedPkg/RealTimeClockRuntimeDxe/RealTimeClockRuntimeDxe.inf {
+     <LibraryClasses>
+-	  RealTimeClockLib|AppleSiliconPkg/Library/VirtualRealTimeClockLib/VirtualRealTimeClockLib.inf
++	  RealTimeClockLib|AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasHardwareBootRtcLib.inf
+   }
+   EmbeddedPkg/MetronomeDxe/MetronomeDxe.inf
+   AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.inf
+diff --git a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c
+index 8aad517..eee684b 100644
+--- a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c
++++ b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c
+@@ -46,6 +46,7 @@
+ #include <Protocol/IoMmu.h>
+ 
+ #include <Drivers/AppleDartIoMmuDxe.h>
++#include <Library/NwoasGuestRam.h>   // NWOAS S161: ONE helper for guest RAM end / low-window backing
+ 
+ //
+ // NWOAS: compile-time gate for the DMACOV DMA-coverage instrumentation (per-16KB-page FNV
+@@ -501,23 +502,25 @@ STATIC BOOLEAN  mApcieStaticWindow = FALSE;
+ // per-Map translation inside that function can reference them. base + size is pinned to
+ // 0x100000000 (window top == 4GB) so a 32-bit device can reach the whole window.
+ //
+-#define APCIE_WIN_IOVA_BASE 0x0000000000000000ULL   // low IOVA == NWOAS_DMA_WIN_BASE (EXP-5 5c-v7: base 0x20000000 -> 0, whole sub-4GB)
+-// S102: 1 = guest RAM ends where the low-window backing begins (hv shrinks boot_args.mem_size);
+-//       0 = legacy: backing is the top APCIE_WIN_SIZE of guest RAM (aliases UEFI allocations!).
+-#ifndef NWOAS_WINDOW_AFTER_RAM
+-#define NWOAS_WINDOW_AFTER_RAM 1
+-#endif
+-#define APCIE_WIN_SIZE      0x0000000100000000ULL    // 4GB (EXP-5 5c-v7: 0xE0000000 -> 0x100000000; base+size == 0x100000000)
++#define APCIE_WIN_IOVA_BASE NWOAS_DMA_WIN_BASE   // low IOVA == window IPA base (0: whole sub-4GB); value unchanged
++// S102 mode switch NWOAS_WINDOW_AFTER_RAM (1 = hv excludes the window backing from mem_size, 0 =
++// legacy top-of-RAM backing) now lives in NwoasGuestRam.h so every consumer sees ONE default.
++#define APCIE_WIN_SIZE      NWOAS_DMA_WIN_SIZE   // 4GB; base+size == 0x100000000; value unchanged
+ 
+ //
+-// NWOAS memory/DMA fix: low DMA-window DART backing PA, computed ONCE at DXE init from BootArgs
+-// (phys_base + mem_size - APCIE_WIN_SIZE) so it equals the m1n1 hv map_hw alias (pcie_emul.py) and
+-// the AdtParser carve-out, NOT PcdSystemMemoryBase+PcdSystemMemorySize which THIS module reads
+-// UNPATCHED (see the long comment at the DXE-init computation site). Cached because the
+-// ExitBootServices handler may run after the boot_args copy at PcdBootArgsPointer (0x840000000,
++// NWOAS memory/DMA fix: low DMA-window DART backing PA, computed ONCE at DXE init from BootArgs via
++// NwoasComputeGuestRamLayout (NwoasGuestRam.h -- the SAME helper PrePi uses for PcdSystemMemorySize,
++// so EARLY / boot-time / EBS backing are identical), NOT PcdSystemMemoryBase+PcdSystemMemorySize which
++// THIS module reads UNPATCHED (see the long comment at the DXE-init computation site). Cached because
++// the ExitBootServices handler may run after the boot_args copy at PcdBootArgsPointer (0x840000000,
+ // unreserved conventional RAM) has been reclaimed by the Windows loader's RAMDisk allocations.
++// mNwoasRamValid: TRUE only when boot_args produced a valid layout; the window-IPA -> backing
++// translation of the DART's own tables and the WIDE-DART range are gated on it (a PCD-fallback
++// backing is deliberately NOT used for those, matching the previous NwoasBacking==0 behaviour).
+ //
+-STATIC UINT64   mApcieBackingPa = 0;
++STATIC UINT64                  mApcieBackingPa = 0;
++STATIC NWOAS_GUEST_RAM_LAYOUT  mNwoasRam;
++STATIC BOOLEAN                 mNwoasRamValid  = FALSE;
+ 
+ #define APCIE_IOVA_END    0xF0000000ULL
+ #define APCIE_L2_ENTRIES  (SIZE_4GB / DART_PAGE_SIZE)               // 256K
+@@ -626,13 +629,14 @@ STATIC VOID SetupApcieDarts(VOID) {
+   // controller stays halted, Enable Slot times out; observed 5c). §4.3 only translates DATA buffer
+   // addresses, NOT the DART's own structure addresses -- THIS was the gap. 5a/5b worked because the
+   // tables were in identity RAM (window IPA == host PA). Translate window IPA -> backing PA here,
+-  // exactly as §4.3 / the EBS static window do. Backing computed locally from boot_args (mApcieBackingPa
+-  // may not be set yet at DART-init); non-window (identity) allocations pass through unchanged.
++  // exactly as §4.3 / the EBS static window do. NWOAS S161: the backing is the DXE-init value from
++  // the shared helper (AppleDartIoMmuDxeInitialize computes it BEFORE calling us) -- the previous
++  // local recompute subtracted APCIE_WIN_SIZE unconditionally, so under S102 the WIDE-DART tables
++  // stopped 4 GiB short of the EBS identity end (S158 log: L1[..1264] vs backing 0xAE0FCC000).
++  // NwoasBacking==0 (invalid boot_args) keeps the old semantics: passthrough, no wide map.
+   //
+   {
+-    struct boot_args *NwoasBA = (struct boot_args *)FixedPcdGet64 (PcdBootArgsPointer);
+-    UINT64 NwoasBacking = ((NwoasBA->phys_base >= 0x800000000ULL) && (NwoasBA->mem_size > APCIE_WIN_SIZE))
+-                          ? (NwoasBA->phys_base + NwoasBA->mem_size - APCIE_WIN_SIZE) : 0;
++    UINT64 NwoasBacking = mNwoasRamValid ? mNwoasRam.BackingPa : 0;
+     #define NWOAS_WIN2BACK(a) \
+       ( (NwoasBacking != 0 && (UINT64)(a) >= APCIE_WIN_IOVA_BASE && \
+          (UINT64)(a) < APCIE_WIN_IOVA_BASE + APCIE_WIN_SIZE) \
+@@ -654,7 +658,7 @@ STATIC VOID SetupApcieDarts(VOID) {
+     // additive: it touches only L1[phys_base>>25 .. (backing-1)>>25], never the flat-L2 window L1[0..127].
+     //
+     if (NwoasBacking != 0) {
+-      mWideDartPhysBase = NwoasBA->phys_base;                       // low bound; backing already in mApcieBackingPa
++      mWideDartPhysBase = mNwoasRam.PhysBase;                       // low bound (same layout as the backing)
+       UINTN L1Lo = (UINTN)(mWideDartPhysBase >> APCIE_L1_SHIFT);
+       UINTN L1Hi = (UINTN)((NwoasBacking - 1) >> APCIE_L1_SHIFT);
+       if (L1Lo < APCIE_L1_ENTRIES) {
+@@ -1078,7 +1082,7 @@ STATIC VOID AppleDartT8110TlbFlush(VOID *DartInformation) {
+ // ============================================================================
+ // APCIE_WIN_IOVA_BASE / APCIE_WIN_SIZE were moved UP to the top static block (the EXP-5 §4.3
+ // window-aware Map translation, which precedes this section, needs them). backing PA =
+-// RAM top - APCIE_WIN_SIZE, computed once at DXE init into mApcieBackingPa (also moved up).
++// NwoasGuestRam.h Layout.BackingPa (S161), computed once at DXE init into mApcieBackingPa.
+ #define APCIE_ECAM_BASE     0x690000000ULL
+ #define FL1100_XHCI_BAR_CPU 0x6C0000000ULL
+ 
+@@ -1126,7 +1130,7 @@ STATIC VOID EFIAPI ApcieDartExitBootServicesHandler(IN EFI_EVENT Event, IN VOID
+     // Windows -- a LIVE page, not the carved backing slice -- so the old PcdGet64 sum made the xHCI
+     // DART translate the low IPA window onto live Windows RAM while the hv aliased that same window
+     // onto phys_base+mem_size-0x20000000: the DMA-corruption root cause. mApcieBackingPa was computed
+-    // at DXE init as phys_base+mem_size-APCIE_WIN_SIZE, matching the hv map_hw alias (pcie_emul.py)
++    // at DXE init by NwoasComputeGuestRamLayout (S161; S102: phys_base+mem_size), matching the hv map_hw alias
+     // and the AdtParser invariant (the four consumers: hv alias / MemoryInitPeiLib HOB / this DART
+     // window / DSDT _DMA all point at the same carved backing PA).
+     UINT64 Backing = mApcieBackingPa;
+@@ -1247,26 +1251,30 @@ AppleDartIoMmuDxeInitialize(
+       struct boot_args *NwoasBA = (struct boot_args *)FixedPcdGet64 (PcdBootArgsPointer);
+       UINT64 PhysBase = NwoasBA->phys_base;
+       UINT64 MemSize  = NwoasBA->mem_size;
+-      if ((PhysBase >= 0x800000000ULL) && (MemSize > APCIE_WIN_SIZE)) {
+-#if NWOAS_WINDOW_AFTER_RAM
+-        // S102: the hv now excludes the window backing from boot_args.mem_size, so the backing
+-        // starts exactly where guest RAM ends (m1n1 mem_top - win - skew == phys_base + mem_size).
+-        mApcieBackingPa = PhysBase + MemSize;
+-#else
+-        mApcieBackingPa = PhysBase + MemSize - APCIE_WIN_SIZE;
+-#endif
++      NWOAS_GUEST_RAM_STATUS LayoutStatus;
++
++      // NWOAS S161: ONE helper, shared with PrePi/AdtParser (PcdSystemMemorySize), NwoasHideHighRamDxe
++      // and MemoryInitPeiLib. S102 (NWOAS_WINDOW_AFTER_RAM=1): backing == phys_base + mem_size, the hv
++      // already excluded the window backing; legacy (0): minus APCIE_WIN_SIZE exactly once. The helper
++      // rejects phys_base < 32GB, unaligned / zero / underflowing mem_size and UINT64 wrap.
++      LayoutStatus = NwoasComputeGuestRamLayout (PhysBase, MemSize, &mNwoasRam);
++      if (LayoutStatus == NwoasGuestRamOk) {
++        mNwoasRamValid  = TRUE;
++        mApcieBackingPa = mNwoasRam.BackingPa;
+       } else {
+         // BootArgs looked invalid (null-ish pointer / clobbered): fall back to the patchable PCDs and
+         // shout, rather than program a wild DART PTE. This path is the OLD (buggy) behaviour, taken
+         // only if boot_args is unreadable -- in which case the framebuffer/boot would already be dead.
+         mApcieBackingPa = PcdGet64 (PcdSystemMemoryBase) + PcdGet64 (PcdSystemMemorySize);
++        mNwoasRamValid  = FALSE;
+         DEBUG ((DEBUG_ERROR,
+-                "HVLOG: NWOAS DART backing: BootArgs invalid (phys_base=0x%lx mem_size=0x%lx) -> fell back to PCD 0x%lx\n",
+-                PhysBase, MemSize, mApcieBackingPa));
++                "HVLOG: NWOAS DART backing: BootArgs invalid (%a: phys_base=0x%lx mem_size=0x%lx) -> fell back to PCD 0x%lx\n",
++                NwoasGuestRamStatusName (LayoutStatus), PhysBase, MemSize, mApcieBackingPa));
+       }
+       DEBUG ((DEBUG_ERROR,
+-              "HVLOG: NWOAS DART backing computed 0x%lx (phys_base=0x%lx mem_size=0x%lx win=0x%lx)\n",
+-              mApcieBackingPa, PhysBase, MemSize, (UINT64)APCIE_WIN_SIZE));
++              "HVLOG: NWOAS DART backing computed 0x%lx (phys_base=0x%lx mem_size=0x%lx guest_end=0x%lx win=0x%lx mode=%d valid=%d)\n",
++              mApcieBackingPa, PhysBase, MemSize, mNwoasRamValid ? mNwoasRam.GuestRamEnd : 0ULL,
++              (UINT64)APCIE_WIN_SIZE, NWOAS_WINDOW_AFTER_RAM, (UINT32)mNwoasRamValid));
+     }
+ 
+     //
+diff --git a/Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c b/Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c
+index e498577..37d02a9 100644
+--- a/Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c
++++ b/Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c
+@@ -1,3 +1,4 @@
++#define NWOAS_HIDE_KEEP_HIGH_BYTES 0x280000000ULL
+ /**
+  * Copyright (c) 2026, AppleWOA authors. All rights reserved.
+  *
+@@ -55,11 +56,16 @@
+ #include <Library/DebugLib.h>
+ #include <Library/PcdLib.h>
+ #include <Library/BaseLib.h>
++#include <Library/IoLib.h>
++#include <Library/TimerLib.h>
++#include <Library/NwoasCpuPstate.h>
+ #include <Library/AppleDTLib.h>
++#include <Library/NwoasGuestRam.h>
++#include <Library/NwoasSplitMemoryMap.h>
+ #include <Library/NonDiscoverableDeviceRegistrationLib.h>
+ 
+ #ifndef NWOAS_UEFI_NVME
+-#define NWOAS_UEFI_NVME 0   /* S99: register emulated NVMe for UEFI Block I/O (off for the S102 test build) */
++#define NWOAS_UEFI_NVME 1   /* S99: register emulated NVMe for UEFI Block I/O (off for the S102 test build) */
+ #endif
+ 
+ #include <Guid/EventGroup.h>
+@@ -129,6 +135,62 @@
+ //
+ #define NWOAS_MIN_LOW_FREE_PAGES 0x0000000000080000ULL
+ 
++// S167: default zero retains the S161 cap. Candidate enables the first 4 GiB
++// of validated high RAM; this is separate from the indispensable low DMA pool.
++#ifndef NWOAS_HIDE_KEEP_HIGH_BYTES
++#define NWOAS_HIDE_KEEP_HIGH_BYTES 0ULL
++#endif
++#if NWOAS_HIDE_KEEP_HIGH_BYTES && (!NWOAS_HIDE_USE_WRAP || NWOAS_HIDE_FULL)
++#error S167 requires conservative wrapper mode
++#endif
++#if NWOAS_HIDE_KEEP_HIGH_BYTES
++STATIC UINT64 mKeepHighStart = 0;
++STATIC UINT64 mKeepHighEnd = 0;
++#endif
++
++/* S189 one-shot normal operating-point selection after inner payload init. */
++STATIC UINT64 NwoasPstateRead(VOID *Context, UINT64 Address)
++{
++  (VOID)Context;
++  return MmioRead64((UINTN)Address);
++}
++STATIC VOID NwoasPstateWrite(VOID *Context, UINT64 Address, UINT64 Value)
++{
++  (VOID)Context;
++  MmioWrite64((UINTN)Address, Value);
++}
++STATIC VOID NwoasPstateDelay(VOID *Context, UINT32 Microseconds)
++{
++  (VOID)Context;
++  MicroSecondDelay(Microseconds);
++}
++STATIC VOID NwoasPstateReadyToBoot(VOID)
++{
++  dt_node_t *Chosen = dt_get("chosen");
++  size_t Length = 0;
++  VOID *Property;
++  NWOAS_CPU_PSTATE_IO Io = {NwoasPstateRead, NwoasPstateWrite, NwoasPstateDelay, NULL, 0};
++  NWOAS_CPU_PSTATE_RESULT Result;
++  NWOAS_PSTATE_STATUS Status;
++  if (Chosen == NULL) {
++    DEBUG((DEBUG_ERROR, "HVLOG: S189 no chosen node; CPU state unchanged\n"));
++    return;
++  }
++  Property = dt_prop(Chosen, "chip-id", &Length);
++  if ((Property == NULL) || (Length != sizeof(UINT32))) {
++    DEBUG((DEBUG_ERROR, "HVLOG: S189 no valid chip-id; CPU state unchanged\n"));
++    return;
++  }
++  Io.chip_id = ReadUnaligned32((CONST UINT32 *)Property);
++  Status = nwoas_cpu_pstate_enable_p12(&Io, &Result);
++  DEBUG((DEBUG_ERROR,
++    "HVLOG: S189 ReadyToBoot chip=%x status=%u initial=%u rollback=%u before=%lx requested=%lx final=%lx status_reg=%lx current=%u target=%u protected=%u\n",
++    Io.chip_id, (UINT32)Status, (UINT32)Result.initial_status,
++    (UINT32)Result.rollback_status, Result.baseline_cmd, Result.requested_cmd,
++    Result.final_cmd, Result.final_status, Result.final_current,
++    Result.final_target, (UINT32)Result.protected_preserved));
++}
++
+ STATIC EFI_EVENT  mReadyToBootEvent = NULL;
+ STATIC BOOLEAN    mHideDone         = FALSE;
+ 
+@@ -214,6 +276,11 @@ NwoasWrappedGetMemoryMap (
+   UINT64                 FirstHiddenPa;
+   UINT64                 Rewritten;
+   BOOLEAN                AbortGuard;
++#if NWOAS_HIDE_KEEP_HIGH_BYTES
++  UINTN                  Capacity = (MemoryMapSize != NULL) ? *MemoryMapSize : 0;
++  UINTN                  SplitCount = 0;
++  UINT64                 KeptPages = 0;
++#endif
+ 
+   //
+   // Real map first. Caller's pointers pass straight through so the returned
+@@ -227,6 +294,19 @@ NwoasWrappedGetMemoryMap (
+              DescriptorVersion
+              );
+ 
++#if NWOAS_HIDE_KEEP_HIGH_BYTES
++  // Reserve room for one boundary split, without allocating or changing MapKey.
++  if ((Status == EFI_BUFFER_TOO_SMALL) && (MemoryMapSize != NULL) &&
++      (DescriptorSize != NULL) && (*DescriptorSize >= sizeof (EFI_MEMORY_DESCRIPTOR)) &&
++      (mKeepHighEnd > mKeepHighStart)) {
++    if (*MemoryMapSize > MAX_UINTN - *DescriptorSize) {
++      return EFI_OUT_OF_RESOURCES;
++    }
++    *MemoryMapSize += *DescriptorSize;
++    return Status;
++  }
++#endif
++
+   //
+   // Only doctor a genuine FILL. A NULL/too-small probe returns
+   // EFI_BUFFER_TOO_SMALL with MemoryMap untouched -> pass through.
+@@ -281,10 +361,30 @@ NwoasWrappedGetMemoryMap (
+   // (the window stays the sole Conventional pool).
+   //
+   if (!AbortGuard) {
++#if NWOAS_HIDE_KEEP_HIGH_BYTES
++    if (mKeepHighEnd > mKeepHighStart) {
++      Status = NwoasSplitMemoryMap (MemoryMap, MemoryMapSize, Capacity, DescSize,
++                                   mKeepHighStart, mKeepHighEnd, &SplitCount);
++      if (EFI_ERROR (Status)) {
++        return Status; // No descriptor is hidden or discarded on retry/error.
++      }
++      Count = *MemoryMapSize / DescSize;
++    }
++#endif
+     Desc = MemoryMap;
+     for (i = 0; i < Count; i++) {
+       if ((Desc->PhysicalStart >= NWOAS_HIDE_BASE) &&
+           NwoasTypeIsHideable (Desc->Type)) {
++#if NWOAS_HIDE_KEEP_HIGH_BYTES
++        if ((Desc->Type == EfiConventionalMemory) &&
++            (Desc->PhysicalStart >= mKeepHighStart) &&
++            (Desc->PhysicalStart < mKeepHighEnd) &&
++            (Desc->NumberOfPages <= (mKeepHighEnd - Desc->PhysicalStart) / EFI_PAGE_SIZE)) {
++          KeptPages += Desc->NumberOfPages;
++          Desc = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)Desc + DescSize);
++          continue;
++        }
++#endif
+         Desc->Type  = EfiReservedMemoryType;   // snapshot-only edit
+         Rewritten  += 1;
+       }
+@@ -299,6 +399,12 @@ NwoasWrappedGetMemoryMap (
+   //
+   if (!mWrapLogged) {
+     mWrapLogged = TRUE;
++#if NWOAS_HIDE_KEEP_HIGH_BYTES
++    DEBUG ((DEBUG_ERROR,
++      "HVLOG: S167 high_keep=[0x%lx,0x%lx) kept_pages=0x%lx split=%lu hidden_pages=0x%lx guard=%a\n",
++      mKeepHighStart, mKeepHighEnd, KeptPages, (UINT64)SplitCount,
++      AbortGuard ? 0 : HideablePages - KeptPages, AbortGuard ? "fired" : "clear"));
++#endif
+     DEBUG ((DEBUG_ERROR,
+       "HVLOG: NWOAS HIDE(wrap) fill#1 desc_total=%lu low_free_pages=0x%lx "
+       "would_survive_MB=%lu high_hideable_pages=0x%lx hideable_desc=%lu "
+@@ -311,7 +417,11 @@ NwoasWrappedGetMemoryMap (
+       HideableCount,
+       AbortGuard ? "fired" : "clear",
+       Rewritten,
++#if NWOAS_HIDE_KEEP_HIGH_BYTES
++      ((AbortGuard ? 0 : HideablePages - KeptPages) * EFI_PAGE_SIZE) / (1024 * 1024),
++#else
+       (HideablePages * EFI_PAGE_SIZE) / (1024 * 1024),
++#endif
+       FirstHiddenPa,
+       (UINT64)NWOAS_HIDE_BASE,
+       NWOAS_HIDE_FULL));
+@@ -365,6 +475,7 @@ NwoasHideHighRamOnReadyToBoot (
+     return;
+   }
+   mHideDone = TRUE;
++  NwoasPstateReadyToBoot();
+ 
+   //
+   // Cross-check log from boot_args (same idiom as AppleDartIoMmuDxe.c).
+@@ -372,9 +483,18 @@ NwoasHideHighRamOnReadyToBoot (
+   BA       = (struct boot_args *)FixedPcdGet64 (PcdBootArgsPointer);
+   PhysBase = BA->phys_base;
+   MemSize  = BA->mem_size;
+-  // S102: the hv excludes the window backing from mem_size, so backing == PhysBase + MemSize.
+-  Backing  = ((PhysBase >= 0x800000000ULL) && (MemSize > 0x100000000ULL))
+-               ? (PhysBase + MemSize) : 0;
++  Backing = NwoasGuestRamBackingPa (PhysBase, MemSize);
++#if NWOAS_HIDE_KEEP_HIGH_BYTES
++  // S161 validates alignment, overflow, guest end and disjoint backing.
++  if ((Backing > PhysBase) &&
++      ((NWOAS_HIDE_KEEP_HIGH_BYTES & (EFI_PAGE_SIZE - 1)) == 0) &&
++      (NWOAS_HIDE_KEEP_HIGH_BYTES <= Backing - PhysBase)) {
++    mKeepHighStart = PhysBase;
++    mKeepHighEnd = PhysBase + NWOAS_HIDE_KEEP_HIGH_BYTES;
++  } else {
++    DEBUG ((DEBUG_ERROR, "HVLOG: S167 invalid keep extent; retain S161 cap\n"));
++  }
++#endif
+ 
+   DEBUG ((DEBUG_ERROR,
+     "HVLOG: NWOAS HIDE begin phys_base=0x%lx mem_size=0x%lx backing=0x%lx "
+diff --git a/Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf b/Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf
+index ad96be3..2df77fe 100644
+--- a/Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf
++++ b/Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf
+@@ -43,6 +43,9 @@
+   MemoryAllocationLib
+   DebugLib
+   BaseLib
++  BaseMemoryLib
++  IoLib
++  TimerLib
+   PcdLib
+   AppleDTLib
+   NonDiscoverableDeviceRegistrationLib
+diff --git a/Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasCpuPstate.h b/Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasCpuPstate.h
+new file mode 100644
+index 0000000..4725fc3
+--- /dev/null
++++ b/Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasCpuPstate.h
+@@ -0,0 +1,444 @@
++/** @file
++  NwoasCpuPstate.h - S170 offline UEFI CPU operating-point (P-state) helper.
++
++  Header-only. T8103 (Apple M1) ONLY. This helper requests the *existing*,
++  already-supported P12 operating point on the PCPU0 (P-core) cluster after the
++  inner m1n1 payload has finished its own initialization (see README, the
++  ReadyToBoot integration point). P12 is NOT turbo. The helper does NOT change
++  SMC/MCC ownership, does NOT touch thermal-feature (ppt/llc/amx) registers, and
++  does NOT alter any voltage table.
++
++  Background (corrected): on hardware the *pre-UEFI* P12 request issued over USB
++  RPC was overwritten -- reset back to P7 -- by the inner m1n1 payload's own
++  cpufreq initialization (nwoas_scripts/cpufreq-s164/preboot-p12-reverted-p7.json).
++  The P12 operating-point gain (~1.53x on the four P-cores, 40/40 workload
++  checksums matching) was validated only AFTER Windows had booted, by
++  re-applying P12 once the payload init was complete
++  (nwoas_scripts/cpufreq-s164/live-p12.json). This helper performs that same
++  request at the firmware stage instead, so the setting survives permanently.
++
++  The helper is INERT unless a caller explicitly invokes
++  NwoasCpuPstateEnableP12(). Merely including this header does nothing.
++
++  All MMIO and delay operations go through a caller-supplied callback interface
++  (NWOAS_CPU_PSTATE_IO) so host tests execute the real code against a fake
++  device. Under EDK2 the caller wires read64/write64 to MmioRead64/MmioWrite64
++  and delay_us to a MicroSecondDelay wrapper. The header is plain C on top of
++  <Base.h> only, so the same file compiles in firmware modules and in the native
++  unit test against a stub <Base.h> (see tests/stub/Base.h).
++
++  Copyright (c) 2026, AppleWOA authors. All rights reserved.
++  SPDX-License-Identifier: (BSD-2-Clause-Patent OR MIT)
++**/
++
++#ifndef NWOAS_CPU_PSTATE_H_
++#define NWOAS_CPU_PSTATE_H_
++
++#include <Base.h>
++
++/*
++ * Register map. Source: m1n1_windows/src/cpufreq.c
++ *   t8103_clusters[] PCPU0 base = 0x211e00000, CLUSTER_PSTATE = 0x20020.
++ *   => command register 0x211e20020, status register at +0x30 = 0x211e20050.
++ * These literals are T8103-specific and deliberately not derived from ADT here;
++ * the caller must confirm chip_id == 0x8103 (enforced below).
++ */
++#define NWOAS_T8103_CHIP_ID           0x8103u
++#define NWOAS_P_CMD_ADDR              0x211e20020ULL
++#define NWOAS_P_STATUS_OFFSET         0x30ULL
++#define NWOAS_P_STATUS_ADDR           (NWOAS_P_CMD_ADDR + NWOAS_P_STATUS_OFFSET)
++
++/*
++ * Command-register fields (T8103). DESIRED1 = GENMASK(4,0), DESIRED2 =
++ * GENMASK(15,12); a request programs both to the same P-state, matching
++ * set_pstate() and the validated Python PS_FIELDS = 0xf01f.
++ */
++#define NWOAS_PS_FIELDS               0xf01fULL   /* DESIRED1[4:0] | DESIRED2[15:12] */
++#define NWOAS_PSTATE_SET              (1ULL << 25)
++#define NWOAS_PSTATE_BUSY             (1ULL << 31)
++#define NWOAS_PSTATE_APSC_BUSY        (1ULL << 7)
++
++/*
++ * Protected feature bits that must survive a P-state request untouched. These
++ * are pre-existing CPU protection/control settings owned by cpufreq_init():
++ *   BIT(22) = CLUSTER_PSTATE_M1_APSC_DIS  (APSC disable)
++ *   BIT(42) = CLUSTER_PSTATE_FIXED_FREQ_PLL_RECLOCK (fixed-PLL relock)
++ * A ReadModifyWrite that only clears NWOAS_PS_FIELDS preserves them; the helper
++ * additionally *verifies* they are unchanged and fails loudly if not.
++ */
++#define NWOAS_M1_APSC_DIS             (1ULL << 22)
++#define NWOAS_FIXED_FREQ_PLL_RECLOCK  (1ULL << 42)
++#define NWOAS_PROTECTED_BITS          (NWOAS_M1_APSC_DIS | NWOAS_FIXED_FREQ_PLL_RECLOCK)
++
++/* Operating points. P12 is a normal supported OPP; P7 is the APSC/default. */
++#define NWOAS_PSTATE_P7               7u
++#define NWOAS_PSTATE_P12              12u
++
++/*
++ * Bounded idle poll. No RPC transport exists at the firmware stage, so idle is
++ * polled directly: NWOAS_IDLE_ATTEMPTS reads, each followed (on a still-BUSY
++ * read) by a delay_us(NWOAS_IDLE_DELAY_US). This is an upper attempt bound, not
++ * a hardware-latency claim (see README).
++ */
++#define NWOAS_IDLE_ATTEMPTS           250u
++#define NWOAS_IDLE_DELAY_US           1u
++
++/* Encode a P-state into the combined DESIRED1|DESIRED2 field value. */
++static inline UINT64
++nwoas_cpu_pstate_desired (
++  UINT32  Pstate
++  )
++{
++  return ((UINT64)Pstate) | (((UINT64)Pstate) << 12);
++}
++
++/* Decode STATUS(+0x30): current = bits[7:4], target = bits[3:0]. */
++static inline UINT32
++nwoas_cpu_pstate_status_current (
++  UINT64  Status
++  )
++{
++  return (UINT32)((Status >> 4) & 0xf);
++}
++
++static inline UINT32
++nwoas_cpu_pstate_status_target (
++  UINT64  Status
++  )
++{
++  return (UINT32)(Status & 0xf);
++}
++
++/*
++ * Caller-supplied MMIO + delay interface. Every access the helper performs goes
++ * through these callbacks; ctx is opaque caller state. chip_id must be the
++ * detected SoC id (enforced == 0x8103). read64 and write64 are mandatory;
++ * delay_us may be NULL (the poll then simply spins on reads).
++ */
++typedef struct {
++  UINT64 (*read64)(VOID *Ctx, UINT64 Addr);
++  VOID   (*write64)(VOID *Ctx, UINT64 Addr, UINT64 Value);
++  VOID   (*delay_us)(VOID *Ctx, UINT32 Microseconds);
++  VOID   *ctx;
++  UINT32  chip_id;
++} NWOAS_CPU_PSTATE_IO;
++
++/*
++ * Explicit status codes. Every failure path returns one of these; the helper
++ * never returns a bare boolean and never claims a rollback happened while the
++ * controller is still BUSY.
++ */
++typedef enum {
++  NwoasPstateOk = 0,             /* P12 requested, read back, and STATUS confirms P12/P12 */
++  NwoasPstateInvalidIo,          /* io / read64 / write64 callback missing */
++  NwoasPstateUnsupportedChip,    /* chip_id != 0x8103 */
++  NwoasPstateBaselineBusy,       /* controller BUSY before any request */
++  NwoasPstateBaselineNotP7,      /* baseline DESIRED fields are not the P7 baseline */
++  NwoasPstateStuckBusy,          /* idle wait exhausted NWOAS_IDLE_ATTEMPTS */
++  NwoasPstateReadbackMismatch,   /* idle, but DESIRED readback != requested */
++  NwoasPstateProtectedChanged,   /* a protected feature bit changed */
++  NwoasPstateStatusMismatch,     /* command accepted but STATUS is not P12/P12 */
++  NwoasPstateRolledBack,         /* P12 failed; P7 restored, STATUS 7/7, protected intact */
++  NwoasPstateRollbackBusy,       /* P12 failed; controller still BUSY, P7 was NOT written */
++  NwoasPstateRollbackUnverified, /* P12 failed; P7 WAS written but idle never returned */
++  NwoasPstateRollbackFailed,     /* P12 failed; P7 written and idle, but not verified P7 */
++  NwoasPstateStatusMax
++} NWOAS_PSTATE_STATUS;
++
++/*
++ * Result snapshot. Populated on every return (success or failure) so a caller
++ * can log exactly what was observed without re-reading hardware.
++ */
++typedef struct {
++  NWOAS_PSTATE_STATUS  status;          /* overall outcome */
++  NWOAS_PSTATE_STATUS  initial_status;  /* why the P12 request failed (Ok if it succeeded) */
++  NWOAS_PSTATE_STATUS  rollback_status; /* result of the P7 restore attempt, if any */
++  UINT64               baseline_cmd;    /* command register before any request */
++  UINT64               requested_cmd;   /* command register after the P12 request settled */
++  UINT64               final_cmd;       /* last command register value read */
++  UINT64               final_status;    /* STATUS(+0x30) at return */
++  UINT32               final_current;   /* STATUS current[7:4] */
++  UINT32               final_target;    /* STATUS target[3:0] */
++  BOOLEAN              apsc_busy;        /* command BIT(7) at return */
++  BOOLEAN              protected_preserved; /* protected bits unchanged vs baseline */
++  BOOLEAN              rollback_attempted;  /* a P7 restore was attempted */
++  BOOLEAN              rollback_write_issued; /* the rollback actually wrote P7 */
++} NWOAS_CPU_PSTATE_RESULT;
++
++/* Short ASCII name for a status, for DEBUG/log lines. Never returns NULL. */
++static inline CONST CHAR8 *
++nwoas_cpu_pstate_status_name (
++  NWOAS_PSTATE_STATUS  Status
++  )
++{
++  switch (Status) {
++    case NwoasPstateOk:                 return "ok";
++    case NwoasPstateInvalidIo:          return "invalid-io";
++    case NwoasPstateUnsupportedChip:    return "unsupported-chip";
++    case NwoasPstateBaselineBusy:       return "baseline-busy";
++    case NwoasPstateBaselineNotP7:      return "baseline-not-p7";
++    case NwoasPstateStuckBusy:          return "stuck-busy";
++    case NwoasPstateReadbackMismatch:   return "readback-mismatch";
++    case NwoasPstateProtectedChanged:   return "protected-changed";
++    case NwoasPstateStatusMismatch:     return "status-mismatch";
++    case NwoasPstateRolledBack:         return "rolled-back";
++    case NwoasPstateRollbackBusy:       return "rollback-busy-skipped";
++    case NwoasPstateRollbackUnverified: return "rollback-unverified";
++    case NwoasPstateRollbackFailed:     return "rollback-failed";
++    default:                            return "unknown";
++  }
++}
++
++/*
++ * Poll the command register until BUSY clears, bounded by NWOAS_IDLE_ATTEMPTS.
++ * Returns TRUE and stores the idle value in *Out on success; returns FALSE and
++ * stores the last (still-BUSY) value on timeout. Delays only between reads.
++ * The caller has already validated Io and its read64 callback.
++ */
++static inline BOOLEAN
++nwoas_cpu_pstate_wait_idle (
++  CONST NWOAS_CPU_PSTATE_IO  *Io,
++  UINT64                     *Out
++  )
++{
++  UINT64  Value = 0;
++  UINT32  Index;
++
++  for (Index = 0; Index < NWOAS_IDLE_ATTEMPTS; Index++) {
++    Value = Io->read64 (Io->ctx, NWOAS_P_CMD_ADDR);
++    if ((Value & NWOAS_PSTATE_BUSY) == 0) {
++      if (Out != NULL) {
++        *Out = Value;
++      }
++      return TRUE;
++    }
++    if (Io->delay_us != NULL) {
++      Io->delay_us (Io->ctx, NWOAS_IDLE_DELAY_US);
++    }
++  }
++  if (Out != NULL) {
++    *Out = Value;
++  }
++  return FALSE;
++}
++
++/*
++ * Request a single P-state via ReadModifyWrite, preserving every bit outside
++ * NWOAS_PS_FIELDS (including the protected feature bits). Mirrors the validated
++ * Python request_state():
++ *   - wait for idle first (also applies to rollback callers) so we never write
++ *     a new request into a BUSY transition;
++ *   - clear only DESIRED, set SET + the desired P-state;
++ *   - wait for idle again and verify the DESIRED readback and protected bits.
++ *
++ * On StuckBusy, *WriteIssued distinguishes the two timeouts: FALSE means the
++ * controller was still BUSY *before* any write (nothing was written), TRUE means
++ * the write was issued but the post-write idle wait timed out (result unknown).
++ * On success *Out holds the settled command value.
++ */
++static inline NWOAS_PSTATE_STATUS
++nwoas_cpu_pstate_request (
++  CONST NWOAS_CPU_PSTATE_IO  *Io,
++  UINT32                     Pstate,
++  UINT64                     Reference,
++  UINT64                     *Out,
++  BOOLEAN                    *WriteIssued
++  )
++{
++  UINT64  Value;
++  UINT64  Desired;
++  UINT64  Request;
++
++  if (WriteIssued != NULL) {
++    *WriteIssued = FALSE;
++  }
++
++  /* Bounded idle BEFORE the write. If still busy, do not write a request. */
++  if (!nwoas_cpu_pstate_wait_idle (Io, &Value)) {
++    if (Out != NULL) {
++      *Out = Value;
++    }
++    return NwoasPstateStuckBusy; /* nothing written (WriteIssued stays FALSE) */
++  }
++
++  Desired = nwoas_cpu_pstate_desired (Pstate);
++  Request = (Value & ~NWOAS_PS_FIELDS) | NWOAS_PSTATE_SET | Desired;
++  Io->write64 (Io->ctx, NWOAS_P_CMD_ADDR, Request);
++  if (WriteIssued != NULL) {
++    *WriteIssued = TRUE;
++  }
++
++  /* Bounded idle AFTER the write; the transition must complete. */
++  if (!nwoas_cpu_pstate_wait_idle (Io, &Value)) {
++    if (Out != NULL) {
++      *Out = Value;
++    }
++    return NwoasPstateStuckBusy; /* write issued, outcome unverifiable */
++  }
++  if (Out != NULL) {
++    *Out = Value;
++  }
++
++  if ((Value & NWOAS_PS_FIELDS) != Desired) {
++    return NwoasPstateReadbackMismatch;
++  }
++  if (((Value ^ Reference) & NWOAS_PROTECTED_BITS) != 0) {
++    return NwoasPstateProtectedChanged;
++  }
++  return NwoasPstateOk;
++}
++
++/*
++ * Fill the snapshot tail from an already-captured command value and an
++ * already-captured STATUS value. Pure: performs no MMIO, so the value a caller
++ * validates is exactly the value it records (see the single-capture rule in
++ * NwoasCpuPstateEnableP12).
++ */
++static inline VOID
++nwoas_cpu_pstate_fill (
++  NWOAS_CPU_PSTATE_RESULT  *Result,
++  UINT64                   Cmd,
++  UINT64                   Status
++  )
++{
++  Result->final_cmd     = Cmd;
++  Result->final_status  = Status;
++  Result->final_current = nwoas_cpu_pstate_status_current (Status);
++  Result->final_target  = nwoas_cpu_pstate_status_target (Status);
++  Result->apsc_busy     = (BOOLEAN)((Cmd & NWOAS_PSTATE_APSC_BUSY) != 0);
++  Result->protected_preserved =
++    (BOOLEAN)(((Cmd ^ Result->baseline_cmd) & NWOAS_PROTECTED_BITS) == 0);
++}
++
++/*
++ * Top-level explicit entry. Requests the existing P12 operating point on the
++ * PCPU0 cluster starting from the validated P7 baseline.
++ *
++ * Success requires, from a SINGLE captured STATUS read, that current == target
++ * == P12 and that the protected bits are intact. On any P12 failure it attempts
++ * a bounded P7 restoration; a successful rollback likewise requires STATUS 7/7
++ * and protected bits intact, else NwoasPstateRollbackFailed. If the controller
++ * is still BUSY it never claims restoration:
++ *   - BUSY before the P7 write  -> NwoasPstateRollbackBusy (P7 not written)
++ *   - P7 written, idle timed out -> NwoasPstateRollbackUnverified
++ *
++ * Returns the overall status and, if Result != NULL, a full snapshot. A NULL or
++ * incomplete Io is rejected with NwoasPstateInvalidIo before any dereference.
++ */
++static inline NWOAS_PSTATE_STATUS
++nwoas_cpu_pstate_enable_p12 (
++  CONST NWOAS_CPU_PSTATE_IO  *Io,
++  NWOAS_CPU_PSTATE_RESULT    *Result
++  )
++{
++  NWOAS_CPU_PSTATE_RESULT  R = {0};
++  UINT64                   Baseline;
++  UINT64                   Cmd = 0;
++  UINT64                   StatusReg;
++  NWOAS_PSTATE_STATUS      St;
++  BOOLEAN                  WriteIssued = FALSE;
++
++  R.initial_status  = NwoasPstateOk;
++  R.rollback_status = NwoasPstateOk;
++
++  /* Validate the callback interface before touching it. */
++  if ((Io == NULL) || (Io->read64 == NULL) || (Io->write64 == NULL)) {
++    R.status = NwoasPstateInvalidIo;
++    if (Result != NULL) {
++      *Result = R;
++    }
++    return R.status;
++  }
++
++  if (Io->chip_id != NWOAS_T8103_CHIP_ID) {
++    R.status = NwoasPstateUnsupportedChip;
++    if (Result != NULL) {
++      *Result = R;
++    }
++    return R.status;
++  }
++
++  Baseline         = Io->read64 (Io->ctx, NWOAS_P_CMD_ADDR);
++  R.baseline_cmd   = Baseline;
++  R.requested_cmd  = Baseline;
++
++  if ((Baseline & NWOAS_PSTATE_BUSY) != 0) {
++    R.status  = NwoasPstateBaselineBusy;
++    StatusReg = Io->read64 (Io->ctx, NWOAS_P_STATUS_ADDR);
++    nwoas_cpu_pstate_fill (&R, Baseline, StatusReg);
++    if (Result != NULL) {
++      *Result = R;
++    }
++    return R.status;
++  }
++  if ((Baseline & NWOAS_PS_FIELDS) != nwoas_cpu_pstate_desired (NWOAS_PSTATE_P7)) {
++    R.status  = NwoasPstateBaselineNotP7;
++    StatusReg = Io->read64 (Io->ctx, NWOAS_P_STATUS_ADDR);
++    nwoas_cpu_pstate_fill (&R, Baseline, StatusReg);
++    if (Result != NULL) {
++      *Result = R;
++    }
++    return R.status;
++  }
++
++  /* Request the P12 operating point. */
++  St               = nwoas_cpu_pstate_request (Io, NWOAS_PSTATE_P12, Baseline, &Cmd, &WriteIssued);
++  R.requested_cmd  = Cmd;
++  R.initial_status = St;
++
++  if (St == NwoasPstateOk) {
++    /* Single STATUS capture: validate exactly the value we record. */
++    StatusReg = Io->read64 (Io->ctx, NWOAS_P_STATUS_ADDR);
++    nwoas_cpu_pstate_fill (&R, Cmd, StatusReg);
++    if ((R.final_current == NWOAS_PSTATE_P12) &&
++        (R.final_target == NWOAS_PSTATE_P12) &&
++        R.protected_preserved) {
++      R.status = NwoasPstateOk;
++      if (Result != NULL) {
++        *Result = R;
++      }
++      return R.status;
++    }
++    St               = NwoasPstateStatusMismatch;
++    R.initial_status = St;
++  }
++
++  /* Failure path: bounded P7 restoration, only if the controller is idle. */
++  R.rollback_attempted = TRUE;
++  {
++    UINT64               RollbackCmd  = Cmd;
++    BOOLEAN              RollbackWrite = FALSE;
++    NWOAS_PSTATE_STATUS  RollbackSt;
++
++    RollbackSt              = nwoas_cpu_pstate_request (Io, NWOAS_PSTATE_P7, Baseline,
++                                                        &RollbackCmd, &RollbackWrite);
++    R.rollback_status       = RollbackSt;
++    R.rollback_write_issued = RollbackWrite;
++    StatusReg               = Io->read64 (Io->ctx, NWOAS_P_STATUS_ADDR);
++    nwoas_cpu_pstate_fill (&R, RollbackCmd, StatusReg);
++
++    if (RollbackSt == NwoasPstateStuckBusy) {
++      /* Distinguish skipped-because-busy from written-but-unverifiable. */
++      R.status = RollbackWrite ? NwoasPstateRollbackUnverified : NwoasPstateRollbackBusy;
++    } else if (RollbackSt == NwoasPstateOk) {
++      /* Require the controller to actually be back at P7 (STATUS 7/7) and the
++       * protected bits intact; a matching command field alone is not enough. */
++      if ((R.final_current == NWOAS_PSTATE_P7) &&
++          (R.final_target == NWOAS_PSTATE_P7) &&
++          R.protected_preserved) {
++        R.status = NwoasPstateRolledBack;
++      } else {
++        R.status = NwoasPstateRollbackFailed;
++      }
++    } else {
++      R.status = NwoasPstateRollbackFailed;
++    }
++  }
++
++  if (Result != NULL) {
++    *Result = R;
++  }
++  return R.status;
++}
++
++#endif /* NWOAS_CPU_PSTATE_H_ */
+diff --git a/Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasGuestRam.h b/Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasGuestRam.h
+new file mode 100644
+index 0000000..9c81d1c
+--- /dev/null
++++ b/Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasGuestRam.h
+@@ -0,0 +1,309 @@
++/** @file
++  NwoasGuestRam.h
++
++  NWOAS S161: the ONE place that turns boot_args (phys_base, mem_size) into the guest RAM
++  extent and the low DMA-window backing.  Every consumer must use these helpers; none may
++  carry its own "+/- 4 GiB" arithmetic:
++
++    PrePi/AdtParser.c            PcdSystemMemorySize            = Layout.GuestRamSize
++    T810X MemoryInitPeiLib.c     SystemMemoryTop (== backing)   = PcdBase + PcdSize
++    AppleDartIoMmuDxe.c          mApcieBackingPa / WIDE-DART end = Layout.BackingPa
++    NwoasHideHighRamDxe.c        cross-check log                = NwoasGuestRamBackingPa()
++
++  Layout (both modes; the three ranges are pairwise disjoint by construction because the
++  window ends at 4 GiB and guest RAM starts at >= NWOAS_GUEST_PHYS_BASE_MIN = 32 GiB):
++
++    [NWOAS_DMA_WIN_BASE, NWOAS_DMA_WIN_END)   low DMA window (IPA alias, sole sub-4GB pool)
++    [PhysBase, GuestRamEnd)                   advertised guest RAM (UEFI / Windows-visible)
++    [BackingPa, BackingEnd)                   real RAM the hv aliases the window onto
++    GuestRamEnd == BackingPa                  (always -- the backing directly follows RAM)
++
++  NWOAS_WINDOW_AFTER_RAM = 1 (S102, default): the m1n1 hv has ALREADY excluded the 4 GiB
++    window backing from boot_args.mem_size.  GuestRamSize = mem_size, nothing subtracted.
++    Example (S158 log): phys_base 0x83CA9C000, mem_size 0x2A4530000 -> backing 0xAE0FCC000.
++  NWOAS_WINDOW_AFTER_RAM = 0 (legacy): the backing is the TOP 4 GiB of mem_size.
++    GuestRamSize = mem_size - 4 GiB, subtracted exactly once -> backing 0x9E0FCC000.
++
++  The header is plain C on top of <Base.h> only (no BaseLib calls) so it compiles both in
++  SEC/PEI/DXE modules and in the native unit test (memory-s161/test) against a stub Base.h.
++
++  Copyright (c) 2026, AppleWOA authors. All rights reserved.
++  SPDX-License-Identifier: (BSD-2-Clause-Patent OR MIT)
++**/
++
++#ifndef NWOAS_GUEST_RAM_H_
++#define NWOAS_GUEST_RAM_H_
++
++#include <Base.h>
++
++//
++// S102 mode switch.  1 = guest RAM ends where the low-window backing begins (hv shrinks
++// boot_args.mem_size); 0 = legacy: backing is the top NWOAS_DMA_WIN_SIZE of mem_size.
++// Override with -DNWOAS_WINDOW_AFTER_RAM=0 on the build line; do NOT redefine per module.
++//
++#ifndef NWOAS_WINDOW_AFTER_RAM
++#define NWOAS_WINDOW_AFTER_RAM  1
++#endif
++
++//
++// Low DMA window: base 0, size 4 GiB, so base + size == 0x100000000 and a 32-bit-IOVA device
++// can reach all of it (DSDT _DMA _TRA = 0, IOVA == window IPA).  UNCHANGED from the values
++// previously duplicated in AppleDartIoMmuDxe.c (APCIE_WIN_*) and MemoryInitPeiLib.c.
++//
++#define NWOAS_DMA_WIN_BASE          0x0000000000000000ULL
++#define NWOAS_DMA_WIN_SIZE          0x0000000100000000ULL
++#define NWOAS_DMA_WIN_END           (NWOAS_DMA_WIN_BASE + NWOAS_DMA_WIN_SIZE)
++
++//
++// Sanity bounds.  Guest RAM on every supported m1n1 hv layout starts at or above 32 GiB
++// (the same 0x800000000 check the three drivers used before).  The layout must end below
++// 64 GiB: that is the T8020 apcie DART TTBR0 span (2048 L1 entries x 32 MiB) and comfortably
++// above any Mac mini 2020 DRAM option, so it only catches wrapped/garbage boot_args.
++//
++#define NWOAS_GUEST_PHYS_BASE_MIN   0x0000000800000000ULL
++#define NWOAS_GUEST_PA_LIMIT        0x0000001000000000ULL
++
++//
++// DART / hv page granule.  phys_base, mem_size and therefore the backing must be 16 KiB
++// aligned or the L2 PTE address masking (APCIE_L2_PAGE) would silently shift the alias.
++//
++#define NWOAS_DART_PAGE_SIZE        0x4000ULL
++#define NWOAS_DART_PAGE_MASK        (NWOAS_DART_PAGE_SIZE - 1ULL)
++
++typedef enum {
++  NwoasGuestRamOk = 0,
++  NwoasGuestRamErrNullOut,          // Layout pointer is NULL
++  NwoasGuestRamErrPhysBaseLow,      // phys_base < NWOAS_GUEST_PHYS_BASE_MIN
++  NwoasGuestRamErrUnaligned,        // phys_base or mem_size not 16 KiB aligned
++  NwoasGuestRamErrMemSizeZero,      // mem_size == 0
++  NwoasGuestRamErrMemSizeTooSmall,  // legacy mode: mem_size <= window (would underflow)
++  NwoasGuestRamErrOverflow,         // phys_base + guest size (+ window) wraps UINT64
++  NwoasGuestRamErrAboveLimit,       // backing end > NWOAS_GUEST_PA_LIMIT
++  NwoasGuestRamStatusMax
++} NWOAS_GUEST_RAM_STATUS;
++
++typedef struct {
++  UINT64   PhysBase;          // boot_args phys_base: first byte of advertised guest RAM
++  UINT64   BootArgsMemSize;   // boot_args mem_size, verbatim (for logs)
++  UINT64   GuestRamSize;      // bytes of advertised guest RAM  -> PcdSystemMemorySize
++  UINT64   GuestRamEnd;       // PhysBase + GuestRamSize        -> MemoryInitPeiLib SystemMemoryTop
++  UINT64   BackingPa;         // == GuestRamEnd                 -> mApcieBackingPa, hv alias target
++  UINT64   BackingEnd;        // BackingPa + NWOAS_DMA_WIN_SIZE
++  UINT64   WindowBase;        // NWOAS_DMA_WIN_BASE
++  UINT64   WindowSize;        // NWOAS_DMA_WIN_SIZE
++  BOOLEAN  WindowAfterRam;    // mode the layout was computed with
++} NWOAS_GUEST_RAM_LAYOUT;
++
++/**
++  Compute the guest RAM / window backing layout for an explicit mode.
++
++  Validation order (first failure wins): NULL out, phys_base floor, 16 KiB alignment,
++  mem_size zero, legacy underflow, UINT64 overflow of phys_base+size and of backing+window,
++  PA limit.  On any error *Layout is left zeroed.
++
++  @param PhysBase        boot_args.phys_base
++  @param MemSize         boot_args.mem_size
++  @param WindowAfterRam  TRUE = S102 (backing follows mem_size); FALSE = legacy top-of-RAM
++  @param Layout          Filled on NwoasGuestRamOk
++
++  @retval NwoasGuestRamOk on success, else the specific error.
++**/
++static inline
++NWOAS_GUEST_RAM_STATUS
++NwoasComputeGuestRamLayoutEx (
++  UINT64                  PhysBase,
++  UINT64                  MemSize,
++  BOOLEAN                 WindowAfterRam,
++  NWOAS_GUEST_RAM_LAYOUT  *Layout
++  )
++{
++  UINT64  GuestRamSize;
++  UINT64  GuestRamEnd;
++  UINT64  BackingEnd;
++
++  if (Layout == NULL) {
++    return NwoasGuestRamErrNullOut;
++  }
++
++  Layout->PhysBase        = 0;
++  Layout->BootArgsMemSize = 0;
++  Layout->GuestRamSize    = 0;
++  Layout->GuestRamEnd     = 0;
++  Layout->BackingPa       = 0;
++  Layout->BackingEnd      = 0;
++  Layout->WindowBase      = 0;
++  Layout->WindowSize      = 0;
++  Layout->WindowAfterRam  = FALSE;
++
++  if (PhysBase < NWOAS_GUEST_PHYS_BASE_MIN) {
++    return NwoasGuestRamErrPhysBaseLow;
++  }
++  if (((PhysBase & NWOAS_DART_PAGE_MASK) != 0) || ((MemSize & NWOAS_DART_PAGE_MASK) != 0)) {
++    return NwoasGuestRamErrUnaligned;
++  }
++  if (MemSize == 0) {
++    return NwoasGuestRamErrMemSizeZero;
++  }
++
++  if (WindowAfterRam) {
++    //
++    // S102: the hv already removed the window backing from mem_size.  Subtract NOTHING.
++    //
++    GuestRamSize = MemSize;
++  } else {
++    //
++    // Legacy: the backing is the top NWOAS_DMA_WIN_SIZE of mem_size.  Subtract exactly once,
++    // and only when it cannot underflow (strictly greater, so guest RAM stays non-empty).
++    //
++    if (MemSize <= NWOAS_DMA_WIN_SIZE) {
++      return NwoasGuestRamErrMemSizeTooSmall;
++    }
++    GuestRamSize = MemSize - NWOAS_DMA_WIN_SIZE;
++  }
++
++  if (PhysBase > (MAX_UINT64 - GuestRamSize)) {
++    return NwoasGuestRamErrOverflow;
++  }
++  GuestRamEnd = PhysBase + GuestRamSize;
++
++  if (GuestRamEnd > (MAX_UINT64 - NWOAS_DMA_WIN_SIZE)) {
++    return NwoasGuestRamErrOverflow;
++  }
++  BackingEnd = GuestRamEnd + NWOAS_DMA_WIN_SIZE;
++
++  if (BackingEnd > NWOAS_GUEST_PA_LIMIT) {
++    return NwoasGuestRamErrAboveLimit;
++  }
++
++  Layout->PhysBase        = PhysBase;
++  Layout->BootArgsMemSize = MemSize;
++  Layout->GuestRamSize    = GuestRamSize;
++  Layout->GuestRamEnd     = GuestRamEnd;
++  Layout->BackingPa       = GuestRamEnd;
++  Layout->BackingEnd      = BackingEnd;
++  Layout->WindowBase      = NWOAS_DMA_WIN_BASE;
++  Layout->WindowSize      = NWOAS_DMA_WIN_SIZE;
++  Layout->WindowAfterRam  = WindowAfterRam;
++  return NwoasGuestRamOk;
++}
++
++/**
++  Compute the layout in the build's configured mode (NWOAS_WINDOW_AFTER_RAM).
++  This is the entry point every firmware consumer must use.
++**/
++static inline
++NWOAS_GUEST_RAM_STATUS
++NwoasComputeGuestRamLayout (
++  UINT64                  PhysBase,
++  UINT64                  MemSize,
++  NWOAS_GUEST_RAM_LAYOUT  *Layout
++  )
++{
++  return NwoasComputeGuestRamLayoutEx (
++           PhysBase,
++           MemSize,
++           (BOOLEAN)(NWOAS_WINDOW_AFTER_RAM != 0),
++           Layout
++           );
++}
++
++/**
++  Convenience: the window backing PA in the configured mode, or 0 if boot_args is invalid.
++  0 matches the pre-existing "backing unknown -> feature disabled" idiom in the DXE drivers.
++**/
++static inline
++UINT64
++NwoasGuestRamBackingPa (
++  UINT64  PhysBase,
++  UINT64  MemSize
++  )
++{
++  NWOAS_GUEST_RAM_LAYOUT  Layout;
++
++  if (NwoasComputeGuestRamLayout (PhysBase, MemSize, &Layout) != NwoasGuestRamOk) {
++    return 0;
++  }
++  return Layout.BackingPa;
++}
++
++/**
++  Short ASCII name for a status, for DEBUG lines.  Never returns NULL.
++**/
++static inline
++CONST CHAR8 *
++NwoasGuestRamStatusName (
++  NWOAS_GUEST_RAM_STATUS  Status
++  )
++{
++  switch (Status) {
++    case NwoasGuestRamOk:                 return "ok";
++    case NwoasGuestRamErrNullOut:         return "null-out";
++    case NwoasGuestRamErrPhysBaseLow:     return "phys_base-below-32GiB";
++    case NwoasGuestRamErrUnaligned:       return "not-16KiB-aligned";
++    case NwoasGuestRamErrMemSizeZero:     return "mem_size-zero";
++    case NwoasGuestRamErrMemSizeTooSmall: return "mem_size<=window(legacy-underflow)";
++    case NwoasGuestRamErrOverflow:        return "uint64-overflow";
++    case NwoasGuestRamErrAboveLimit:      return "backing-end-above-64GiB";
++    default:                              return "unknown";
++  }
++}
++
++//
++// Range predicates.  Half-open intervals throughout.
++//
++
++static inline
++BOOLEAN
++NwoasPaInLowWindow (
++  UINT64  Pa
++  )
++{
++  return (BOOLEAN)((Pa >= NWOAS_DMA_WIN_BASE) && (Pa < NWOAS_DMA_WIN_END));
++}
++
++static inline
++BOOLEAN
++NwoasPaInGuestRam (
++  CONST NWOAS_GUEST_RAM_LAYOUT  *Layout,
++  UINT64                        Pa
++  )
++{
++  if ((Layout == NULL) || (Layout->GuestRamSize == 0)) {
++    return FALSE;
++  }
++  return (BOOLEAN)((Pa >= Layout->PhysBase) && (Pa < Layout->GuestRamEnd));
++}
++
++static inline
++BOOLEAN
++NwoasPaInBacking (
++  CONST NWOAS_GUEST_RAM_LAYOUT  *Layout,
++  UINT64                        Pa
++  )
++{
++  if ((Layout == NULL) || (Layout->BackingPa == 0)) {
++    return FALSE;
++  }
++  return (BOOLEAN)((Pa >= Layout->BackingPa) && (Pa < Layout->BackingEnd));
++}
++
++/**
++  Translate a window IPA to the real backing PA (the DART's own page tables and the
++  per-Map path need this).  Addresses outside the window pass through unchanged, which is
++  the identity behaviour the previous NWOAS_WIN2BACK macro had.  If the layout is invalid
++  (BackingPa == 0) everything passes through, again matching the old NwoasBacking==0 path.
++**/
++static inline
++UINT64
++NwoasWindowIpaToBackingPa (
++  CONST NWOAS_GUEST_RAM_LAYOUT  *Layout,
++  UINT64                        Ipa
++  )
++{
++  if ((Layout == NULL) || (Layout->BackingPa == 0) || !NwoasPaInLowWindow (Ipa)) {
++    return Ipa;
++  }
++  return Layout->BackingPa + (Ipa - NWOAS_DMA_WIN_BASE);
++}
++
++#endif // NWOAS_GUEST_RAM_H_
+diff --git a/Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasSplitMemoryMap.h b/Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasSplitMemoryMap.h
+new file mode 100644
+index 0000000..cf4c15d
+--- /dev/null
++++ b/Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasSplitMemoryMap.h
+@@ -0,0 +1,91 @@
++/** @file
++  Split a Conventional-memory descriptor at an experimental high-RAM limit.
++  Only the caller's snapshot changes; no allocation or live map mutation.
++  SPDX-License-Identifier: (BSD-2-Clause-Patent OR MIT)
++**/
++#ifndef NWOAS_SPLIT_MEMORY_MAP_H_
++#define NWOAS_SPLIT_MEMORY_MAP_H_
++
++#include <Uefi.h>
++#include <Library/BaseMemoryLib.h>
++
++STATIC inline EFI_STATUS
++NwoasSplitMemoryMap (
++  IN OUT EFI_MEMORY_DESCRIPTOR *Map,
++  IN OUT UINTN                 *MapBytes,
++  IN UINTN                     Capacity,
++  IN UINTN                     DescSize,
++  IN UINT64                    KeepStart,
++  IN UINT64                    KeepEnd,
++  OUT UINTN                    *SplitCount
++  )
++{
++  UINTN Count, Index, Found = 0, SplitIndex = 0;
++  EFI_MEMORY_DESCRIPTOR *Desc;
++  UINT64 End, Bytes, Offset;
++
++  if ((Map == NULL) || (MapBytes == NULL) || (SplitCount == NULL) ||
++      (DescSize < sizeof (EFI_MEMORY_DESCRIPTOR)) || ((DescSize & 7) != 0) ||
++      ((*MapBytes % DescSize) != 0) || (*MapBytes > Capacity) ||
++      (KeepStart >= KeepEnd) || ((KeepStart | KeepEnd) & (EFI_PAGE_SIZE - 1))) {
++    return EFI_INVALID_PARAMETER;
++  }
++  *SplitCount = 0;
++  Count = *MapBytes / DescSize;
++
++  // Preflight the whole snapshot before modifying a byte. At most one
++  // non-overlapping physical descriptor may straddle this single boundary.
++  for (Index = 0; Index < Count; Index++) {
++    Desc = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)Map + Index * DescSize);
++    if ((Desc->Type != EfiConventionalMemory) ||
++        (Desc->PhysicalStart < KeepStart) || (Desc->PhysicalStart >= KeepEnd)) {
++      continue;
++    }
++    if ((Desc->PhysicalStart & (EFI_PAGE_SIZE - 1)) ||
++        (Desc->NumberOfPages > (MAX_UINT64 - Desc->PhysicalStart) / EFI_PAGE_SIZE)) {
++      return EFI_COMPROMISED_DATA;
++    }
++    Bytes = Desc->NumberOfPages * EFI_PAGE_SIZE;
++    End = Desc->PhysicalStart + Bytes;
++    if (End <= KeepEnd) {
++      continue;
++    }
++    Offset = KeepEnd - Desc->PhysicalStart;
++    if ((Desc->VirtualStart != 0) && (Desc->VirtualStart > MAX_UINT64 - Offset)) {
++      return EFI_COMPROMISED_DATA;
++    }
++    SplitIndex = Index;
++    if (++Found > 1) {
++      return EFI_COMPROMISED_DATA;
++    }
++  }
++  if (Found == 0) {
++    return EFI_SUCCESS;
++  }
++  if (*MapBytes > MAX_UINTN - DescSize) {
++    return EFI_OUT_OF_RESOURCES;
++  }
++  if (Capacity - *MapBytes < DescSize) {
++    *MapBytes += DescSize;
++    return EFI_BUFFER_TOO_SMALL; // Caller retries; never drop the upper tail.
++  }
++
++  Desc = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)Map + SplitIndex * DescSize);
++  Offset = KeepEnd - Desc->PhysicalStart;
++  // CopyMem explicitly supports overlap. Preserve descriptor extension bytes.
++  CopyMem ((UINT8 *)Desc + 2 * DescSize, (UINT8 *)Desc + DescSize,
++           (Count - SplitIndex - 1) * DescSize);
++  EFI_MEMORY_DESCRIPTOR *Tail = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)Desc + DescSize);
++  CopyMem (Tail, Desc, DescSize);
++  Tail->PhysicalStart = KeepEnd;
++  Tail->NumberOfPages -= Offset / EFI_PAGE_SIZE;
++  if (Tail->VirtualStart != 0) {
++    Tail->VirtualStart += Offset;
++  }
++  Desc->NumberOfPages = Offset / EFI_PAGE_SIZE;
++  *MapBytes += DescSize;
++  *SplitCount = 1;
++  return EFI_SUCCESS;
++}
++
++#endif
+diff --git a/Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.c b/Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.c
+index b2b1dd9..edcf781 100644
+--- a/Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.c
++++ b/Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.c
+@@ -9,6 +9,8 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
+ **/
+ 
+ #include <Uefi.h>
++#include <Guid/NonDiscoverableDevice.h>
++#include <Protocol/NonDiscoverableDevice.h>
+ 
+ #include <DfciSystemSettingTypes.h>
+ 
+@@ -765,6 +767,34 @@ DeviceBootManagerBdsEntry (
+   Returns value from GetPlatformPreffered Console, which will be the handle and device path
+   of the device console
+ **/
++// S127: the platform connect list covers USB only. Bind the registered RAM-
++// backed NVMe PCI facade explicitly before boot options are enumerated.
++STATIC VOID
++NwoasConnectNvme (VOID)
++{
++  EFI_HANDLE *Handles = NULL;
++  UINTN Count = 0, Index;
++  EFI_STATUS Status;
++  NON_DISCOVERABLE_DEVICE *Device;
++  Status = gBS->LocateHandleBuffer (ByProtocol,
++             &gEdkiiNonDiscoverableDeviceProtocolGuid, NULL, &Count, &Handles);
++  if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR, "HVLOG: S127 NVMe locate %r\n", Status));
++    return;
++  }
++  for (Index = 0; Index < Count; Index++) {
++    Status = gBS->HandleProtocol (Handles[Index],
++               &gEdkiiNonDiscoverableDeviceProtocolGuid, (VOID **)&Device);
++    if (!EFI_ERROR (Status) &&
++        CompareGuid (Device->Type, &gEdkiiNonDiscoverableNvmeDeviceGuid)) {
++      DEBUG ((DEBUG_ERROR, "HVLOG: S127 NVMe connect begin\n"));
++      Status = gBS->ConnectController (Handles[Index], NULL, NULL, TRUE);
++      DEBUG ((DEBUG_ERROR, "HVLOG: S127 NVMe connect result %r\n", Status));
++    }
++  }
++  FreePool (Handles);
++}
++
+ EFI_HANDLE
+ EFIAPI
+ DeviceBootManagerBeforeConsole (
+@@ -772,6 +802,7 @@ DeviceBootManagerBeforeConsole (
+   BDS_CONSOLE_CONNECT_ENTRY  **PlatformConsoles
+   )
+ {
++  NwoasConnectNvme ();
+   MsBootOptionsLibRegisterDefaultBootOptions ();
+   *PlatformConsoles = GetPlatformConsoleList ();
+ 
+diff --git a/Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.inf b/Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.inf
+index 1a6d1d5..827e738 100644
+--- a/Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.inf
++++ b/Silicon/Apple/AppleSiliconPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.inf
+@@ -55,6 +55,7 @@
+   UpdateFacsHardwareSignatureLib
+ 
+ [Guids]
++  gEdkiiNonDiscoverableNvmeDeviceGuid
+   gUefiShellFileGuid
+   gMsStartOfBdsNotifyGuid
+   gDfciStartOfBdsNotifyGuid
+@@ -64,6 +65,7 @@
+   gDfciSettingsManagerVarNamespace
+ 
+ [Protocols]
++  gEdkiiNonDiscoverableDeviceProtocolGuid
+   gMsOSKProtocolGuid                ## CONSUMES
+   gMsSWMProtocolGuid                ## CONSUMES
+   gTpmPpProtocolGuid                ## CONSUMES
+diff --git a/Silicon/Apple/AppleSiliconPkg/Library/MsBootOptionsLib/MsBootOptionsLib.c b/Silicon/Apple/AppleSiliconPkg/Library/MsBootOptionsLib/MsBootOptionsLib.c
+index 73a383a..56f2a29 100644
+--- a/Silicon/Apple/AppleSiliconPkg/Library/MsBootOptionsLib/MsBootOptionsLib.c
++++ b/Silicon/Apple/AppleSiliconPkg/Library/MsBootOptionsLib/MsBootOptionsLib.c
+@@ -414,8 +414,9 @@ MsBootOptionsLibRegisterDefaultBootOptions (
+   VOID
+   )
+ {
+-  RegisterFvBootOption (&gMsBootPolicyFileGuid, MS_USB_BOOT, (UINTN)-1, LOAD_OPTION_ACTIVE, (UINT8 *)MS_USB_BOOT_PARM, sizeof (MS_USB_BOOT_PARM));
++  DEBUG ((DEBUG_ERROR, "HVLOG: S131 internal SSD first, 8 CPUs enabled\n"));
+   RegisterFvBootOption (&gMsBootPolicyFileGuid, MS_SDD_BOOT, (UINTN)-1, LOAD_OPTION_ACTIVE, (UINT8 *)MS_SDD_BOOT_PARM, sizeof (MS_SDD_BOOT_PARM));
++  RegisterFvBootOption (&gMsBootPolicyFileGuid, MS_USB_BOOT, (UINTN)-1, LOAD_OPTION_ACTIVE, (UINT8 *)MS_USB_BOOT_PARM, sizeof (MS_USB_BOOT_PARM));
+   //RegisterFvBootOption (PcdGetPtr (PcdShellFile), INTERNAL_UEFI_SHELL_NAME, (UINTN)-1, LOAD_OPTION_ACTIVE, NULL, 0);
+   RegisterFvBootOption (&gMsBootPolicyFileGuid, MS_PXE_BOOT, (UINTN)-1, LOAD_OPTION_ACTIVE, (UINT8 *)MS_PXE_BOOT_PARM, sizeof (MS_PXE_BOOT_PARM));
+   //RegisterFvBootOption (PcdGetPtr (PcdUIApplicationFile), INTERNAL_UEFI_FP_NAME, (UINTN)-1, LOAD_OPTION_ACTIVE, NULL, 0);
+diff --git a/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasHardwareBootRtcLib.c b/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasHardwareBootRtcLib.c
+new file mode 100644
+index 0000000..95769ec
+--- /dev/null
++++ b/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasHardwareBootRtcLib.c
+@@ -0,0 +1,259 @@
++/* SPDX-License-Identifier: MIT
++ * S185: read the T8103 SERA RTC directly once during DXE, then advance the
++ * copied UTC snapshot with CNTPCT at runtime. No host date/ADT seed, no PMU
++ * writes. SetTime/wakeup remain unsupported; suspend counter continuity and
++ * long-term drift are not qualified. This is a hardware boot RTC reader,
++ * not a complete persistent read/write Windows RTC driver.
++ *
++ * S188: identical to S185 except that an unseeded GetTime returns
++ * EFI_DEVICE_ERROR instead of EFI_NOT_READY. UEFI GetTime only lists
++ * SUCCESS, INVALID_PARAMETER, DEVICE_ERROR and UNSUPPORTED (S185 REVIEW.md
++ * observation 1). Initialize still returns EFI_SUCCESS so the protocol is
++ * installed; clock arithmetic and the no-write policy are unchanged.
++ */
++#include <PiDxe.h>
++
++#include <Library/ArmGenericTimerCounterLib.h>
++#include <Library/BaseLib.h>
++#include <Library/BaseMemoryLib.h>
++#include <Library/DebugLib.h>
++#include <Library/RealTimeClockLib.h>
++#include <Library/AppleDTLib.h>
++#include <Library/IoLib.h>
++#include "nwoas_sera_rtc.h"
++
++#include "NwoasRtcSeedCore.h"
++
++/* Capability accuracy is a nominal 100ppm placeholder, not a measured
++ * hardware bound. One-second advertised resolution is conservative. */
++#define NWOAS_RTC_CAP_RESOLUTION_HZ   1u
++#define NWOAS_RTC_CAP_ACCURACY        100000000u
++
++//
++// Module globals. These are the ONLY state used at runtime. They are plain
++// values (no pointers), so no SetVirtualAddressMap conversion is required.
++//
++STATIC BOOLEAN           mSeedValid = FALSE;
++STATIC nwoas_rtc_seed_t  mSeed;
++STATIC UINT64            mFreqHz    = 0;
++STATIC UINT32            mSeedNs    = 0;
++
++/**
++  Returns the current time and date information, and the time-keeping
++  capabilities of the seeded clock.
++
++  @retval EFI_SUCCESS           Time filled from seed + CNTPCT delta.
++  @retval EFI_INVALID_PARAMETER Time is NULL.
++  @retval EFI_DEVICE_ERROR      No valid boot seed was found at DXE init
++                                (S188: was EFI_NOT_READY in S185), counter
++                                frequency changed, counter went backwards, or
++                                the advanced time left the representable
++                                window.
++**/
++EFI_STATUS
++EFIAPI
++LibGetTime (
++  OUT EFI_TIME               *Time,
++  OUT EFI_TIME_CAPABILITIES  *Capabilities
++  )
++{
++  UINT64                Now;
++  UINT64                Freq;
++  UINT64                Epoch;
++  UINT32                Nanosecond;
++  nwoas_rtc_calendar_t  Cal;
++  nwoas_rtc_status_t    St;
++
++  if (Time == NULL) {
++    return EFI_INVALID_PARAMETER;
++  }
++
++  if (Capabilities != NULL) {
++    Capabilities->Resolution = NWOAS_RTC_CAP_RESOLUTION_HZ;
++    Capabilities->Accuracy   = NWOAS_RTC_CAP_ACCURACY;
++    Capabilities->SetsToZero = FALSE;
++  }
++
++  if (!mSeedValid) {
++    return EFI_DEVICE_ERROR;
++  }
++
++  //
++  // Physical counter. AppleArmGenericTimerPhyCounterLib maps this to
++  // CNTPCT_EL0; the m1n1 HV grants EL1 access (CNTHCTL_EL1PCTEN) and only
++  // offsets the virtual counter, so this is wall-clock monotonic.
++  //
++  Freq = (UINT64)ArmGenericTimerGetTimerFreq ();
++  if (Freq != mFreqHz) {
++    return EFI_DEVICE_ERROR;
++  }
++  Now = ArmGenericTimerGetSystemCount ();
++
++  St = nwoas_rtc_advance (&mSeed, Now, Freq, &Epoch, &Nanosecond);
++  if (St != NWOAS_RTC_OK) {
++    return EFI_DEVICE_ERROR;
++  }
++
++  Nanosecond += mSeedNs;
++  if (Nanosecond >= 1000000000u) {
++    if (Epoch >= NWOAS_RTC_EPOCH_MAX) return EFI_DEVICE_ERROR;
++    Epoch++; Nanosecond -= 1000000000u;
++  }
++  St = nwoas_rtc_epoch_to_calendar (Epoch, &Cal);
++  if (St != NWOAS_RTC_OK) {
++    return EFI_DEVICE_ERROR;
++  }
++
++  //
++  // RealTimeClockRuntimeDxe pre-fills TimeZone/Daylight from its own
++  // in-memory settings before calling us, and it updates those settings even
++  // when LibSetTime fails. We override them unconditionally so the reported
++  // value is always "UTC, zone unspecified".
++  //
++  Time->Year       = Cal.year;
++  Time->Month      = Cal.month;
++  Time->Day        = Cal.day;
++  Time->Hour       = Cal.hour;
++  Time->Minute     = Cal.minute;
++  Time->Second     = Cal.second;
++  Time->Pad1       = 0;
++  Time->Nanosecond = Nanosecond;
++  Time->TimeZone   = EFI_UNSPECIFIED_TIMEZONE;
++  Time->Daylight   = 0;
++  Time->Pad2       = 0;
++
++  return EFI_SUCCESS;
++}
++
++/**
++  Sets the current local time and date information.
++
++  Deliberately unsupported: the only persistent store is the PMU offset cell,
++  and writing it is outside this candidate's scope (Phase C in PLAN.md).
++
++  @retval EFI_UNSUPPORTED       Always.
++**/
++EFI_STATUS
++EFIAPI
++LibSetTime (
++  IN EFI_TIME  *Time
++  )
++{
++  return EFI_UNSUPPORTED;
++}
++
++/**
++  Returns the current wakeup alarm clock setting.
++
++  @retval EFI_UNSUPPORTED       Always.
++**/
++EFI_STATUS
++EFIAPI
++LibGetWakeupTime (
++  OUT BOOLEAN   *Enabled,
++  OUT BOOLEAN   *Pending,
++  OUT EFI_TIME  *Time
++  )
++{
++  return EFI_UNSUPPORTED;
++}
++
++/**
++  Sets the system wakeup alarm clock time.
++
++  @retval EFI_UNSUPPORTED       Always.
++**/
++EFI_STATUS
++EFIAPI
++LibSetWakeupTime (
++  IN  BOOLEAN   Enabled,
++  OUT EFI_TIME  *Time
++  )
++{
++  return EFI_UNSUPPORTED;
++}
++
++static uint32_t RtcRead32(void *ctx, uint64_t address)
++{ (void)ctx; return MmioRead32((UINTN)address); }
++static void RtcWrite32(void *ctx, uint64_t address, uint32_t value)
++{ (void)ctx; MmioWrite32((UINTN)address,value); MemoryFence(); }
++static uint64_t RtcCount(void *ctx)
++{ (void)ctx; return ArmGenericTimerGetSystemCount(); }
++static uint64_t RtcFreq(void *ctx)
++{ (void)ctx; return ArmGenericTimerGetTimerFreq(); }
++static BOOLEAN RtcProp32(dt_node_t *node, const CHAR8 *name, UINT32 expected)
++{
++  size_t len=0; UINT32 value=0; VOID *p;
++  if(!node) return FALSE;
++  p=dt_node_prop(node,name,&len);
++  if(!p || len<sizeof(value))return FALSE;
++  CopyMem(&value,p,sizeof(value));return value==expected;
++}
++static BOOLEAN RtcTopology(void)
++{
++  dt_node_t *chosen=dt_get("/chosen");
++  dt_node_t *ctrl=dt_get("/arm-io/nub-spmi");
++  dt_node_t *pmu=dt_get("/arm-io/nub-spmi/spmi-pmu");
++  size_t len=0; UINT64 reg[2]; VOID *p;
++  if(!RtcProp32(chosen,"chip-id",0x8103) || !ctrl || !pmu ||
++     !RtcProp32(pmu,"reg",15) || !RtcProp32(pmu,"info-rtc",0xd002) ||
++     !RtcProp32(pmu,"info-rtc_scrpad",0xd100))return FALSE;
++  p=dt_node_prop(ctrl,"reg",&len);
++  if(!p || len<sizeof(reg))return FALSE;
++  CopyMem(reg,p,sizeof(reg));
++  /* ADT arm-io relative address; T8103 parent range starts at 0x200000000. */
++  return reg[0]==0x3d0d9300ULL && reg[1]==0x100;
++}
++EFI_STATUS EFIAPI LibRtcInitialize(IN EFI_HANDLE ImageHandle,
++                                  IN EFI_SYSTEM_TABLE *SystemTable)
++{
++  nwoas_sera_rtc_ops_t ops={.read32=RtcRead32,.write32=RtcWrite32,
++      .physical_counter=RtcCount,.counter_frequency=RtcFreq,.ctx=NULL};
++  nwoas_sera_rtc_result_t result;
++  nwoas_sera_status_t status;
++  nwoas_rtc_calendar_t cal;
++  UINT64 before,after,freq;
++  (void)ImageHandle; (void)SystemTable;
++  mSeedValid=FALSE;mSeedNs=0;mFreqHz=0;ZeroMem(&mSeed,sizeof(mSeed));
++  if(!RtcTopology()) {
++    DEBUG((DEBUG_ERROR,"NwoasHwRtc: T8103 topology rejected; GetTime DEVICE_ERROR\n"));
++    return EFI_SUCCESS;
++  }
++  before=ArmGenericTimerGetSystemCount();freq=ArmGenericTimerGetTimerFreq();
++  status=nwoas_sera_rtc_read(&ops,&result);
++  after=ArmGenericTimerGetSystemCount();
++  if(status!=NWOAS_SERA_OK || freq==0 || after<before || after-before>freq ||
++     result.cntfrq!=freq || result.cntpct>after) {
++    DEBUG((DEBUG_ERROR,"NwoasHwRtc: read failed %a writes=%u reads=%u span=%lu; GetTime DEVICE_ERROR\n",
++       nwoas_sera_status_str(status),result.cmd_writes,result.transactions_done,after-before));
++    return EFI_SUCCESS;
++  }
++  mSeed.magic=NWOAS_RTC_SEED_MAGIC;mSeed.version=NWOAS_RTC_SEED_VERSION;
++  mSeed.epoch=(UINT64)result.utc_seconds;mSeed.cntpct=result.cntpct;
++  mSeed.cntfrq=(UINT32)freq;mSeed.flags=NWOAS_RTC_SEED_FLAG_VALID|NWOAS_RTC_SEED_FLAG_SPMI;
++  if(nwoas_rtc_seed_validate(&mSeed,freq)!=NWOAS_RTC_OK ||
++     nwoas_rtc_epoch_to_calendar(mSeed.epoch,&cal)!=NWOAS_RTC_OK) {
++    DEBUG((DEBUG_ERROR,"NwoasHwRtc: decoded snapshot invalid; GetTime DEVICE_ERROR\n"));
++    return EFI_SUCCESS;
++  }
++  mSeedNs=result.nanoseconds;mFreqHz=freq;mSeedValid=TRUE;
++  DEBUG((DEBUG_ERROR,"HVLOG: S192 RTC DIRECT SERA epoch=%lu ns=%u counter=%lx offset=%lx cntpct=%lx freq=%lu => %04u-%02u-%02u %02u:%02u:%02u UTC\n",
++      mSeed.epoch,mSeedNs,result.counter1,result.offset,mSeed.cntpct,freq,
++      cal.year,cal.month,cal.day,cal.hour,cal.minute,cal.second));
++  return EFI_SUCCESS;
++}
++
++/**
++  Virtual-address-change hook kept for parity with the existing
++  AppleSiliconPkg VirtualRealTimeClockLib. RealTimeClockRuntimeDxe in this
++  tree does not call it, and this library holds no pointers, so it is a no-op.
++**/
++VOID
++EFIAPI
++LibRtcVirtualNotifyEvent (
++  IN EFI_EVENT  Event,
++  IN VOID       *Context
++  )
++{
++  return;
++}
+diff --git a/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasHardwareBootRtcLib.inf b/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasHardwareBootRtcLib.inf
+new file mode 100644
+index 0000000..3f538b7
+--- /dev/null
++++ b/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasHardwareBootRtcLib.inf
+@@ -0,0 +1,32 @@
++[Defines]
++  INF_VERSION                    = 0x0001001B
++  BASE_NAME                      = NwoasHardwareBootRtcLib
++  FILE_GUID                      = 138F45C7-1436-4FCE-A43F-185000000001
++  MODULE_TYPE                    = BASE
++  VERSION_STRING                 = 0.1
++  LIBRARY_CLASS                  = RealTimeClockLib
++
++[Sources.common]
++  NwoasHardwareBootRtcLib.c
++  NwoasRtcSeedCore.c
++  NwoasRtcSeedCore.h
++  nwoas_sera_rtc.c
++  nwoas_sera_rtc.h
++
++[Packages]
++  ArmPkg/ArmPkg.dec
++  MdePkg/MdePkg.dec
++  MdeModulePkg/MdeModulePkg.dec
++  EmbeddedPkg/EmbeddedPkg.dec
++  AppleSiliconPkg/AppleSiliconPkg.dec
++
++[LibraryClasses]
++  ArmGenericTimerCounterLib
++  BaseLib
++  BaseMemoryLib
++  DebugLib
++  AppleDTLib
++  IoLib
++
++# NwoasRtcSeedCore.c is shared with the host test build and uses only
++# <stdint.h>/<stddef.h>; no BUILD_EPOCH or shell-dependent flags are needed.
+diff --git a/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasRtcSeedCore.c b/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasRtcSeedCore.c
+new file mode 100644
+index 0000000..36ff7bd
+--- /dev/null
++++ b/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasRtcSeedCore.c
+@@ -0,0 +1,321 @@
++/* SPDX-License-Identifier: MIT
++ *
++ * NwoasRtcSeedCore.c - see NwoasRtcSeedCore.h. Pure C99, no libc calls,
++ * no allocation, no I/O, no hardware. Compiled into both the UEFI library
++ * and the host test binary.
++ */
++#include "NwoasRtcSeedCore.h"
++
++/* ---- little-endian readers (no unaligned access, no host-endian assumption) */
++
++static uint32_t
++rd_le32 (const uint8_t *p)
++{
++  return (uint32_t)p[0]
++       | ((uint32_t)p[1] << 8)
++       | ((uint32_t)p[2] << 16)
++       | ((uint32_t)p[3] << 24);
++}
++
++static uint64_t
++rd_le64 (const uint8_t *p)
++{
++  return (uint64_t)rd_le32 (p) | ((uint64_t)rd_le32 (p + 4) << 32);
++}
++
++/* ---- seed ------------------------------------------------------------- */
++
++nwoas_rtc_status_t
++nwoas_rtc_seed_parse (const uint8_t *buf, size_t len, nwoas_rtc_seed_t *out)
++{
++  nwoas_rtc_seed_t s;
++
++  if (out == NULL) {
++    return NWOAS_RTC_E_ARG;
++  }
++  /* Zero the output so a caller that ignores the status never sees stale
++   * bytes masquerading as a seed. */
++  out->magic   = 0;
++  out->version = 0;
++  out->epoch   = 0;
++  out->cntpct  = 0;
++  out->cntfrq  = 0;
++  out->flags   = 0;
++
++  if (buf == NULL) {
++    return NWOAS_RTC_E_ARG;
++  }
++  if (len != NWOAS_RTC_SEED_SIZE) {
++    return NWOAS_RTC_E_SIZE;
++  }
++
++  s.magic   = rd_le32 (buf + 0);
++  s.version = rd_le32 (buf + 4);
++  s.epoch   = rd_le64 (buf + 8);
++  s.cntpct  = rd_le64 (buf + 16);
++  s.cntfrq  = rd_le32 (buf + 24);
++  s.flags   = rd_le32 (buf + 28);
++
++  if (s.magic != NWOAS_RTC_SEED_MAGIC) {
++    return NWOAS_RTC_E_MAGIC;
++  }
++  if (s.version != NWOAS_RTC_SEED_VERSION) {
++    return NWOAS_RTC_E_VERSION;
++  }
++  if ((s.flags & NWOAS_RTC_SEED_FLAG_VALID) == 0 ||
++      (s.flags & ~NWOAS_RTC_SEED_FLAGS_KNOWN) != 0) {
++    return NWOAS_RTC_E_FLAGS;
++  }
++
++  *out = s;
++  return NWOAS_RTC_OK;
++}
++
++nwoas_rtc_status_t
++nwoas_rtc_seed_validate (const nwoas_rtc_seed_t *seed, uint64_t live_cntfrq)
++{
++  if (seed == NULL) {
++    return NWOAS_RTC_E_ARG;
++  }
++  if (seed->magic != NWOAS_RTC_SEED_MAGIC || seed->version != NWOAS_RTC_SEED_VERSION) {
++    return NWOAS_RTC_E_MAGIC;
++  }
++  if ((seed->flags & NWOAS_RTC_SEED_FLAG_VALID) == 0) {
++    return NWOAS_RTC_E_FLAGS;
++  }
++  if (seed->cntfrq == 0 || live_cntfrq == 0 || live_cntfrq > 0xFFFFFFFFull) {
++    return NWOAS_RTC_E_FREQ;
++  }
++  if ((uint64_t)seed->cntfrq != live_cntfrq) {
++    return NWOAS_RTC_E_FREQ_MISMATCH;
++  }
++  if (seed->epoch < NWOAS_RTC_EPOCH_MIN || seed->epoch > NWOAS_RTC_EPOCH_MAX) {
++    return NWOAS_RTC_E_EPOCH_RANGE;
++  }
++  return NWOAS_RTC_OK;
++}
++
++/* ---- advance ---------------------------------------------------------- */
++
++nwoas_rtc_status_t
++nwoas_rtc_advance (const nwoas_rtc_seed_t *seed, uint64_t cntpct_now,
++                   uint64_t cntfrq, uint64_t *epoch_out, uint32_t *ns_out)
++{
++  uint64_t delta;
++  uint64_t secs;
++  uint64_t rem;
++  uint64_t epoch;
++
++  if (seed == NULL || epoch_out == NULL || ns_out == NULL) {
++    return NWOAS_RTC_E_ARG;
++  }
++  *epoch_out = 0;
++  *ns_out    = 0;
++
++  if (cntfrq == 0 || cntfrq > 0xFFFFFFFFull) {
++    return NWOAS_RTC_E_FREQ;
++  }
++  if (seed->epoch < NWOAS_RTC_EPOCH_MIN || seed->epoch > NWOAS_RTC_EPOCH_MAX) {
++    return NWOAS_RTC_E_EPOCH_RANGE;
++  }
++  if (cntpct_now < seed->cntpct) {
++    return NWOAS_RTC_E_UNDERFLOW;
++  }
++
++  delta = cntpct_now - seed->cntpct;      /* no wrap: checked above */
++  secs  = delta / cntfrq;
++  rem   = delta - secs * cntfrq;          /* rem < cntfrq <= 2^32 - 1 */
++
++  /* seed->epoch <= 2^32 here, secs <= 2^64 / cntfrq; the sum cannot wrap
++   * uint64 because secs <= 2^64 - 1 and epoch is tiny, but be explicit. */
++  if (secs > NWOAS_RTC_EPOCH_MAX - seed->epoch) {
++    return NWOAS_RTC_E_OVERFLOW;
++  }
++  epoch = seed->epoch + secs;
++
++  /* rem < 2^32 and 1e9 < 2^30, so rem * 1e9 < 2^62: no 64-bit overflow. */
++  *epoch_out = epoch;
++  *ns_out    = (uint32_t)((rem * 1000000000ull) / cntfrq);
++  return NWOAS_RTC_OK;
++}
++
++/* ---- calendar --------------------------------------------------------- */
++
++int
++nwoas_rtc_is_leap_year (uint32_t year)
++{
++  if ((year % 4u) != 0) {
++    return 0;
++  }
++  if ((year % 100u) != 0) {
++    return 1;
++  }
++  return (year % 400u) == 0;
++}
++
++uint8_t
++nwoas_rtc_days_in_month (uint32_t year, uint32_t month)
++{
++  static const uint8_t dim[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
++
++  if (month < 1 || month > 12) {
++    return 0;
++  }
++  if (month == 2 && nwoas_rtc_is_leap_year (year)) {
++    return 29;
++  }
++  return dim[month - 1];
++}
++
++/* Days since 1970-01-01 -> civil date. Howard Hinnant's algorithm, exact for
++ * the proleptic Gregorian calendar; inputs here are always >= 0. */
++static void
++civil_from_days (uint64_t z, uint32_t *y, uint32_t *m, uint32_t *d)
++{
++  uint64_t era;
++  uint64_t doe;
++  uint64_t yoe;
++  uint64_t doy;
++  uint64_t mp;
++  uint64_t yy;
++
++  z  += 719468;                                     /* shift epoch to 0000-03-01 */
++  era = z / 146097;
++  doe = z - era * 146097;                           /* [0, 146096] */
++  yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; /* [0, 399] */
++  yy  = yoe + era * 400;
++  doy = doe - (365 * yoe + yoe / 4 - yoe / 100);   /* [0, 365] */
++  mp  = (5 * doy + 2) / 153;                        /* [0, 11] */
++  *d  = (uint32_t)(doy - (153 * mp + 2) / 5 + 1);   /* [1, 31] */
++  *m  = (uint32_t)(mp < 10 ? mp + 3 : mp - 9);      /* [1, 12] */
++  *y  = (uint32_t)(yy + (*m <= 2 ? 1 : 0));
++}
++
++static uint64_t
++days_from_civil (uint32_t y, uint32_t m, uint32_t d)
++{
++  uint64_t era;
++  uint64_t yoe;
++  uint64_t doy;
++  uint64_t doe;
++
++  y  -= (m <= 2) ? 1 : 0;
++  era = y / 400;
++  yoe = y - era * 400;                                            /* [0, 399] */
++  doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;          /* [0, 365] */
++  doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;                    /* [0, 146096] */
++  return era * 146097 + doe - 719468;
++}
++
++nwoas_rtc_status_t
++nwoas_rtc_epoch_to_calendar (uint64_t epoch, nwoas_rtc_calendar_t *cal)
++{
++  uint64_t days;
++  uint32_t sod;
++  uint32_t y;
++  uint32_t m;
++  uint32_t d;
++
++  if (cal == NULL) {
++    return NWOAS_RTC_E_ARG;
++  }
++  cal->year = 0; cal->month = 0; cal->day = 0;
++  cal->hour = 0; cal->minute = 0; cal->second = 0;
++  cal->nanosecond = 0;
++  cal->timezone = NWOAS_RTC_TZ_UNSPECIFIED;
++  cal->daylight = 0;
++
++  if (epoch < NWOAS_RTC_EPOCH_MIN || epoch > NWOAS_RTC_EPOCH_MAX) {
++    return NWOAS_RTC_E_EPOCH_RANGE;
++  }
++
++  days = epoch / 86400u;
++  sod  = (uint32_t)(epoch - days * 86400u);
++  civil_from_days (days, &y, &m, &d);
++
++  cal->year   = (uint16_t)y;
++  cal->month  = (uint8_t)m;
++  cal->day    = (uint8_t)d;
++  cal->hour   = (uint8_t)(sod / 3600u);
++  cal->minute = (uint8_t)((sod / 60u) % 60u);
++  cal->second = (uint8_t)(sod % 60u);
++  return NWOAS_RTC_OK;
++}
++
++nwoas_rtc_status_t
++nwoas_rtc_calendar_to_epoch (const nwoas_rtc_calendar_t *cal, uint64_t *epoch_out)
++{
++  nwoas_rtc_status_t st;
++  uint64_t days;
++
++  if (epoch_out == NULL) {
++    return NWOAS_RTC_E_ARG;
++  }
++  *epoch_out = 0;
++  st = nwoas_rtc_calendar_validate (cal);
++  if (st != NWOAS_RTC_OK) {
++    return st;
++  }
++  days = days_from_civil (cal->year, cal->month, cal->day);
++  *epoch_out = days * 86400u
++             + (uint64_t)cal->hour * 3600u
++             + (uint64_t)cal->minute * 60u
++             + (uint64_t)cal->second;
++  return NWOAS_RTC_OK;
++}
++
++nwoas_rtc_status_t
++nwoas_rtc_calendar_validate (const nwoas_rtc_calendar_t *cal)
++{
++  if (cal == NULL) {
++    return NWOAS_RTC_E_ARG;
++  }
++  if (cal->year < NWOAS_RTC_YEAR_MIN || cal->year > NWOAS_RTC_YEAR_MAX) {
++    return NWOAS_RTC_E_CALENDAR;
++  }
++  if (cal->month < 1 || cal->month > 12) {
++    return NWOAS_RTC_E_CALENDAR;
++  }
++  if (cal->day < 1 || cal->day > nwoas_rtc_days_in_month (cal->year, cal->month)) {
++    return NWOAS_RTC_E_CALENDAR;
++  }
++  if (cal->hour > 23 || cal->minute > 59 || cal->second > 59) {
++    return NWOAS_RTC_E_CALENDAR;
++  }
++  if (cal->nanosecond > NWOAS_RTC_NS_MAX) {
++    return NWOAS_RTC_E_CALENDAR;
++  }
++  if (cal->timezone != NWOAS_RTC_TZ_UNSPECIFIED &&
++      (cal->timezone < NWOAS_RTC_TZ_MIN || cal->timezone > NWOAS_RTC_TZ_MAX)) {
++    return NWOAS_RTC_E_CALENDAR;
++  }
++  if (cal->daylight != 0 &&
++      cal->daylight != NWOAS_RTC_DAYLIGHT_ADJUST &&
++      cal->daylight != (NWOAS_RTC_DAYLIGHT_ADJUST | NWOAS_RTC_DAYLIGHT_IN)) {
++    return NWOAS_RTC_E_CALENDAR;
++  }
++  return NWOAS_RTC_OK;
++}
++
++/* ---- misc ------------------------------------------------------------- */
++
++const char *
++nwoas_rtc_status_str (nwoas_rtc_status_t st)
++{
++  switch (st) {
++    case NWOAS_RTC_OK:              return "ok";
++    case NWOAS_RTC_E_ARG:           return "null-argument";
++    case NWOAS_RTC_E_SIZE:          return "seed-size";
++    case NWOAS_RTC_E_MAGIC:         return "seed-magic";
++    case NWOAS_RTC_E_VERSION:       return "seed-version";
++    case NWOAS_RTC_E_FLAGS:         return "seed-flags";
++    case NWOAS_RTC_E_FREQ:          return "frequency";
++    case NWOAS_RTC_E_FREQ_MISMATCH: return "frequency-mismatch";
++    case NWOAS_RTC_E_EPOCH_RANGE:   return "epoch-range";
++    case NWOAS_RTC_E_UNDERFLOW:     return "counter-underflow";
++    case NWOAS_RTC_E_OVERFLOW:      return "time-overflow";
++    case NWOAS_RTC_E_CALENDAR:      return "calendar-field";
++    case NWOAS_RTC_E_NOT_READY:     return "not-ready";
++    default:                        return "unknown";
++  }
++}
+diff --git a/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasRtcSeedCore.h b/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasRtcSeedCore.h
+new file mode 100644
+index 0000000..a189fb9
+--- /dev/null
++++ b/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/NwoasRtcSeedCore.h
+@@ -0,0 +1,153 @@
++/* SPDX-License-Identifier: MIT
++ *
++ * NwoasRtcSeedCore.h - portable, allocation-free, pure C99 core for the
++ * NWOAS boot-seeded UEFI real-time clock candidate (S181).
++ *
++ * This file has NO UEFI dependencies so the same code is compiled into the
++ * UEFI RealTimeClockLib and into the host test binary (plain + sanitizers).
++ *
++ * Input seed: ADT /chosen property "nwoas,rtc-snapshot", 32 bytes, little
++ * endian, Python struct format "<IIQQII":
++ *
++ *   offset  size  field    meaning
++ *   0       4     magic    0x4E525443
++ *   4       4     version  1
++ *   8       8     epoch    Unix UTC seconds at the moment cntpct was sampled
++ *   16      8     cntpct   CNTPCT_EL0 (physical counter) at that moment
++ *   24      4     cntfrq   CNTFRQ_EL0 in Hz at that moment
++ *   28      4     flags    bit0 = valid, bit1 = counter read over SPMI,
++ *                          bit2 = counter read from SMC key CLKM
++ *
++ * Time model: utc(now) = seed.epoch + (CNTPCT_now - seed.cntpct) / cntfrq.
++ * The physical counter is used deliberately; the m1n1 hypervisor only offsets
++ * the *virtual* counter (CNTVOFF_EL2 = stolen time), never CNTPCT.
++ *
++ * Nothing here writes hardware. Nothing here reads hardware. Callers pass
++ * counter values in.
++ */
++#ifndef NWOAS_RTC_SEED_CORE_H
++#define NWOAS_RTC_SEED_CORE_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#define NWOAS_RTC_SEED_MAGIC        0x4E525443u
++#define NWOAS_RTC_SEED_VERSION      1u
++#define NWOAS_RTC_SEED_SIZE         32u
++
++#define NWOAS_RTC_SEED_FLAG_VALID   0x1u
++#define NWOAS_RTC_SEED_FLAG_SPMI    0x2u
++#define NWOAS_RTC_SEED_FLAG_SMC     0x4u
++#define NWOAS_RTC_SEED_FLAGS_KNOWN  (NWOAS_RTC_SEED_FLAG_VALID | \
++                                     NWOAS_RTC_SEED_FLAG_SPMI  | \
++                                     NWOAS_RTC_SEED_FLAG_SMC)
++
++/* EFI_TIME representable window used by EmbeddedPkg TimeBaseLib IsTimeValid:
++ * Year 2000..2099. Expressed as Unix seconds. */
++#define NWOAS_RTC_EPOCH_MIN         946684800ull   /* 2000-01-01T00:00:00Z */
++#define NWOAS_RTC_EPOCH_MAX         4102444799ull  /* 2099-12-31T23:59:59Z */
++#define NWOAS_RTC_YEAR_MIN          2000u
++#define NWOAS_RTC_YEAR_MAX          2099u
++
++/* EFI_TIME conventions mirrored so the core can validate without UEFI headers. */
++#define NWOAS_RTC_TZ_UNSPECIFIED    0x7FF   /* EFI_UNSPECIFIED_TIMEZONE = 2047 */
++#define NWOAS_RTC_TZ_MIN            (-1440)
++#define NWOAS_RTC_TZ_MAX            1440
++#define NWOAS_RTC_DAYLIGHT_ADJUST   0x01    /* EFI_TIME_ADJUST_DAYLIGHT */
++#define NWOAS_RTC_DAYLIGHT_IN       0x02    /* EFI_TIME_IN_DAYLIGHT */
++#define NWOAS_RTC_NS_MAX            999999999u
++
++typedef enum {
++  NWOAS_RTC_OK = 0,
++  NWOAS_RTC_E_ARG,            /* NULL pointer argument */
++  NWOAS_RTC_E_SIZE,           /* seed blob is not exactly 32 bytes */
++  NWOAS_RTC_E_MAGIC,          /* magic mismatch */
++  NWOAS_RTC_E_VERSION,        /* version != 1 */
++  NWOAS_RTC_E_FLAGS,          /* valid bit clear or unknown bits set */
++  NWOAS_RTC_E_FREQ,           /* cntfrq == 0 or not representable */
++  NWOAS_RTC_E_FREQ_MISMATCH,  /* seed cntfrq != live CNTFRQ_EL0 */
++  NWOAS_RTC_E_EPOCH_RANGE,    /* seed epoch outside 2000..2099 */
++  NWOAS_RTC_E_UNDERFLOW,      /* CNTPCT now < seed cntpct (counter went backwards) */
++  NWOAS_RTC_E_OVERFLOW,       /* advanced time would leave the 2000..2099 window or wrap */
++  NWOAS_RTC_E_CALENDAR,       /* calendar field out of range */
++  NWOAS_RTC_E_NOT_READY       /* no valid seed loaded */
++} nwoas_rtc_status_t;
++
++typedef struct {
++  uint32_t magic;
++  uint32_t version;
++  uint64_t epoch;
++  uint64_t cntpct;
++  uint32_t cntfrq;
++  uint32_t flags;
++} nwoas_rtc_seed_t;
++
++/* Field layout and ranges follow EFI_TIME; TimeZone/Daylight are carried so
++ * the validator can check them, the clock itself always emits
++ * TimeZone = unspecified and Daylight = 0. */
++typedef struct {
++  uint16_t year;        /* 2000..2099 */
++  uint8_t  month;       /* 1..12 */
++  uint8_t  day;         /* 1..31 */
++  uint8_t  hour;        /* 0..23 */
++  uint8_t  minute;      /* 0..59 */
++  uint8_t  second;      /* 0..59 */
++  uint32_t nanosecond;  /* 0..999999999 */
++  int16_t  timezone;    /* -1440..1440 or 2047 */
++  uint8_t  daylight;    /* 0, 1, 3 */
++} nwoas_rtc_calendar_t;
++
++/* --- seed --------------------------------------------------------------- */
++
++/* Decode a little-endian seed blob. Rejects len != 32 before touching buf
++ * beyond bounds. Checks magic, version and flags. Does NOT check epoch or
++ * frequency; see nwoas_rtc_seed_validate. */
++nwoas_rtc_status_t nwoas_rtc_seed_parse (const uint8_t *buf, size_t len,
++                                         nwoas_rtc_seed_t *out);
++
++/* Semantic checks: cntfrq non-zero, live frequency non-zero and <= UINT32_MAX,
++ * seed cntfrq == live frequency, epoch within 2000..2099. A frequency mismatch
++ * is a hard error: the seed's cntpct would be in a different tick domain. */
++nwoas_rtc_status_t nwoas_rtc_seed_validate (const nwoas_rtc_seed_t *seed,
++                                            uint64_t live_cntfrq);
++
++/* --- advance ------------------------------------------------------------ */
++
++/* utc = seed.epoch + (cntpct_now - seed.cntpct) / cntfrq, plus nanoseconds
++ * from the remainder. Errors: underflow if cntpct_now < seed.cntpct
++ * (the counter is monotonic; a smaller value means a bad seed or a reset and
++ * we refuse to guess), overflow if the result would exceed 2099-12-31. */
++nwoas_rtc_status_t nwoas_rtc_advance (const nwoas_rtc_seed_t *seed,
++                                      uint64_t cntpct_now, uint64_t cntfrq,
++                                      uint64_t *epoch_out, uint32_t *ns_out);
++
++/* --- calendar ----------------------------------------------------------- */
++
++int      nwoas_rtc_is_leap_year (uint32_t year);
++uint8_t  nwoas_rtc_days_in_month (uint32_t year, uint32_t month); /* 0 if month invalid */
++
++/* Proleptic Gregorian, UTC. Fails with E_EPOCH_RANGE outside 2000..2099.
++ * Sets nanosecond = 0, timezone = unspecified, daylight = 0. */
++nwoas_rtc_status_t nwoas_rtc_epoch_to_calendar (uint64_t epoch,
++                                                nwoas_rtc_calendar_t *cal);
++
++/* Inverse (ignores nanosecond/timezone/daylight). Validates fields first. */
++nwoas_rtc_status_t nwoas_rtc_calendar_to_epoch (const nwoas_rtc_calendar_t *cal,
++                                                uint64_t *epoch_out);
++
++/* Same rules as EmbeddedPkg TimeBaseLib IsTimeValid. */
++nwoas_rtc_status_t nwoas_rtc_calendar_validate (const nwoas_rtc_calendar_t *cal);
++
++/* --- misc --------------------------------------------------------------- */
++
++const char *nwoas_rtc_status_str (nwoas_rtc_status_t st);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* NWOAS_RTC_SEED_CORE_H */
+diff --git a/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/nwoas_sera_rtc.c b/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/nwoas_sera_rtc.c
+new file mode 100644
+index 0000000..d04a270
+--- /dev/null
++++ b/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/nwoas_sera_rtc.c
+@@ -0,0 +1,275 @@
++/* SPDX-License-Identifier: MIT
++ *
++ * nwoas_sera_rtc.c - read-only T8103 sera PMU RTC snapshot over SPMI.
++ * See nwoas_sera_rtc.h for the protocol facts and the integration contract.
++ *
++ * Portable C99: no libc, no UEFI, no allocation, no globals.
++ */
++#include "nwoas_sera_rtc.h"
++
++/* ----------------------------------------------------------------------- */
++/* pure helpers                                                            */
++/* ----------------------------------------------------------------------- */
++
++uint64_t
++nwoas_sera_rtc_words_to_u48 (uint32_t w1, uint32_t w2)
++{
++  /* Linux spmi_read_cmd copies reply words byte-wise, little endian, into
++   * buf[0..5]; bytes 6..7 (upper half of w2) are beyond len and dropped. */
++  return ((uint64_t)w1) | (((uint64_t)(w2 & 0xffffu)) << 32);
++}
++
++uint32_t
++nwoas_sera_rtc_frac_to_ns (uint32_t subseconds)
++{
++  uint64_t f = (uint64_t)(subseconds & NWOAS_SERA_FRAC_MASK);
++  return (uint32_t)((f * 1000000000ull) >> NWOAS_SERA_FRAC_BITS);
++}
++
++nwoas_sera_status_t
++nwoas_sera_rtc_convert (uint64_t counter48, uint64_t offset48,
++                        int64_t *seconds_out, uint32_t *subseconds_out)
++{
++  uint64_t sum;
++  int64_t  signed_time;
++  int64_t  q, r;
++
++  if (seconds_out == NULL || subseconds_out == NULL) {
++    return NWOAS_SERA_E_ARG;
++  }
++  *seconds_out    = 0;
++  *subseconds_out = 0;
++
++  counter48 &= NWOAS_SERA_MASK48;
++  offset48  &= NWOAS_SERA_MASK48;
++
++  /* 48-bit + 49-bit fits in 50 bits; reduce modulo 2^49 (aplpmu_settime
++   * stores ((T - C) >> 1) truncated to 48 bits, so T == (C + (O << 1)) mod 2^49). */
++  sum = (counter48 + (offset48 << 1)) & NWOAS_SERA_MASK49;
++
++  /* Sign-extend 49 bits without relying on implementation-defined shifts. */
++  if (sum & (1ull << 48)) {
++    signed_time = -(int64_t)((1ull << 49) - sum);
++  } else {
++    signed_time = (int64_t)sum;
++  }
++
++  /* Floor division by 65536 (C99 '/' truncates toward zero; fix remainder). */
++  q = signed_time / 65536;
++  r = signed_time % 65536;
++  if (r < 0) {
++    q -= 1;
++    r += 65536;
++  }
++
++  *seconds_out    = q;
++  *subseconds_out = (uint32_t)r;
++
++  if (signed_time < 0) {
++    return NWOAS_SERA_E_NEGATIVE_TIME;
++  }
++  if (q < NWOAS_SERA_UTC_MIN || q > NWOAS_SERA_UTC_MAX) {
++    return NWOAS_SERA_E_RANGE;
++  }
++  return NWOAS_SERA_OK;
++}
++
++const char *
++nwoas_sera_status_str (nwoas_sera_status_t st)
++{
++  switch (st) {
++    case NWOAS_SERA_OK:                 return "ok";
++    case NWOAS_SERA_E_ARG:              return "bad argument";
++    case NWOAS_SERA_E_CNTFRQ:           return "implausible physical counter frequency";
++    case NWOAS_SERA_E_FIFO_NOT_IDLE:    return "SPMI FIFO not idle; queued transaction preserved, nothing written";
++    case NWOAS_SERA_E_TIMEOUT:          return "100 ms deadline expired waiting for SPMI reply";
++    case NWOAS_SERA_E_POLL_CAP:         return "poll cap reached (frozen counter or stuck controller)";
++    case NWOAS_SERA_E_BAD_HEADER:       return "SPMI reply header does not echo sid/opcode";
++    case NWOAS_SERA_E_EXTRA_RESPONSE:   return "unexpected extra SPMI reply left in FIFO";
++    case NWOAS_SERA_E_COUNTER_BACKWARD: return "RTC counter went backwards between reads";
++    case NWOAS_SERA_E_COUNTER_SPAN:     return "RTC counter advanced too far between reads";
++    case NWOAS_SERA_E_NEGATIVE_TIME:    return "counter + offset is negative; no valid clock";
++    case NWOAS_SERA_E_RANGE:            return "decoded time outside 2000..2099; no valid clock";
++    default:                            return "unknown status";
++  }
++}
++
++/* ----------------------------------------------------------------------- */
++/* bus access                                                              */
++/* ----------------------------------------------------------------------- */
++
++typedef struct {
++  const nwoas_sera_rtc_ops_t *ops;
++  uint64_t deadline_ticks;   /* cntfrq / 10 */
++} nwoas_sera_bus_t;
++
++static int
++nwoas_sera_fifo_idle (uint32_t status)
++{
++  return (status & NWOAS_SERA_STATUS_RX_EMPTY) != 0u &&
++         (status & NWOAS_SERA_STATUS_TX_MASK) == 0u;
++}
++
++/* Wait until RX FIFO is not empty. Bounded by BOTH the physical counter
++ * deadline and a finite poll count. The status read that observes data is the
++ * last one; no RSP read happens here. */
++static nwoas_sera_status_t
++nwoas_sera_wait_rx (const nwoas_sera_bus_t *bus, uint64_t start)
++{
++  const nwoas_sera_rtc_ops_t *ops = bus->ops;
++  uint32_t polls;
++
++  for (polls = 0; polls < NWOAS_SERA_MAX_POLLS; polls++) {
++    uint32_t status = ops->read32 (ops->ctx, NWOAS_SERA_SPMI_STATUS);
++    uint64_t now;
++
++    now = ops->physical_counter (ops->ctx);
++    /* Unsigned wrap-safe elapsed; a counter that goes backwards yields a
++     * huge value and trips the deadline, which is the safe outcome. */
++    if ((now - start) >= bus->deadline_ticks) {
++      return NWOAS_SERA_E_TIMEOUT;
++    }
++    if ((status & NWOAS_SERA_STATUS_RX_EMPTY) == 0u) {
++      return NWOAS_SERA_OK;
++    }
++  }
++  return NWOAS_SERA_E_POLL_CAP;
++}
++
++/* One EXT_READL transaction: idle check, exactly one CMD write, three RSP
++ * words, then verify the FIFO is empty again. Never drains. */
++static nwoas_sera_status_t
++nwoas_sera_read_reg (const nwoas_sera_bus_t *bus, uint32_t cmd,
++                     nwoas_sera_rtc_result_t *res, uint32_t index,
++                     uint64_t *value48_out)
++{
++  const nwoas_sera_rtc_ops_t *ops = bus->ops;
++  uint32_t words[NWOAS_SERA_RSP_WORDS];
++  uint64_t start;
++  uint32_t status;
++  uint32_t i;
++  nwoas_sera_status_t st;
++
++  *value48_out = 0;
++
++  status = ops->read32 (ops->ctx, NWOAS_SERA_SPMI_STATUS);
++  if (!nwoas_sera_fifo_idle (status)) {
++    return NWOAS_SERA_E_FIFO_NOT_IDLE;
++  }
++
++  start = ops->physical_counter (ops->ctx);
++  ops->write32 (ops->ctx, NWOAS_SERA_SPMI_CMD, cmd);
++  res->cmd_writes++;
++
++  for (i = 0; i < NWOAS_SERA_RSP_WORDS; i++) {
++    st = nwoas_sera_wait_rx (bus, start);
++    if (st != NWOAS_SERA_OK) {
++      return st;
++    }
++    words[i] = ops->read32 (ops->ctx, NWOAS_SERA_SPMI_RSP);
++  }
++
++  res->headers[index] = words[0];
++  if ((words[0] & NWOAS_SERA_RSP_ECHO_MASK) != NWOAS_SERA_RSP_ECHO) {
++    return NWOAS_SERA_E_BAD_HEADER;
++  }
++
++  /* The FIFO must be empty again. If not, something else replied; leave it
++   * exactly where it is so the owner can pick it up. */
++  status = ops->read32 (ops->ctx, NWOAS_SERA_SPMI_STATUS);
++  if ((status & NWOAS_SERA_STATUS_RX_EMPTY) == 0u) {
++    return NWOAS_SERA_E_EXTRA_RESPONSE;
++  }
++
++  if ((ops->physical_counter (ops->ctx) - start) >= bus->deadline_ticks) {
++    return NWOAS_SERA_E_TIMEOUT;
++  }
++  *value48_out = nwoas_sera_rtc_words_to_u48 (words[1], words[2]);
++  res->transactions_done = index + 1u;
++  return NWOAS_SERA_OK;
++}
++
++/* ----------------------------------------------------------------------- */
++/* top level                                                               */
++/* ----------------------------------------------------------------------- */
++
++static void
++nwoas_sera_result_clear (nwoas_sera_rtc_result_t *r)
++{
++  uint32_t i;
++  r->utc_seconds = 0;
++  r->subseconds  = 0;
++  r->nanoseconds = 0;
++  r->cntpct      = 0;
++  r->cntfrq      = 0;
++  r->counter0    = 0;
++  r->offset      = 0;
++  r->counter1    = 0;
++  for (i = 0; i < NWOAS_SERA_TRANSACTIONS; i++) {
++    r->headers[i] = 0;
++  }
++  r->transactions_done = 0;
++  r->cmd_writes        = 0;
++}
++
++nwoas_sera_status_t
++nwoas_sera_rtc_read (const nwoas_sera_rtc_ops_t *ops, nwoas_sera_rtc_result_t *out)
++{
++  nwoas_sera_bus_t bus;
++  nwoas_sera_status_t st;
++  uint64_t freq;
++  int64_t  seconds;
++  uint32_t frac;
++
++  if (out == NULL) {
++    return NWOAS_SERA_E_ARG;
++  }
++  nwoas_sera_result_clear (out);
++
++  if (ops == NULL || ops->read32 == NULL || ops->write32 == NULL ||
++      ops->physical_counter == NULL || ops->counter_frequency == NULL) {
++    return NWOAS_SERA_E_ARG;
++  }
++
++  freq = ops->counter_frequency (ops->ctx);
++  if (freq < NWOAS_SERA_CNTFRQ_MIN || freq > NWOAS_SERA_CNTFRQ_MAX) {
++    return NWOAS_SERA_E_CNTFRQ;
++  }
++  out->cntfrq = freq;
++
++  bus.ops            = ops;
++  bus.deadline_ticks = (freq * NWOAS_SERA_DEADLINE_MS) / 1000u;
++
++  st = nwoas_sera_read_reg (&bus, NWOAS_SERA_CMD_READ_TIME, out, 0, &out->counter0);
++  if (st != NWOAS_SERA_OK) {
++    return st;
++  }
++  st = nwoas_sera_read_reg (&bus, NWOAS_SERA_CMD_READ_OFFSET, out, 1, &out->offset);
++  if (st != NWOAS_SERA_OK) {
++    return st;
++  }
++  st = nwoas_sera_read_reg (&bus, NWOAS_SERA_CMD_READ_TIME, out, 2, &out->counter1);
++  if (st != NWOAS_SERA_OK) {
++    return st;
++  }
++  /* Pair the second counter sample with the physical counter as tightly as
++   * the bus allows: the SPMI reply is at most one transaction old here. */
++  out->cntpct = ops->physical_counter (ops->ctx);
++
++  if (out->counter1 < out->counter0) {
++    return NWOAS_SERA_E_COUNTER_BACKWARD;
++  }
++  if ((out->counter1 - out->counter0) > NWOAS_SERA_MAX_COUNTER_SPAN) {
++    return NWOAS_SERA_E_COUNTER_SPAN;
++  }
++
++  st = nwoas_sera_rtc_convert (out->counter1, out->offset, &seconds, &frac);
++  if (st != NWOAS_SERA_OK) {
++    return st;
++  }
++
++  out->utc_seconds = seconds;
++  out->subseconds  = frac;
++  out->nanoseconds = nwoas_sera_rtc_frac_to_ns (frac);
++  return NWOAS_SERA_OK;
++}
+diff --git a/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/nwoas_sera_rtc.h b/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/nwoas_sera_rtc.h
+new file mode 100644
+index 0000000..723a27e
+--- /dev/null
++++ b/Silicon/Apple/AppleSiliconPkg/Library/NwoasHardwareBootRtcLib/nwoas_sera_rtc.h
+@@ -0,0 +1,198 @@
++/* SPDX-License-Identifier: MIT
++ *
++ * nwoas_sera_rtc.h - portable, allocation-free C99 helper that performs a
++ * READ-ONLY snapshot of the Apple T8103 "sera" PMU real-time clock through
++ * the SoC SPMI controller (S184).
++ *
++ * Scope
++ * -----
++ *   * Exactly three SPMI EXT_READL transactions: counter (0xd002), stored
++ *     offset (0xd100), counter again (0xd002). Six bytes each.
++ *   * The ONLY MMIO writes this code ever performs are the three command
++ *     words to the controller CMD FIFO register (base + 4). It never writes a
++ *     PMU register, never touches SMC, never resets or powers anything.
++ *   * All hardware access goes through caller supplied callbacks, so the same
++ *     object file runs in a UEFI DXE library and in host tests with a mock.
++ *     No UEFI headers, no libc calls.
++ *
++ * Protocol facts (source: Linux drivers/spmi/spmi-apple-controller.c and
++ * OpenBSD sys/arch/arm64/dev/aplpmu.c, plus the S180 hardware evidence in
++ * rtc-s178/hardware-s180-evidence.json):
++ *
++ *   controller base   0x23d0d9300 (ADT /arm-io/nub-spmi reg0, t8103.dtsi)
++ *   STATUS  base+0    bit24 = RX FIFO empty, bits 7..0 = TX FIFO count
++ *   CMD     base+4    write one 32-bit command word
++ *   RSP     base+8    read: [0] reply status/header, [1] data bytes 0..3,
++ *                     [2] data bytes 4..5 in the low half
++ *   command word      opc | sid<<8 | addr<<16 | (len-1) | 1<<15
++ *                     EXT_READL opc 0x38, len 6 -> low byte 0x3d, sid 15
++ *                     counter : 0xd0028f3d     offset : 0xd1008f3d
++ *   reply header      hardware returned 0x003f0f3d for all three reads; the
++ *                     low 16 bits echo sid<<8 | opc and are verified here.
++ *
++ * Time model (OpenBSD aplpmu.c, confirmed by S180 evidence to within 2 s):
++ *
++ *   counter  : 48-bit little endian, 32.16 fixed point seconds since epoch
++ *   offset   : 48-bit little endian, 33.15 fixed point
++ *   time     : (counter + (offset << 1)) taken modulo 2^49 and interpreted
++ *              as a signed 49-bit two's complement 32.16 value
++ *   seconds  : floor(time / 65536)     fraction: time mod 65536
++ *
++ * Why 49 bits: aplpmu_settime stores ((T - C) >> 1) truncated to 48 bits, so
++ * counter + (offset << 1) equals T + k*2^49 and must be reduced modulo 2^49
++ * (a plain 64-bit sum gives the wrong date for a "negative" offset, i.e.
++ * wall time earlier than the raw counter). Bit 48 of the reduced sum is the
++ * sign; a set sign bit means the stored clock is not a valid time. The Linux
++ * macsmc formula sign_extend64(ctr + off, 47) >> 15 is the same arithmetic
++ * expressed in 33.15 units. Because settime discards bit 0 of (T - C), an
++ * odd raw counter reproduces the fraction one unit (15 us) low; seconds are
++ * unaffected.
++ *
++ * Integration advice (UEFI)
++ * -------------------------
++ *   Call nwoas_sera_rtc_read() ONCE from LibRtcInitialize (DXE, before
++ *   ExitBootServices) with callbacks that touch the physical MMIO window.
++ *   Keep only the returned integers (utc_seconds, nanoseconds, cntpct,
++ *   cntfrq) in module globals. LibGetTime must then advance that snapshot
++ *   from CNTPCT_EL0/CNTFRQ_EL0 alone. Do not retain an MMIO pointer, do not
++ *   call this helper at runtime: the SPMI window is not part of the runtime
++ *   memory map and SetVirtualAddressMap will not translate it. The SMC "CLKM"
++ *   comparison is a separate measurement and is not performed here.
++ */
++#ifndef NWOAS_SERA_RTC_H
++#define NWOAS_SERA_RTC_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* --- controller constants ---------------------------------------------- */
++
++#define NWOAS_SERA_SPMI_BASE        0x23d0d9300ull
++#define NWOAS_SERA_SPMI_STATUS      (NWOAS_SERA_SPMI_BASE + 0x0u)
++#define NWOAS_SERA_SPMI_CMD         (NWOAS_SERA_SPMI_BASE + 0x4u)
++#define NWOAS_SERA_SPMI_RSP         (NWOAS_SERA_SPMI_BASE + 0x8u)
++
++#define NWOAS_SERA_STATUS_RX_EMPTY  (1u << 24)
++#define NWOAS_SERA_STATUS_TX_MASK   0xffu
++
++#define NWOAS_SERA_SID              0xfu
++#define NWOAS_SERA_OPC_EXT_READL    0x38u
++#define NWOAS_SERA_REG_LEN          6u
++#define NWOAS_SERA_CMD_OPC_BYTE     (NWOAS_SERA_OPC_EXT_READL | (NWOAS_SERA_REG_LEN - 1u)) /* 0x3d */
++
++#define NWOAS_SERA_REG_TIME         0xd002u
++#define NWOAS_SERA_REG_TIME_OFFSET  0xd100u
++
++/* Exact command words; nothing else is ever written. */
++#define NWOAS_SERA_CMD_READ_TIME    0xd0028f3du
++#define NWOAS_SERA_CMD_READ_OFFSET  0xd1008f3du
++
++/* Expected low 16 bits of the reply header (sid << 8 | opc byte). */
++#define NWOAS_SERA_RSP_ECHO_MASK    0xffffu
++#define NWOAS_SERA_RSP_ECHO         ((NWOAS_SERA_SID << 8) | NWOAS_SERA_CMD_OPC_BYTE) /* 0x0f3d */
++
++#define NWOAS_SERA_RSP_WORDS        3u
++#define NWOAS_SERA_TRANSACTIONS     3u
++#define NWOAS_SERA_TOTAL_CMD_WRITES 3u
++
++/* --- policy limits ----------------------------------------------------- */
++
++/* Per transaction: 100 ms of physical counter ticks AND a finite number
++ * of status polls, whichever comes first. The poll cap guarantees termination
++ * even if the physical counter is frozen or the callback lies. */
++#define NWOAS_SERA_DEADLINE_MS      100u
++#define NWOAS_SERA_MAX_POLLS        200000u
++
++/* Physical counter frequency must be plausible for an ARM generic timer.
++ * T8103 reports 24 MHz. */
++#define NWOAS_SERA_CNTFRQ_MIN       1000000ull
++#define NWOAS_SERA_CNTFRQ_MAX       4000000000ull
++
++/* counter1 - counter0 (32.16 ticks) must be non-negative and small. Three
++ * transactions took 6.8 ms and 150 ticks on hardware; allow half a second. */
++#define NWOAS_SERA_MAX_COUNTER_SPAN 32768ull
++
++/* Realistic wall-clock window, 2000-01-01T00:00:00Z .. 2099-12-31T23:59:59Z
++ * (also the EFI_TIME representable range). */
++#define NWOAS_SERA_UTC_MIN          946684800ll
++#define NWOAS_SERA_UTC_MAX          4102444799ll
++
++#define NWOAS_SERA_MASK48           0xffffffffffffull
++#define NWOAS_SERA_MASK49           0x1ffffffffffffull
++#define NWOAS_SERA_FRAC_BITS        16u
++#define NWOAS_SERA_FRAC_MASK        0xffffu
++
++/* --- API --------------------------------------------------------------- */
++
++typedef enum {
++  NWOAS_SERA_OK = 0,
++  NWOAS_SERA_E_ARG,             /* NULL ops or callback */
++  NWOAS_SERA_E_CNTFRQ,          /* physical counter frequency implausible */
++  NWOAS_SERA_E_FIFO_NOT_IDLE,   /* RX not empty or TX count != 0 before CMD write; nothing written */
++  NWOAS_SERA_E_TIMEOUT,         /* 100 ms physical-counter deadline expired waiting for a reply word */
++  NWOAS_SERA_E_POLL_CAP,        /* finite poll cap hit (frozen counter or stuck controller) */
++  NWOAS_SERA_E_BAD_HEADER,      /* reply header low 16 bits != 0x0f3d */
++  NWOAS_SERA_E_EXTRA_RESPONSE,  /* RX still not empty after 3 words; left in FIFO, not drained */
++  NWOAS_SERA_E_COUNTER_BACKWARD,/* counter1 < counter0 */
++  NWOAS_SERA_E_COUNTER_SPAN,    /* counter1 - counter0 > NWOAS_SERA_MAX_COUNTER_SPAN */
++  NWOAS_SERA_E_NEGATIVE_TIME,   /* 49-bit signed sum is negative */
++  NWOAS_SERA_E_RANGE            /* seconds outside 2000..2099 */
++} nwoas_sera_status_t;
++
++typedef struct {
++  /* 32-bit MMIO accessors. addr is a physical address inside the SPMI window. */
++  uint32_t (*read32)(void *ctx, uint64_t addr);
++  void     (*write32)(void *ctx, uint64_t addr, uint32_t value);
++  /* CNTPCT_EL0 and CNTFRQ_EL0 (physical counter; m1n1 offsets only CNTVCT). */
++  uint64_t (*physical_counter)(void *ctx);
++  uint64_t (*counter_frequency)(void *ctx);
++  void *ctx;
++} nwoas_sera_rtc_ops_t;
++
++typedef struct {
++  /* Decoded clock. Valid only when nwoas_sera_rtc_read returned OK. */
++  int64_t  utc_seconds;     /* signed Unix seconds, within 2000..2099 */
++  uint32_t subseconds;      /* 0..65535, units of 1/65536 s */
++  uint32_t nanoseconds;     /* subseconds converted, 0..999984741 */
++  uint64_t cntpct;          /* CNTPCT_EL0 sampled right after counter1 arrived */
++  uint64_t cntfrq;          /* CNTFRQ_EL0 used for the deadline */
++
++  /* Raw material, filled as far as the read progressed (for logging). */
++  uint64_t counter0;        /* raw 48-bit 0xd002, first read */
++  uint64_t offset;          /* raw 48-bit 0xd100 */
++  uint64_t counter1;        /* raw 48-bit 0xd002, second read */
++  uint32_t headers[NWOAS_SERA_TRANSACTIONS];
++  uint32_t transactions_done;
++  uint32_t cmd_writes;      /* number of CMD writes performed (<= 3) */
++} nwoas_sera_rtc_result_t;
++
++/* Perform the bounded three-transaction snapshot. On any error the result
++ * still carries the raw fields collected so far and the error is final; no
++ * retry, no drain, no further writes. */
++nwoas_sera_status_t nwoas_sera_rtc_read (const nwoas_sera_rtc_ops_t *ops,
++                                         nwoas_sera_rtc_result_t *out);
++
++/* Pure arithmetic: counter/offset are raw 48-bit values. Produces signed
++ * seconds and 16-bit fraction using the 49-bit wrap described above, then
++ * applies the negative and 2000..2099 checks. */
++nwoas_sera_status_t nwoas_sera_rtc_convert (uint64_t counter48, uint64_t offset48,
++                                            int64_t *seconds_out,
++                                            uint32_t *subseconds_out);
++
++/* fraction (0..65535) -> nanoseconds, floor((frac * 1e9) / 65536). */
++uint32_t nwoas_sera_rtc_frac_to_ns (uint32_t subseconds);
++
++/* Decode 6 little-endian data bytes carried in two response words. */
++uint64_t nwoas_sera_rtc_words_to_u48 (uint32_t w1, uint32_t w2);
++
++const char *nwoas_sera_status_str (nwoas_sera_status_t st);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* NWOAS_SERA_RTC_H */
+diff --git a/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c b/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c
+index 54c61af..2fd8431 100644
+--- a/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c
++++ b/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c
+@@ -6,9 +6,11 @@
+ 
+ #include <Uefi.h>
+ #include <Library/BaseMemoryLib.h>
++#include <Library/BaseLib.h>          // NWOAS S161: CpuDeadLoop on an invalid guest-RAM layout
+ #include <Library/DebugAgentLib.h>
+ #include <Library/DebugLib.h>
+ #include <Library/AppleDTLib.h>
++#include <Library/NwoasGuestRam.h>    // NWOAS S161: ONE helper for guest RAM end / window backing
+ 
+ #define ALIGN_UP(x, a)   (((x) + ((a) - 1)) & ~((a) - 1))
+ 
+@@ -34,18 +36,42 @@ EarlySetup (
+ 
+   *SystemMemoryBase = BootArgs->phys_base;
+   //
+-  // NWOAS EXP-5 5c (low-RAM DMA alias for the platform xHCI): carve the TOP 0xE0000000 (3.5GB) of
+-  // guest RAM out of the UEFI/Windows system-memory map. That top slice is the "backing" that the
+-  // m1n1 hv aliases to the low IPA window (base 0x20000000, size 0xE0000000) so the FL1100 xHCI --
+-  // behind a 32-bit-IOVA Apple PCIe DART -- has device-reachable RAM below 4GB. Excluding it here
+-  // means neither UEFI nor Windows ever allocates it directly, while it stays real RAM reachable
+-  // through the alias. Keep in sync with (carve size == window size == 0xE0000000):
+-  //   - AppleDartIoMmuDxe backing = phys_base + mem_size - APCIE_WIN_SIZE (this reduced top)
+-  //   - hv map_hw alias backing    = phys_base + mem_size - win_size  (pcie_emul; same address)
+-  //   - MemoryInitPeiLib window    = [0x20000000, 0x100000000) as the sole Conventional pool
+-  //   - DSDT _DMA _TRA = 0 (device == the low IPA window; no >4GB translation needed)
++  // NWOAS S161 (supersedes the EXP-5 5c carve): guest RAM end and the low DMA-window backing come
++  // from ONE helper, NwoasGuestRam.h, shared with AppleDartIoMmuDxe / NwoasHideHighRamDxe /
++  // MemoryInitPeiLib. NWOAS_WINDOW_AFTER_RAM=1 (S102, default): the hv already excludes the 4GB
++  // window backing from boot_args.mem_size, so guest RAM is [phys_base, phys_base+mem_size) and
++  // the backing starts exactly at that end -- NOTHING is subtracted here. (S158 log: this file
++  // subtracted 4GB a SECOND time -> EARLY backing 0x9E0FCC000 vs DART 0xAE0FCC000.)
++  // NWOAS_WINDOW_AFTER_RAM=0 (legacy): the backing is the top 4GB of mem_size; the helper subtracts
++  // it exactly once. Keep in sync with (window == [0, 4GB), DSDT _DMA _TRA = 0):
++  //   - AppleDartIoMmuDxe backing = Layout.BackingPa (same helper, same value)
++  //   - hv map_hw alias backing   = phys_base + mem_size (S102 hv) / minus win_size (legacy hv)
++  //   - MemoryInitPeiLib window   = [0, 0x100000000) as the sole sub-4GB Conventional pool
+   //
+-  *SystemMemorySize = BootArgs->mem_size - 0x100000000;   // EXP-5 5c-v7: carve top 4GB (window base 0, size 4GB)
++  {
++    NWOAS_GUEST_RAM_LAYOUT  Layout;
++    NWOAS_GUEST_RAM_STATUS  LayoutStatus;
++
++    LayoutStatus = NwoasComputeGuestRamLayout (BootArgs->phys_base, BootArgs->mem_size, &Layout);
++    if (LayoutStatus != NwoasGuestRamOk) {
++      //
++      // AArch64/ModuleEntryPoint.S ignores EarlySetup's return value (cbz x0,.Lout falls into
++      // .Lout either way), so an invalid layout has to stop HERE: advertising a wrapped or
++      // underflowed size would hand DXE a corrupt memory map and alias the DART window onto
++      // live RAM. The DEBUG below reaches the m1n1 serial before the halt.
++      //
++      DEBUG((DEBUG_ERROR, "HVLOG: NWOAS EARLY guest RAM layout INVALID (%a) phys_base=0x%llx mem_size=0x%llx mode=%d -- halting\n",
++             NwoasGuestRamStatusName (LayoutStatus), (UINT64)BootArgs->phys_base, (UINT64)BootArgs->mem_size,
++             NWOAS_WINDOW_AFTER_RAM));
++      ASSERT (FALSE);
++      CpuDeadLoop ();
++      return FALSE;
++    }
++    *SystemMemorySize = Layout.GuestRamSize;
++    DEBUG((DEBUG_ERROR, "HVLOG: NWOAS EARLY guest RAM 0x%llx..0x%llx size=0x%llx (mem_size=0x%llx mode=%d) backing 0x%llx..0x%llx\n",
++           Layout.PhysBase, Layout.GuestRamEnd, Layout.GuestRamSize, Layout.BootArgsMemSize,
++           NWOAS_WINDOW_AFTER_RAM, Layout.BackingPa, Layout.BackingEnd));
++  }
+ 
+   //
+   // NWOAS EXP-5 5c (coherence, EARLY backing signal): emit the low-window backing PA HERE, in
+@@ -56,7 +82,7 @@ EarlySetup (
+   // to match -- previously it only saw the DART's per-Map log (during BDS, AFTER the pool is in use),
+   // so the deferred re-map would shift already-written DXE data by the ~208KB inner-m1n1 skew and
+   // corrupt the boot. Logging the SAME value (SystemMemoryBase+SystemMemorySize == mApcieBackingPa ==
+-  // phys_base+mem_size-WIN_SIZE) here lets the breaker correct the alias while the window is still
++  // Layout.BackingPa from NwoasGuestRam.h) here lets the breaker correct the alias while the window is still
+   // untouched. DEBUG_ERROR level so it reaches the m1n1 serial in real time (same path as the DART's
+   // HVLOG lines, AppleDartIoMmuDxe.c:543).
+   //
+diff --git a/Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc b/Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc
+index a10893f..6c8bf81 100644
+--- a/Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc
++++ b/Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc
+@@ -85,25 +85,25 @@ MULTIPLE_APIC_DESCRIPTION_TABLE Madt = {
+         0, 0, GET_MPIDR(0, 0, 0, 0), EFI_ACPI_6_3_GIC_ENABLED, 50, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // Icestorm-1 (Bootstrap)
+-        1, 1, GET_MPIDR(0, 0, 0, 1),  0 /* NWOAS: AP disabled for uniprocessor boot */, 54, 0,
++        1, 1, GET_MPIDR(0, 0, 0, 1),  EFI_ACPI_6_3_GIC_ENABLED, 54, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // Icestorm-2 (Bootstrap)
+-        2, 2, GET_MPIDR(0, 0, 0, 2),  0 /* NWOAS: AP disabled for uniprocessor boot */, 54, 0,
++        2, 2, GET_MPIDR(0, 0, 0, 2),  EFI_ACPI_6_3_GIC_ENABLED, 54, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // Icestorm-2 (Bootstrap)
+-        3, 3, GET_MPIDR(0, 0, 0, 3),  0 /* NWOAS: AP disabled for uniprocessor boot */, 54, 0,
++        3, 3, GET_MPIDR(0, 0, 0, 3),  EFI_ACPI_6_3_GIC_ENABLED, 54, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // Firestorm-0 (P-core cluster 0)
+-        4, 4, GET_MPIDR(0, 1, 1, 0),  0 /* NWOAS: AP disabled for uniprocessor boot */, 58, 0,
++        4, 4, GET_MPIDR(0, 1, 1, 0),  EFI_ACPI_6_3_GIC_ENABLED, 58, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // Firestorm-1 (P-core cluster 0)
+-        5, 5, GET_MPIDR(0, 1, 1, 1),  0 /* NWOAS: AP disabled for uniprocessor boot */, 62, 0,
++        5, 5, GET_MPIDR(0, 1, 1, 1),  EFI_ACPI_6_3_GIC_ENABLED, 62, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // Firestorm-2 (P-core cluster 0)
+-        6, 6, GET_MPIDR(0, 1, 1, 2),  0 /* NWOAS: AP disabled for uniprocessor boot */, 34, 0,
++        6, 6, GET_MPIDR(0, 1, 1, 2),  EFI_ACPI_6_3_GIC_ENABLED, 34, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+     EFI_ACPI_6_3_GICC_STRUCTURE_INIT( // // Firestorm-3 (P-core cluster 0)
+-        7, 7, GET_MPIDR(0, 1, 1, 3),  0 /* NWOAS: AP disabled for uniprocessor boot */, 38, 0,
++        7, 7, GET_MPIDR(0, 1, 1, 3),  EFI_ACPI_6_3_GIC_ENABLED, 38, 0,
+         0, 0, 25, 0 /* GicRBase */, 0, 0),
+ },
+ EFI_ACPI_6_0_GIC_DISTRIBUTOR_INIT(0, FixedPcdGet64 (PcdGicDistributorBase), 0, 3),
+diff --git a/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c b/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
+index 4c46bda..82590d1 100644
+--- a/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
++++ b/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
+@@ -29,13 +29,15 @@
+ 
+ //Device memory map configuration file for UEFI (this is to help with pagetable initialization)
+ #include <Library/T810XFamilyVirtualMemoryMapDefines.h>
++#include <Library/NwoasGuestRam.h>   // NWOAS S161: NWOAS_DMA_WIN_BASE/SIZE + guest RAM/backing helper (shared)
+ 
+ #define MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS 20
+ 
+ //
+ // NWOAS Stage 4 (low-RAM DMA alias for the platform xHCI, see DSDT SCB0/XHC0):
+ // The m1n1 hypervisor aliases guest IPA [NWOAS_DMA_WIN_BASE, +NWOAS_DMA_WIN_SIZE) onto the
+-// TOP NWOAS_DMA_WIN_SIZE bytes of real guest RAM (SystemMemoryTop - NWOAS_DMA_WIN_SIZE).
++// NWOAS_DMA_WIN_SIZE bytes of real RAM that start at SystemMemoryTop (== Layout.BackingPa from
++// NwoasGuestRam.h; PrePi sizes PcdSystemMemorySize with the same helper, S161).
+ // Because the Apple PCIe DART is 32-bit-IOVA-only and Windows' AllocateCommonBuffer caps a
+ // 32-bit device's *physical* allocation at 4GB (it does NOT relocate via ACPI _DMA _TRA), we
+ // must make real, device-reachable RAM physically appear below 4GB. We advertise this low
+@@ -43,8 +45,7 @@
+ // the high backing so the same DRAM is never double-allocated. Must stay consistent with the
+ // hv map_hw() alias, the UEFI DART EBS window, and the DSDT _DMA (_TRA=0).
+ //
+-#define NWOAS_DMA_WIN_BASE   0x0000000000000000ULL   // EXP-5 5c-v7: base lowered 0x20000000 -> 0 (whole sub-4GB is the window). bootmgfw needs RAM at 0x10000000 (ConvertPages failed when [0,0x20000000) was NonExist under Method A)
+-#define NWOAS_DMA_WIN_SIZE   0x0000000100000000ULL   // 4GB (EXP-5 5c-v7: 0xE0000000 -> 0x100000000; base+size == 0x100000000, window top pinned at 4GB)
++// NWOAS_DMA_WIN_BASE (0) / NWOAS_DMA_WIN_SIZE (4GB) now come from NwoasGuestRam.h -- same values.
+ 
+ //
+ // NWOAS deferred-application gate (2026-07-10 pivot, see MemoryPeim() !Found block).
+@@ -235,8 +236,9 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
+     //
+     // NWOAS deferred approach (2026-07-10 pivot, NWOAS_METHOD_A==0): advertise the high system RAM
+     // [PcdSystemMemoryBase, +PcdSystemMemorySize) == [phys_base, backing) as normal SYSTEM_MEMORY.
+-    // PcdSystemMemorySize is already (mem_size - 4GB) from AdtParser EarlySetup, so this covers only
+-    // the low 12GB and leaves the top-4GB backing slice out of the Conventional pool -- exactly the
++    // PcdSystemMemorySize is Layout.GuestRamSize from AdtParser EarlySetup (NwoasGuestRam.h, S161:
++    // S102 == boot_args.mem_size as-is, legacy == mem_size - 4GB once), so this range ends exactly at
++    // the backing and leaves the 4GB backing slice out of the Conventional pool -- exactly the
+     // range the low [0,4GB) window (built below) is aliased onto by the hv, so the same DRAM is never
+     // double-allocated. Result: UEFI/DXE run in device-reachable real RAM (FL1100 reaches UEFI's own
+     // xHCI buffers via the dynamic per-Map DART -> UEFI USB reads work like no-EXP-5), while the low
+@@ -358,9 +360,9 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
+ 
+   //
+   // NWOAS EXP-5 5c Method A (design §4.4): the low DMA-alias window is now the ONLY
+-  // EFI_RESOURCE_SYSTEM_MEMORY resource -> the ONLY Conventional pool Windows sees. Backing = top
+-  // NWOAS_DMA_WIN_SIZE of RAM; SystemMemoryTop (computed above) matches the m1n1 hv's mem_top (both
+-  // = BootArgs phys_base + mem_size), so all four consumers (hv alias / this HOB / DART EBS window /
++  // EFI_RESOURCE_SYSTEM_MEMORY resource -> the ONLY Conventional pool Windows sees. Backing =
++  // [SystemMemoryTop, +NWOAS_DMA_WIN_SIZE); SystemMemoryTop == PcdSystemMemoryBase+PcdSystemMemorySize
++  // == Layout.GuestRamEnd (S161, NwoasGuestRam.h), so all four consumers (hv alias / this HOB / DART EBS window /
+   // DSDT _DMA) agree on the same backing physical range. High RAM is now EFI_RESOURCE_MEMORY_RESERVED
+   // (see the !Found block above), so Windows cannot use it -> the xHCI common buffer is forced here.
+   //
+@@ -380,10 +382,14 @@ EFI_STATUS EFIAPI MemoryPeim(IN EFI_PHYSICAL_ADDRESS UefiMemoryBase, IN UINT64 U
+   // so the window no longer needs to be withheld from the free pool.
+   //   (removed) BuildMemoryAllocationHob (NWOAS_DMA_WIN_BASE, NWOAS_DMA_WIN_SIZE, EfiBootServicesData);
+   //
++  // NWOAS S161: SystemMemoryTop == PcdSystemMemoryBase + PcdSystemMemorySize == Layout.GuestRamEnd ==
++  // the BACKING START (PrePi sizes the PCD with the same helper). The old range printed [Top-4GB, Top),
++  // i.e. the last 4GB of ADVERTISED RAM, which under S102 was never the backing (stale).
+   DEBUG ((DEBUG_ERROR,
+-    "NWOAS: low DMA window 0x%lx..0x%lx (Conventional, sole pool) aliased to backing 0x%lx..0x%lx (high RAM reserved)\n",
++    "NWOAS: low DMA window 0x%lx..0x%lx (Conventional, sole sub-4GB pool) aliased to backing 0x%lx..0x%lx (guest RAM 0x%lx..0x%lx, mode=%d)\n",
+     NWOAS_DMA_WIN_BASE, NWOAS_DMA_WIN_BASE + NWOAS_DMA_WIN_SIZE,
+-    SystemMemoryTop - NWOAS_DMA_WIN_SIZE, SystemMemoryTop));
++    (UINT64)SystemMemoryTop, (UINT64)SystemMemoryTop + NWOAS_DMA_WIN_SIZE,
++    (UINT64)PcdGet64 (PcdSystemMemoryBase), (UINT64)SystemMemoryTop, NWOAS_WINDOW_AFTER_RAM));
+ 
+   // Build Memory Allocation Hob
+   InitMmu (MemoryTable);

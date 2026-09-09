@@ -1,0 +1,218 @@
+{
+  "log": "nwoas_scripts/logs/cpufreq-s164-p12-20260910-021853.lQ4qfS.link/job-2.log",
+  "runs": 5,
+  "samples": [
+    {
+      "cpu": 0,
+      "elapsed_us": 98569,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85520,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85611,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85383,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 90457,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 90144,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 90243,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 90202,
+      "checksum": 14985380435595321180
+    },
+    {
+      "cpu": 0,
+      "elapsed_us": 87188,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85583,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85406,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85373,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 90267,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 90270,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 90266,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 90029,
+      "checksum": 14985380435595321180
+    },
+    {
+      "cpu": 0,
+      "elapsed_us": 87115,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85905,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85265,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85454,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 90281,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 90257,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 90263,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 90281,
+      "checksum": 14985380435595321180
+    },
+    {
+      "cpu": 0,
+      "elapsed_us": 86990,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85350,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85615,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 92304,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 103361,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 109920,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 96809,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 91939,
+      "checksum": 14985380435595321180
+    },
+    {
+      "cpu": 0,
+      "elapsed_us": 87118,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85397,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85404,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85465,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 90283,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 90228,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 90106,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 90253,
+      "checksum": 14985380435595321180
+    }
+  ],
+  "median_us_by_cpu": {
+    "0": 87118,
+    "1": 85520,
+    "2": 85406,
+    "3": 85454,
+    "4": 90283,
+    "5": 90257,
+    "6": 90263,
+    "7": 90253
+  },
+  "phase": "preboot-p12-reverted-p7",
+  "note": "A brief HV shell read occurred after job2; a separate bounded live P12 apply before job3. This is not an uninterrupted soak."
+}

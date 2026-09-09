@@ -1,0 +1,13 @@
+{
+  "log": "nwoas_scripts/logs/rtc-s185-20260910-045432.SyWFYl.link/job-1.log",
+  "guest_utc": "2026-09-09T19:55:33.3298216Z",
+  "host_log_last_write_utc": "2026-09-09T19:55:32.393328+00:00",
+  "guest_minus_host_log_mtime_s": 0.9364931583404541,
+  "method": "Host log mtime is an observation bound, not exact synchronized sample; includes later WMI output delay.",
+  "signature_valid": true,
+  "total_physical_memory": 15082229760,
+  "logical_processors": 8,
+  "host_time_setting_during_boot": false,
+  "source": "Native UEFI SERA RTC read atDXEinit; runtimeCNTPCT advancement; RealTimeIsUniversal1",
+  "set_time_supported": false
+}

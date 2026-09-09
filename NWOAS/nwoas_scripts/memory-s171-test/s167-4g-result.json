@@ -1,0 +1,13 @@
+{
+  "pass": true,
+  "session": "/Volumes/X31/NWOAS/nwoas_scripts/logs/memory-s167-download-p12-20260910-025625.HdLLoE.link",
+  "job": 8,
+  "bytes_per_pass": 4294967296,
+  "passes": 3,
+  "checksums": [
+    "18060195148575733147",
+    "7876609453671033377",
+    "5935338780629843221"
+  ],
+  "limitation": "user-mode allocation; physical PFNs not identified"
+}

@@ -1,0 +1,6 @@
+#ifndef NWOAS_REVIEW_SHIM_BASEMEMORYLIB_H
+#define NWOAS_REVIEW_SHIM_BASEMEMORYLIB_H
+#include <PiDxe.h>
+VOID *CopyMem (VOID *Dest, CONST VOID *Src, UINTN Len);
+VOID *ZeroMem (VOID *Buf, UINTN Len);
+#endif

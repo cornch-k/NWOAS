@@ -1,0 +1,14 @@
+{
+  "image": "/Volumes/X31/NWOAS/nwoas_scripts/usb-s182/m1n1-s182-crcr-gap50.bin",
+  "bytes": 2162688,
+  "sha256": "96da22db21c78f309d7faff2eb62ff50e12976e0eb4b67a635cc9697a4a43e78",
+  "change": "S182 CRCR write latch validation plus S163 gap50 plus USB-C DART1/SID1 translation preserving DAPF, no D83 rewrites or LOWALIAS; event seed remains0",
+  "source_sha256": {
+    "src/hv_vm.c": "8e9cd52bc71816b174af9b3a024081167f5206273a8acee37dafbb978db593bd",
+    "src/hv_exc.c": "37a4a92c0452341c6db222543906e732f304fa5d8fdb344ede6c482f84704eee",
+    "Makefile": "ad3f66e18780fd193f953eed9cee4635d352349c6d227ca5364b7d7715b61753",
+    "src/s175_dart1_translate.h": "6144be9d88d7464cd33de685d38bfa7799df6e61964a8934b7549edd48226210",
+    "src/s175_dart1_translate.c": "d96facdbc8d982f8aff22f3bf3c481fc21b0df0166ba9e63e129824da638b22c",
+    "src/s182_crcr_latch.h": "92b5307c9599fffe7c90568020630ad69d16fbacda7f988564054654db63dd6d"
+  }
+}

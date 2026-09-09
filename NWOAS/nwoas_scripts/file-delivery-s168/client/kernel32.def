@@ -1,0 +1,15 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+GetStdHandle
+WriteFile
+ReadFile
+CreateFileW
+SetFilePointerEx
+DeviceIoControl
+CloseHandle
+VirtualAlloc
+ExitProcess
+Sleep
+GetLastError
+FlushFileBuffers
+GetDiskFreeSpaceExW

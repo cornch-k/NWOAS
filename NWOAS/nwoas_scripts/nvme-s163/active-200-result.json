@@ -1,0 +1,13 @@
+{
+  "session": "nwoas_scripts/logs/usb-s163-20260910-004716.Z3njqz.link",
+  "job": 8,
+  "pass": true,
+  "samples": 745,
+  "elapsed_ms": 300141,
+  "nominal_read_bytes": 49996103680,
+  "disk_us": {
+    "min": 354100,
+    "median": 394556,
+    "max": 705132
+  }
+}

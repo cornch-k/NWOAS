@@ -1,0 +1,59 @@
+--- a/nvme-s130/guest_module.py
++++ b/nvme-s160/guest_module.py
+@@ -187,12 +187,21 @@
+ c=Controller(_namespace,memory,irq,log)
+ fast_armed=False
+ FASTPATH_ENABLED=os.environ.get("NWOAS_NVME_FASTPATH", "1")=="1"
++FAST_MASK_ENABLED=os.environ.get("NWOAS_NVME_FAST_MASK", "0")=="1"
++FAST_MASK_SIGNATURE=0x53313630
+ fast_sq_generation=fast_cq_generation=0
+ def _fast_ready():
+     return bool((c.cc&1) and (c.csts&1) and not(c.csts&2) and not((c.cc>>14)&3) and 1 in c.sq and 1 in c.cq)
++def _fast_pull_mask():
++    if not FAST_MASK_ENABLED or not fast_armed:return
++    state=p.nwoas_nvme_fastpath(8)
++    if state>>32 != FAST_MASK_SIGNATURE:raise RuntimeError('S160 mask capability mismatch')
++    c.mask=state&0xffffffff
++
+ def _fast_flags():
+     ien=bool(1 in c.cq and c.cq[1].ien)
+-    return ((c.mask&0xffffffff)<<32) | ((fast_cq_generation&0xfff)<<20) | ((fast_sq_generation&0xfff)<<8) | (int(ien and not(c.command&0x400))<<1) | (int(_namespace.cache_enabled)<<2) | 1
++    local_mask=FAST_MASK_ENABLED and not any(q.ien and q.pending for q in c.cq.values())
++    return ((c.mask&0xffffffff)<<32) | ((fast_cq_generation&0xfff)<<20) | ((fast_sq_generation&0xfff)<<8) | (int(ien and not(c.command&0x400))<<1) | (int(_namespace.cache_enabled)<<2) | (int(local_mask)<<3) | 1
+ def _fast_disable():
+     global fast_armed
+     if fast_armed:p.nwoas_nvme_fastpath(0)
+@@ -206,17 +215,21 @@
+ def _fast_arm_if_ready():
+     global fast_armed
+     if not FASTPATH_ENABLED or fast_armed or not _fast_ready():return
++    if FAST_MASK_ENABLED and p.nwoas_nvme_fastpath(8)>>32 != FAST_MASK_SIGNATURE:
++        raise RuntimeError("S160 requires target local-mask capability")
+     sq,cq=c.sq[1],c.cq[1]
+     if not p.nwoas_nvme_fastpath(1,sq.base,sq.size,cq.base,cq.size,_fast_flags()):
+         raise RuntimeError('S149 target NVMe fastpath refused queue configuration')
+     fast_armed=True
+     hv.log(f'[S149] target NVMe fastpath armed SQ={sq.base:x}/{sq.size} CQ={cq.base:x}/{cq.size}')
+ def pci_read(addr,width):
++    _fast_pull_mask()
+     off=addr-ECAM
+     value=c.pci_read(off,width) if off<4096 else (1<<width)-1
+     if off<4096:log(f'PCI R {off:x}/{width}={value:x}')
+     return value
+ def pci_write(addr,value,width):
++    _fast_pull_mask()
+     off=addr-ECAM
+     if off<4096:
+         log(f'PCI W {off:x}/{width}={value:x}');c.pci_write(off,value,width);_fast_sync()
+@@ -233,9 +246,11 @@
+ def _leave(t0):
+     now=_t.monotonic();st['host']+=now-t0;st['last_exit']=now
+ def mmio_read(addr,width):
++    _fast_pull_mask()
+     t0=_enter();value=c.read(addr-BAR,width);log(f'MMIO R {addr-BAR:x}/{width}={value:x}');_leave(t0);return value
+ def mmio_write(addr,value,width):
+     global fast_sq_generation,fast_cq_generation
++    _fast_pull_mask()
+     t0=_enter();off=addr-BAR;log(f'MMIO W {off:x}/{width}={value:x}')
+     shutting_down=off==0x14 and (not(value&1) or ((value>>14)&3))
+     if shutting_down:_fast_disable()

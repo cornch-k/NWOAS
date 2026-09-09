@@ -1,0 +1,217 @@
+{
+  "log": "nwoas_scripts/logs/cpufreq-s164-latep12-20260910-023227.4uDOb8.link/job-1.log",
+  "pass": true,
+  "samples": [
+    {
+      "cpu": 0,
+      "elapsed_us": 86817,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 88087,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 86246,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85390,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 59079,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 58873,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 58991,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 58866,
+      "checksum": 14985380435595321180
+    },
+    {
+      "cpu": 0,
+      "elapsed_us": 86912,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85542,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85435,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85539,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 58902,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 58988,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 58926,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 58962,
+      "checksum": 14985380435595321180
+    },
+    {
+      "cpu": 0,
+      "elapsed_us": 86966,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85477,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85232,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85353,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 59076,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 59008,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 58935,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 58988,
+      "checksum": 14985380435595321180
+    },
+    {
+      "cpu": 0,
+      "elapsed_us": 86941,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85338,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85381,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85413,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 59007,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 62663,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 58813,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 59027,
+      "checksum": 14985380435595321180
+    },
+    {
+      "cpu": 0,
+      "elapsed_us": 86964,
+      "checksum": 14836879606271695036
+    },
+    {
+      "cpu": 1,
+      "elapsed_us": 85456,
+      "checksum": 14728025117313573907
+    },
+    {
+      "cpu": 2,
+      "elapsed_us": 85433,
+      "checksum": 4413632990561364898
+    },
+    {
+      "cpu": 3,
+      "elapsed_us": 85356,
+      "checksum": 6331385459579929498
+    },
+    {
+      "cpu": 4,
+      "elapsed_us": 59069,
+      "checksum": 15100221238734351416
+    },
+    {
+      "cpu": 5,
+      "elapsed_us": 59026,
+      "checksum": 5376874301197588864
+    },
+    {
+      "cpu": 6,
+      "elapsed_us": 59054,
+      "checksum": 17317489058949959344
+    },
+    {
+      "cpu": 7,
+      "elapsed_us": 59053,
+      "checksum": 14985380435595321180
+    }
+  ],
+  "median_us_by_cpu": {
+    "0": 86941,
+    "1": 85477,
+    "2": 85433,
+    "3": 85390,
+    "4": 59069,
+    "5": 59008,
+    "6": 58935,
+    "7": 58988
+  },
+  "phase": "automatic late P12, fresh boot, no interactive pause"
+}

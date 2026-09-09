@@ -1,0 +1,77 @@
+--- a/src/hv_exc.c
++++ b/src/hv_exc.c
+@@ -444,6 +444,36 @@
+ 
+ /* S93: synthetic NVMe INTx level, opt-in through dedicated proxy op.
+  * No physical ANS IRQ is changed. One UP guest CPU, normal vGIC dedup/priority. */
++/* S163 experiment: bounded spacing after an NVMe virtual EOI. This keeps
++ * the level source intact and lets the interrupted DPC retire its unmask
++ * epilogue before another level delivery. No timer/USB IRQ is rate-limited.
++ * Default off; candidate build explicitly chooses the gap in microseconds.
++ * Accessed on the fixed NVMe interrupt CPU under the existing exception path. */
++#ifndef NWOAS_NVME_REASSERT_US
++#define NWOAS_NVME_REASSERT_US 0
++#endif
++static u64 nwoas_nvme_last_eoi;
++static u64 nwoas_nvme_irq_injections, nwoas_nvme_irq_eois, nwoas_nvme_irq_gated;
++static u64 nwoas_nvme_irq_last_pc, nwoas_nvme_eoi_last_pc;
++
++static void nwoas_nvme_note_eoi(u64 intd, u64 pc)
++{
++    if (intd != 900)
++        return;
++    nwoas_nvme_last_eoi = mrs(CNTPCT_EL0);
++    nwoas_nvme_irq_eois++;
++    nwoas_nvme_eoi_last_pc = pc;
++}
++
++void nwoas_nvme_dump_irq(void)
++{
++    printf("HVLOG: S163 IRQ gap_us=%u inject=%lu eoi=%lu gated=%lu "
++           "last_inject_pc=%lx last_eoi_pc=%lx\n",
++           (u32)NWOAS_NVME_REASSERT_US, nwoas_nvme_irq_injections,
++           nwoas_nvme_irq_eois, nwoas_nvme_irq_gated,
++           nwoas_nvme_irq_last_pc, nwoas_nvme_eoi_last_pc);
++}
++
+ static volatile bool nwoas_nvme_irq_host_level;
+ static volatile bool nwoas_nvme_irq_fast_level;
+ void nwoas_nvme_set_irq(u64 level)
+@@ -463,6 +493,15 @@
+         return;
+     if (!hv_vgic3_spi_enabled(900) || hv_vgic_virq_outstanding(900))
+         return;
++    u64 gap = mrs(CNTFRQ_EL0) * NWOAS_NVME_REASSERT_US / 1000000;
++    if (nwoas_nvme_last_eoi && mrs(CNTPCT_EL0) - nwoas_nvme_last_eoi < gap) {
++        nwoas_nvme_irq_gated++;
++        return;
++    }
++    if (hv_vgic3_get_free_lr() == -1)
++        return;
++    nwoas_nvme_irq_injections++;
++    nwoas_nvme_irq_last_pc = hv_get_elr();
+     hv_vgic3_inject_irq(900, hv_vgic3_get_priority(900), false, true, false, 0);
+ }
+ 
+@@ -2118,6 +2157,7 @@
+                 if(eisr & BIT(lr)){
+                     u64 lr_val = hv_vgic3_read_lr(lr);
+                     u64 intd = (lr_val >> ICH_LR_VIRTUAL_SHIFT) & ICH_LR_VIRTUAL_MASK;
++                    nwoas_nvme_note_eoi(intd, ctx->elr);
+                     hv_vgic3_write_lr(lr, 0);
+                     if(intd > 31)
+                         aic_set_mask(intd, false);//TODO: check distributor
+--- a/src/hv_vm.c
++++ b/src/hv_vm.c
+@@ -1327,8 +1327,11 @@
+     nwoas_nvme_cq_map.found = true;
+ }
+ 
++extern void nwoas_nvme_dump_irq(void);
++
+ static void nwoas_nvme_dump_cq_map(void)
+ {
++    nwoas_nvme_dump_irq();
+     printf("HVLOG: S162 CQMAP found=%u attempts=%u va=%lx ipa=%lx "
+            "s1=%lx s12=%lx s2=%lx ctx=%lx pc=%lx\n",
+            nwoas_nvme_cq_map.found, nwoas_nvme_cq_map.attempts,

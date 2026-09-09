@@ -1,0 +1,10 @@
+{
+  "pass": true,
+  "bytes_per_pass": 10737418240,
+  "passes": 3,
+  "elapsed_ms": 25030,
+  "physical_total": 15082192896,
+  "logical_processors": 8,
+  "log": "nwoas_scripts/logs/memory-s180-20260910-042559.VzdkML.link/job-2.log",
+  "limitation": "Private VirtualAlloc buffers; physical PFNs not identified. Runtime elapsed excludes host retrieval delay."
+}

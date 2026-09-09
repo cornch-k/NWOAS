@@ -1,0 +1,18 @@
+{
+  "log": "nwoas_scripts/logs/cpufreq-s164-p12-20260910-021853.lQ4qfS.link/job-4.log",
+  "cpu_passes": 3156,
+  "disk_passes": 197,
+  "elapsed_ms": 300055,
+  "pass": true,
+  "note": "P12 applied manually before this 5-minute interval; no pause/query inside interval, not a full boot-stability test.",
+  "cpu_us": {
+    "min": 77444,
+    "median": 78289.0,
+    "max": 173122
+  },
+  "disk_us": {
+    "min": 127079,
+    "median": 139055,
+    "max": 248569
+  }
+}

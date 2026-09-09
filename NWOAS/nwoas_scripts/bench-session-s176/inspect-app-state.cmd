@@ -1,0 +1,3 @@
+@echo off
+powershell -NoProfile -Command "$ErrorActionPreference='Continue'; Write-Output 'BENCHMARK PROCESS STATE'; Get-Process -Name '*Cinebench*','WerFault','WerFaultSecure' -ErrorAction SilentlyContinue | Select Id,ProcessName,SessionId,CPU,WorkingSet64,Responding,MainWindowTitle | Format-List; Write-Output 'RECENT CINEBENCH APPLICATION EVENTS'; Get-WinEvent -FilterHashtable @{LogName='Application';StartTime=(Get-Date).AddHours(-2)} -MaxEvents 150 -ErrorAction SilentlyContinue | Where-Object {$_.Message -match 'Cinebench'} | Select -First 5 TimeCreated,Id,ProviderName,Message | Format-List; Write-Output 'USER SESSION BENCH LOG'; Get-Content -LiteralPath 'C:\Users\Public\Documents\NWOAS-BENCH\cb-user-s176.log' -Tail 15 -ErrorAction SilentlyContinue"
+exit /b 0

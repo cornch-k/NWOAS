@@ -1,0 +1,11 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+ GetCommandLineW
+ VirtualAlloc
+ VirtualFree
+ GlobalMemoryStatusEx
+ QueryPerformanceCounter
+ QueryPerformanceFrequency
+ GetStdHandle
+ WriteFile
+ ExitProcess

@@ -1,0 +1,32 @@
+--- a/src/hv_vm.c
++++ b/src/hv_vm.c
+@@ -3355,15 +3355,12 @@
+     nwoas_cache_maint(cp+ep*csz,32,false);
+     u64 dq=read64(cp+ep*csz+8)&~15UL;
+     if (!dq) return;
+-    /* D83: xHC output-context DQ remains at original ring while Windows
+-     * retires/zeros old segments. Follow the last observed live Link target
+-     * on the next doorbell instead of restarting at the freed first segment. */
+-    static u64 saved_ctx[32], saved_dq[32], live_segment[32];
+-    if (saved_ctx[ep]!=ctx || saved_dq[ep]!=dq) {
+-        saved_ctx[ep]=ctx;saved_dq[ep]=dq;
+-        live_segment[ep]=nwoas_ipa_to_pa(dq);
+-    }
+-    u64 rp=live_segment[ep];
++    /* S157 A/B: do not retain a transfer-ring address across doorbells.
++     * A retired segment can be recycled while the hardware output DQ stays
++     * unchanged. Re-read the current context each time. A stale output DQ can
++     * still stop this walk early; that is a measured limitation, not a reason
++     * to write through an unvalidated cached segment address. */
++    u64 rp=nwoas_ipa_to_pa(dq);
+     static u32 logged=0, link_logged=0;
+     u64 visited[8];
+     for (u32 seg=0;rp && seg<8;seg++) {
+@@ -3372,7 +3369,6 @@
+             if (visited[k]==rp) duplicate=true;
+         if (duplicate) break;
+         visited[seg]=rp;
+-        live_segment[ep]=rp;
+         u64 next=0;
+         for (u32 j=0;j<256 && nwoas_in_dram(rp+j*16,16);j++) {
+             u64 t=rp+j*16, ptr=read64(t);

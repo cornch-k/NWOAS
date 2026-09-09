@@ -1,0 +1,22 @@
+{
+  "started": 1788981964.226292,
+  "source": "PMU info-rtc plus rtc_scrpad; CLKM equivalence unproven",
+  "guest_adt_changed": false,
+  "counter0": "480372755008",
+  "counter1": "de0372755008",
+  "offset": "e370ae9e2831",
+  "response_headers": [
+    4132669,
+    4132669,
+    4132669
+  ],
+  "cntpct0": 702686355,
+  "cntpct1": 702819479,
+  "cntfrq": 24000000,
+  "epoch": 1928472640,
+  "subticks": 29889,
+  "counter_delta": 150,
+  "host_delta_s": 139490675.76691198,
+  "plausible": false,
+  "finished": 1788981964.233092
+}

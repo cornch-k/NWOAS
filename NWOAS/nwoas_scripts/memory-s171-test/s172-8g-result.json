@@ -1,0 +1,14 @@
+{
+  "pass": true,
+  "session": "/Volumes/X31/NWOAS/nwoas_scripts/logs/memory-s172-download-p12-20260910-030718.LDYXny.link",
+  "job": 2,
+  "bytes_per_pass": 8589934592,
+  "passes": 3,
+  "checksums": [
+    "13587466706347309797",
+    "9028617878724694415",
+    "9815377171121483348"
+  ],
+  "elapsed_ms": 19120,
+  "limitation": "user-mode allocation; physical PFNs not identified"
+}

@@ -1,0 +1,7 @@
+{
+  "artifact": "PERCPU.EXE",
+  "bytes": 4608,
+  "sha256": "efdb26b96228f42ae8077a3c0f0194e3fa4acaf2fc89549916cd1771ffcc1da0",
+  "status": "built, not deployed or run",
+  "purpose": "25 million unsigned xorshift iterations per pinned logical CPU, 8 CPUs; expected aggregate from existing S140 validation"
+}

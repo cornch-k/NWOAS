@@ -1,0 +1,29 @@
+{
+  "pass_": true,
+  "benchmark": "Cinebench 2026.1.3 official Windows ARM64 CPUX",
+  "score": 1905.281,
+  "display_score": 1905.28,
+  "render_ms": 629828.2,
+  "minimum_ms": 600000,
+  "native_exit": 0,
+  "timeout": false,
+  "wrapper_elapsed_s": 658.9438152,
+  "threads": 8,
+  "windows_ram_bytes": 15082278912,
+  "log": "nwoas_scripts/logs/firmware-s192-native-20260910-052906.cYExcF.link",
+  "job": 14,
+  "hv": "S163 gap50",
+  "payload": "S192 native RTC/P12",
+  "host_late_p12_write": false,
+  "initial_s140_host_cpufreq_init": true,
+  "stdout_sha256": "a19fc7a060c9d30c46cbaaaf55496d67b36c92e550ab29f9b1901a4069fb10f5",
+  "prior_s180_score": 1647.353,
+  "score_change_percent": 15.65711781263639,
+  "limitations": [
+    "Single sample per configuration; wrapper and firmware differ, improvement not causally isolated.",
+    "Host EL2 mediation and transport remain.",
+    "No matching macOS baseline measured.",
+    "CPU MHz 30 metadata incorrect, not measured hardware speed.",
+    "No network adapter; asset DNS warnings did not prevent CPU render."
+  ]
+}

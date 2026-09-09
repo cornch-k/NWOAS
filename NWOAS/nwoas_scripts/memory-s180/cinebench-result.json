@@ -1,0 +1,32 @@
+{
+  "benchmark": "Cinebench 2026.1.3",
+  "build": "2026_benchmark_1659ae2c9f3b_2626460137",
+  "binary_architecture": "ARM64",
+  "test": "g_CinebenchCpuXTest=true",
+  "minimum_test_duration_ms": 600000,
+  "render_time_ms": 728441.1,
+  "score": 1647.353,
+  "display_score": 1647.35,
+  "reported_deviation": 0,
+  "render_count": 1,
+  "wrapper_elapsed_s": 801.2496095,
+  "logical_processors": 8,
+  "windows_physical_memory_bytes": 15082192896,
+  "hv_sha256": "bd8f16f286c8d1141df4a17d9b85eafdd4c2d39d5680c6ed75b63429f061d166",
+  "payload_sha256": "9d4664041dcf048a0ffb5688f2d157b1aff2cc8377633d9ce423a6a5846d7a65",
+  "cpu_pstate": "E5/P12 late callback",
+  "nvme_reassert_us": 50,
+  "max_transfer_bytes": 1048576,
+  "guest_stdout_sha256": "d00d88943d9b0b1cebfe2ca43fb597da94e06a850ec083408bcbd1db0a400a9c",
+  "guest_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "guest_wrapper_log_sha256": "9bd764f778cc88a2bf79aae6670c81c7d9f73763bba9d762b453519e24cb5b5e",
+  "evidence_log": "nwoas_scripts/logs/memory-s180-20260910-042559.VzdkML.link/job-18.log",
+  "limitations": [
+    "Same Mac mini macOS baseline not measured; no parity conclusion.",
+    "EL2 and host transport still used; not standalone native-driver completion.",
+    "Read-only Windows observations roughly every61s add overhead.",
+    "Cinebench asset server DNS failure due no network, but CPU render score emitted.",
+    "Wrapper ExitCode was blank; process disappearance observed, do not claim captured native exit0.",
+    "Reported CPU MHz30 is incorrect firmware metadata, not actual operating frequency."
+  ]
+}

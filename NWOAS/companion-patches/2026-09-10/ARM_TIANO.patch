@@ -1,0 +1,77 @@
+diff --git a/ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.c b/ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.c
+index b0da48e3a3..b4f318c870 100644
+--- a/ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.c
++++ b/ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.c
+@@ -26,32 +26,18 @@ GicV3Supported (
+ {
+   UINT32  IccSre;
+ 
+-  // Ideally we would like to use the GICC IIDR Architecture version here, but
+-  // this does not seem to be very reliable as the implementation could easily
+-  // get it wrong. It is more reliable to check if the GICv3 System Register
+-  // feature is implemented on the CPU. This is also convenient as our GICv3
+-  // driver requires SRE. If only Memory mapped access is available we try to
+-  // drive the GIC as a v2.
+-  if (ArmHasGicSystemRegisters ()) {
+-    // Make sure System Register access is enabled (SRE). This depends on the
+-    // higher privilege level giving us permission, otherwise we will either
+-    // cause an exception here, or the write doesn't stick in which case we need
+-    // to fall back to the GICv2 MMIO interface.
+-    // Note: We do not need to set ICC_SRE_EL2.Enable because the OS is started
+-    // at the same exception level.
+-    // It is the OS responsibility to set this bit.
+-    IccSre = ArmGicV3GetControlSystemRegisterEnable ();
+-    if (!(IccSre & ICC_SRE_EL2_SRE)) {
+-      ArmGicV3SetControlSystemRegisterEnable (IccSre | ICC_SRE_EL2_SRE);
+-      IccSre = ArmGicV3GetControlSystemRegisterEnable ();
+-    }
+-
+-    if (IccSre & ICC_SRE_EL2_SRE) {
+-      return TRUE;
+-    }
++  // NWOAS: force GICv3. On Apple silicon ArmHasGicSystemRegisters() returns FALSE
++  // (the M1 does not advertise the GIC in ID_AA64PFR0_EL1) so the original check
++  // never ran and we fell back to the absent GICv2 MMIO CPU interface (base 0),
++  // faulting at 0x8. The M1 implements the GICv3 sysreg CPU interface and the
++  // m1n1 vGIC emulates the distributor/redistributor, so use GICv3 here. We still
++  // attempt to enable SRE so the GICv3 driver's ICC_* accesses are permitted.
++  IccSre = ArmGicV3GetControlSystemRegisterEnable ();
++  if (!(IccSre & ICC_SRE_EL2_SRE)) {
++    ArmGicV3SetControlSystemRegisterEnable (IccSre | ICC_SRE_EL2_SRE);
+   }
+ 
+-  return FALSE;
++  return TRUE;
+ }
+ 
+ /**
+diff --git a/ArmPkg/Drivers/CpuDxe/AArch64/Mmu.c b/ArmPkg/Drivers/CpuDxe/AArch64/Mmu.c
+index 62fa685957..87ae128018 100644
+--- a/ArmPkg/Drivers/CpuDxe/AArch64/Mmu.c
++++ b/ArmPkg/Drivers/CpuDxe/AArch64/Mmu.c
+@@ -57,6 +57,10 @@ PageAttributeToGcdAttribute (
+     case TT_ATTR_INDX_DEVICE_MEMORY:
+       GcdAttributes = EFI_MEMORY_UC;
+       break;
++    // NWOAS: Device-nGnRE (Apple PCIe MMIO, MAIR index 4) reports as UC to the GCD
++    case TT_ATTR_INDX_DEVICE_MEMORY_NGNRE:
++      GcdAttributes = EFI_MEMORY_UC;
++      break;
+     case TT_ATTR_INDX_MEMORY_NON_CACHEABLE:
+       GcdAttributes = EFI_MEMORY_WC;
+       break;
+diff --git a/ArmPkg/Library/ArmMmuLib/AArch64/ArmMmuLibCore.c b/ArmPkg/Library/ArmMmuLib/AArch64/ArmMmuLibCore.c
+index 65804deb66..cc9fa46e5a 100644
+--- a/ArmPkg/Library/ArmMmuLib/AArch64/ArmMmuLibCore.c
++++ b/ArmPkg/Library/ArmMmuLib/AArch64/ArmMmuLibCore.c
+@@ -749,7 +749,9 @@ ArmConfigureMmu (
+     MAIR_ATTR (TT_ATTR_INDX_DEVICE_MEMORY, MAIR_ATTR_DEVICE_MEMORY)               |
+     MAIR_ATTR (TT_ATTR_INDX_MEMORY_NON_CACHEABLE, MAIR_ATTR_NORMAL_MEMORY_NON_CACHEABLE) |
+     MAIR_ATTR (TT_ATTR_INDX_MEMORY_WRITE_THROUGH, MAIR_ATTR_NORMAL_MEMORY_WRITE_THROUGH) |
+-    MAIR_ATTR (TT_ATTR_INDX_MEMORY_WRITE_BACK, MAIR_ATTR_NORMAL_MEMORY_WRITE_BACK)
++    MAIR_ATTR (TT_ATTR_INDX_MEMORY_WRITE_BACK, MAIR_ATTR_NORMAL_MEMORY_WRITE_BACK)  |
++    // NWOAS: index 4 = Device-nGnRE, for Apple PCIe MMIO (posted writes / early ack)
++    MAIR_ATTR (TT_ATTR_INDX_DEVICE_MEMORY_NGNRE, MAIR_ATTR_DEVICE_MEMORY_NGNRE)
+     );
+ 
+   ArmSetTTBR0 (TranslationTable);

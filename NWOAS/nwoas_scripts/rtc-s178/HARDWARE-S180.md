@@ -1,0 +1,3 @@
+# First actual bounded RTC evidence
+
+S180 preboot probe completed three read transactions in 6.8ms, no PMU writes or guestADT change. Counter advanced150ticks while physicalcounter interval5.55ms. Counter0=0x085075720348, counter1=0x0850757203de, offset=0x31289eae70e3. Linux CLKM+offset formula with this directPMUcounter gives epoch1928472640, roughly139,490,675s ahead of hostUTC. Therefore directPMUd002 plus thisoffset has NOT been validated as wallclock source. Do not seed guestRTC with it. Either directcounter differsfromCLKM, offset semantics differ, or actualPMUstoredclock is wrong; evidence cannot choose yet. Read-only comparison againstSMCCLKM is the next discriminating measurement. Underlyingproxytimeout is separate from100ms softwarepollbudget.

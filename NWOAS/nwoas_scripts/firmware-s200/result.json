@@ -1,0 +1,21 @@
+{
+  "pass_": true,
+  "run": "nwoas_scripts/logs/firmware-s200-nohost-20260910-055702.XlGKN7.link",
+  "job": 1,
+  "ram_bytes": 15082278912,
+  "cores": 8,
+  "host_cpu_init": false,
+  "native_p12": {
+    "phase": "Windows worker connected; no host P-state writes",
+    "utc": 1788987460.225316,
+    "p_cmd": "0x4000010c10c",
+    "p_status": "0xcc",
+    "e_cmd": "0x40000105105",
+    "e_status": "0x55",
+    "p12_selected": true
+  },
+  "ssd_write_us": 135253,
+  "ssd_read_us": 217724,
+  "verified_words": 33554432,
+  "note": "Native RTC/P12 plus bounded HPD and host-init omission; short integration test only."
+}

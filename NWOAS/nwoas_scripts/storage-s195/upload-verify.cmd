@@ -1,0 +1,3 @@
+@echo off
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $b=[Convert]::FromBase64String((Get-Content -Raw 'C:\NWOAS-S195\IOTEST.B64')); $h=[BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b)).Replace('-','').ToLower(); if($h -ne 'effd43ff105cb5d4ede2d72a9f415eac02557012f0b419254688f53f47fa2bb8'){throw 'S195 hash mismatch'}; $f=[IO.File]::Open('C:\NWOAS-S195\IOTEST.EXE',[IO.FileMode]::CreateNew); try{$f.Write($b,0,$b.Length);$f.Flush()}finally{$f.Dispose()}; Get-FileHash 'C:\NWOAS-S195\IOTEST.EXE' | Format-List; Write-Output 'S195 UPLOAD VERIFIED'"
+exit /b %errorlevel%

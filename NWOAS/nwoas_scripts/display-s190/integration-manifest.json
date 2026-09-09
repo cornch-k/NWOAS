@@ -1,0 +1,7 @@
+{
+  "base_sha256": "81e9b509246a707e2dc9c7c2f1d40797db1e9d786fd8886b14197473b6502b45",
+  "helper_sha256": "112d437f30c785b167647269df5d8b1ccadcffa4cbd5c2ca16a927284f7c86a6",
+  "hook_sha256": "72280fe652b314b7f79ef09cda2a41298cfe63ce680e1846889dd7a602b5478e",
+  "change": "Only bounded HPD/count waits before hv.init and guest start; no invented geometry; max170 entries in4096B buffer",
+  "hardware": "untested"
+}

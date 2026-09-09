@@ -1,0 +1,12 @@
+{
+  "pass_": true,
+  "run": "nwoas_scripts/logs/cpufreq-s193-nohost-20260910-054545.sKqH3f.link",
+  "job": 3,
+  "cpu_samples": 3219,
+  "disk_samples": 201,
+  "elapsed_ms": 300029,
+  "cpu_median_us": 78270,
+  "disk_median_us": 125182,
+  "host_cpu_init": false,
+  "note": "Five-minute continuous CPU work plus 64MiB read every16 iterations, all checksums correct; not lifetime stability proof."
+}

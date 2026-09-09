@@ -1,0 +1,15 @@
+{
+  "pass": true,
+  "log": "nwoas_scripts/logs/memory-s180-20260910-042559.VzdkML",
+  "host_backing": "0xae0fcc000",
+  "early_backing": "0xae0fcc000",
+  "backing": "0xae0fcc000",
+  "phys_base": "0x83d600000",
+  "mem_size": "0x2a39cc000",
+  "wide_l1": [
+    1054,
+    1392
+  ],
+  "wide_tables": 339,
+  "final_identity_ptes": 691827
+}

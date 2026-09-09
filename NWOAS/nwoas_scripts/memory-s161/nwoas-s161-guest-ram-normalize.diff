@@ -1,0 +1,353 @@
+NWOAS S161: normalize S102 guest RAM end / low-window backing across all consumers.
+
+PROPOSED, NOT APPLIED.  Two steps from the apple_silicon_platforms_mu root:
+
+  1. cp  nwoas_scripts/memory-s161/Include/Library/NwoasGuestRam.h \
+         Silicon/Apple/AppleSiliconPkg/Include/Library/NwoasGuestRam.h
+  2. git apply --check -p1 nwoas_scripts/memory-s161/nwoas-s161-guest-ram-normalize.diff
+     git apply         -p1 nwoas_scripts/memory-s161/nwoas-s161-guest-ram-normalize.diff
+
+(The new header is shipped as a file rather than embedded here so the review diff stays
+tight; nothing in this diff compiles without it.)
+
+Root cause (S158 log, S159 review): under NWOAS_WINDOW_AFTER_RAM=1 the hv already excludes
+the 4 GiB window backing from boot_args.mem_size, but PrePi/AdtParser.c still subtracted
+4 GiB (EARLY backing 0x9E0FCC000) and SetupApcieDarts() recomputed a local backing with an
+unconditional minus-4 GiB, so the WIDE-DART L2 tables stopped at L1[1264] while the
+ExitBootServices fill and NwoasHideHighRamDxe used phys_base+mem_size = 0xAE0FCC000.
+
+Fix: one header-only helper (NwoasGuestRam.h) computes {GuestRamSize, GuestRamEnd,
+BackingPa, BackingEnd} with overflow/underflow/alignment validation; all four consumers
+call it.  Mode 1 subtracts nothing; legacy mode 0 subtracts exactly once.  The [0,4GiB)
+window, NwoasHideHighRamDxe policy (NWOAS_HIDE_BASE, guard), and PCI leaf handling are
+unchanged.  MemoryInitPeiLib's stale backing DEBUG range is corrected.
+
+Line numbers are against the tree as read on 2026-09-10.
+
+diff --git a/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c b/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c
+--- a/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c
++++ b/Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c
+@@ -7,7 +7,9 @@
+ #include <Uefi.h>
+ #include <Library/BaseMemoryLib.h>
++#include <Library/BaseLib.h>          // NWOAS S161: CpuDeadLoop on an invalid guest-RAM layout
+ #include <Library/DebugAgentLib.h>
+ #include <Library/DebugLib.h>
+ #include <Library/AppleDTLib.h>
++#include <Library/NwoasGuestRam.h>    // NWOAS S161: ONE helper for guest RAM end / window backing
+
+ #define ALIGN_UP(x, a)   (((x) + ((a) - 1)) & ~((a) - 1))
+@@ -34,29 +36,53 @@
+
+   *SystemMemoryBase = BootArgs->phys_base;
+   //
+-  // NWOAS EXP-5 5c (low-RAM DMA alias for the platform xHCI): carve the TOP 0xE0000000 (3.5GB) of
+-  // guest RAM out of the UEFI/Windows system-memory map. That top slice is the "backing" that the
+-  // m1n1 hv aliases to the low IPA window (base 0x20000000, size 0xE0000000) so the FL1100 xHCI --
+-  // behind a 32-bit-IOVA Apple PCIe DART -- has device-reachable RAM below 4GB. Excluding it here
+-  // means neither UEFI nor Windows ever allocates it directly, while it stays real RAM reachable
+-  // through the alias. Keep in sync with (carve size == window size == 0xE0000000):
+-  //   - AppleDartIoMmuDxe backing = phys_base + mem_size - APCIE_WIN_SIZE (this reduced top)
+-  //   - hv map_hw alias backing    = phys_base + mem_size - win_size  (pcie_emul; same address)
+-  //   - MemoryInitPeiLib window    = [0x20000000, 0x100000000) as the sole Conventional pool
+-  //   - DSDT _DMA _TRA = 0 (device == the low IPA window; no >4GB translation needed)
++  // NWOAS S161 (supersedes the EXP-5 5c carve): guest RAM end and the low DMA-window backing come
++  // from ONE helper, NwoasGuestRam.h, shared with AppleDartIoMmuDxe / NwoasHideHighRamDxe /
++  // MemoryInitPeiLib. NWOAS_WINDOW_AFTER_RAM=1 (S102, default): the hv already excludes the 4GB
++  // window backing from boot_args.mem_size, so guest RAM is [phys_base, phys_base+mem_size) and
++  // the backing starts exactly at that end -- NOTHING is subtracted here. (S158 log: this file
++  // subtracted 4GB a SECOND time -> EARLY backing 0x9E0FCC000 vs DART 0xAE0FCC000.)
++  // NWOAS_WINDOW_AFTER_RAM=0 (legacy): the backing is the top 4GB of mem_size; the helper subtracts
++  // it exactly once. Keep in sync with (window == [0, 4GB), DSDT _DMA _TRA = 0):
++  //   - AppleDartIoMmuDxe backing = Layout.BackingPa (same helper, same value)
++  //   - hv map_hw alias backing   = phys_base + mem_size (S102 hv) / minus win_size (legacy hv)
++  //   - MemoryInitPeiLib window   = [0, 0x100000000) as the sole sub-4GB Conventional pool
+   //
+-  *SystemMemorySize = BootArgs->mem_size - 0x100000000;   // EXP-5 5c-v7: carve top 4GB (window base 0, size 4GB)
++  {
++    NWOAS_GUEST_RAM_LAYOUT  Layout;
++    NWOAS_GUEST_RAM_STATUS  LayoutStatus;
++
++    LayoutStatus = NwoasComputeGuestRamLayout (BootArgs->phys_base, BootArgs->mem_size, &Layout);
++    if (LayoutStatus != NwoasGuestRamOk) {
++      //
++      // AArch64/ModuleEntryPoint.S ignores EarlySetup's return value (cbz x0,.Lout falls into
++      // .Lout either way), so an invalid layout has to stop HERE: advertising a wrapped or
++      // underflowed size would hand DXE a corrupt memory map and alias the DART window onto
++      // live RAM. The DEBUG below reaches the m1n1 serial before the halt.
++      //
++      DEBUG((DEBUG_ERROR, "HVLOG: NWOAS EARLY guest RAM layout INVALID (%a) phys_base=0x%llx mem_size=0x%llx mode=%d -- halting\n",
++             NwoasGuestRamStatusName (LayoutStatus), (UINT64)BootArgs->phys_base, (UINT64)BootArgs->mem_size,
++             NWOAS_WINDOW_AFTER_RAM));
++      ASSERT (FALSE);
++      CpuDeadLoop ();
++      return FALSE;
++    }
++    *SystemMemorySize = Layout.GuestRamSize;
++    DEBUG((DEBUG_ERROR, "HVLOG: NWOAS EARLY guest RAM 0x%llx..0x%llx size=0x%llx (mem_size=0x%llx mode=%d) backing 0x%llx..0x%llx\n",
++           Layout.PhysBase, Layout.GuestRamEnd, Layout.GuestRamSize, Layout.BootArgsMemSize,
++           NWOAS_WINDOW_AFTER_RAM, Layout.BackingPa, Layout.BackingEnd));
++  }
+
+   //
+   // NWOAS EXP-5 5c (coherence, EARLY backing signal): emit the low-window backing PA HERE, in
+   // EarlySetup (PrePi/SEC), which runs BEFORE DxeMain's CoreInitializeMemoryServices seeds the DXE
+   // pool from the window. Under Method A the window is the ONLY Conventional pool, so DXE writes to
+   // it from pool-init onward; the hv alias must therefore carry the CORRECT backing BEFORE that. The
+   // hv breaker (pcie_emul-exp5.py) parses "backing PA 0x..." from the serial and re-maps its alias
+   // to match -- previously it only saw the DART's per-Map log (during BDS, AFTER the pool is in use),
+   // so the deferred re-map would shift already-written DXE data by the ~208KB inner-m1n1 skew and
+   // corrupt the boot. Logging the SAME value (SystemMemoryBase+SystemMemorySize == mApcieBackingPa ==
+-  // phys_base+mem_size-WIN_SIZE) here lets the breaker correct the alias while the window is still
++  // Layout.BackingPa from NwoasGuestRam.h) here lets the breaker correct the alias while the window is still
+   // untouched. DEBUG_ERROR level so it reaches the m1n1 serial in real time (same path as the DART's
+   // HVLOG lines, AppleDartIoMmuDxe.c:543).
+   //
+diff --git a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c
+--- a/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c
++++ b/Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c
+@@ -46,6 +46,7 @@
+ #include <Protocol/IoMmu.h>
+
+ #include <Drivers/AppleDartIoMmuDxe.h>
++#include <Library/NwoasGuestRam.h>   // NWOAS S161: ONE helper for guest RAM end / low-window backing
+
+ //
+ // NWOAS: compile-time gate for the DMACOV DMA-coverage instrumentation (per-16KB-page FNV
+@@ -501,23 +502,25 @@
+ // per-Map translation inside that function can reference them. base + size is pinned to
+ // 0x100000000 (window top == 4GB) so a 32-bit device can reach the whole window.
+ //
+-#define APCIE_WIN_IOVA_BASE 0x0000000000000000ULL   // low IOVA == NWOAS_DMA_WIN_BASE (EXP-5 5c-v7: base 0x20000000 -> 0, whole sub-4GB)
+-// S102: 1 = guest RAM ends where the low-window backing begins (hv shrinks boot_args.mem_size);
+-//       0 = legacy: backing is the top APCIE_WIN_SIZE of guest RAM (aliases UEFI allocations!).
+-#ifndef NWOAS_WINDOW_AFTER_RAM
+-#define NWOAS_WINDOW_AFTER_RAM 1
+-#endif
+-#define APCIE_WIN_SIZE      0x0000000100000000ULL    // 4GB (EXP-5 5c-v7: 0xE0000000 -> 0x100000000; base+size == 0x100000000)
++#define APCIE_WIN_IOVA_BASE NWOAS_DMA_WIN_BASE   // low IOVA == window IPA base (0: whole sub-4GB); value unchanged
++// S102 mode switch NWOAS_WINDOW_AFTER_RAM (1 = hv excludes the window backing from mem_size, 0 =
++// legacy top-of-RAM backing) now lives in NwoasGuestRam.h so every consumer sees ONE default.
++#define APCIE_WIN_SIZE      NWOAS_DMA_WIN_SIZE   // 4GB; base+size == 0x100000000; value unchanged
+
+ //
+-// NWOAS memory/DMA fix: low DMA-window DART backing PA, computed ONCE at DXE init from BootArgs
+-// (phys_base + mem_size - APCIE_WIN_SIZE) so it equals the m1n1 hv map_hw alias (pcie_emul.py) and
+-// the AdtParser carve-out, NOT PcdSystemMemoryBase+PcdSystemMemorySize which THIS module reads
+-// UNPATCHED (see the long comment at the DXE-init computation site). Cached because the
+-// ExitBootServices handler may run after the boot_args copy at PcdBootArgsPointer (0x840000000,
+-// unreserved conventional RAM) has been reclaimed by the Windows loader's RAMDisk allocations.
+-//
+-STATIC UINT64   mApcieBackingPa = 0;
++// NWOAS memory/DMA fix: low DMA-window DART backing PA, computed ONCE at DXE init from BootArgs via
++// NwoasComputeGuestRamLayout (NwoasGuestRam.h -- the SAME helper PrePi uses for PcdSystemMemorySize,
++// so EARLY / boot-time / EBS backing are identical), NOT PcdSystemMemoryBase+PcdSystemMemorySize which
++// THIS module reads UNPATCHED (see the long comment at the DXE-init computation site). Cached because
++// the ExitBootServices handler may run after the boot_args copy at PcdBootArgsPointer (0x840000000,
++// unreserved conventional RAM) has been reclaimed by the Windows loader's RAMDisk allocations.
++// mNwoasRamValid: TRUE only when boot_args produced a valid layout; the window-IPA -> backing
++// translation of the DART's own tables and the WIDE-DART range are gated on it (a PCD-fallback
++// backing is deliberately NOT used for those, matching the previous NwoasBacking==0 behaviour).
++//
++STATIC UINT64                  mApcieBackingPa = 0;
++STATIC NWOAS_GUEST_RAM_LAYOUT  mNwoasRam;
++STATIC BOOLEAN                 mNwoasRamValid  = FALSE;
+
+ #define APCIE_IOVA_END    0xF0000000ULL
+ #define APCIE_L2_ENTRIES  (SIZE_4GB / DART_PAGE_SIZE)               // 256K
+@@ -627,13 +630,14 @@
+   // controller stays halted, Enable Slot times out; observed 5c). §4.3 only translates DATA buffer
+   // addresses, NOT the DART's own structure addresses -- THIS was the gap. 5a/5b worked because the
+   // tables were in identity RAM (window IPA == host PA). Translate window IPA -> backing PA here,
+-  // exactly as §4.3 / the EBS static window do. Backing computed locally from boot_args (mApcieBackingPa
+-  // may not be set yet at DART-init); non-window (identity) allocations pass through unchanged.
++  // exactly as §4.3 / the EBS static window do. NWOAS S161: the backing is the DXE-init value from
++  // the shared helper (AppleDartIoMmuDxeInitialize computes it BEFORE calling us) -- the previous
++  // local recompute subtracted APCIE_WIN_SIZE unconditionally, so under S102 the WIDE-DART tables
++  // stopped 4 GiB short of the EBS identity end (S158 log: L1[..1264] vs backing 0xAE0FCC000).
++  // NwoasBacking==0 (invalid boot_args) keeps the old semantics: passthrough, no wide map.
+   //
+   {
+-    struct boot_args *NwoasBA = (struct boot_args *)FixedPcdGet64 (PcdBootArgsPointer);
+-    UINT64 NwoasBacking = ((NwoasBA->phys_base >= 0x800000000ULL) && (NwoasBA->mem_size > APCIE_WIN_SIZE))
+-                          ? (NwoasBA->phys_base + NwoasBA->mem_size - APCIE_WIN_SIZE) : 0;
++    UINT64 NwoasBacking = mNwoasRamValid ? mNwoasRam.BackingPa : 0;
+     #define NWOAS_WIN2BACK(a) \
+       ( (NwoasBacking != 0 && (UINT64)(a) >= APCIE_WIN_IOVA_BASE && \
+          (UINT64)(a) < APCIE_WIN_IOVA_BASE + APCIE_WIN_SIZE) \
+@@ -654,7 +658,7 @@
+     // additive: it touches only L1[phys_base>>25 .. (backing-1)>>25], never the flat-L2 window L1[0..127].
+     //
+     if (NwoasBacking != 0) {
+-      mWideDartPhysBase = NwoasBA->phys_base;                       // low bound; backing already in mApcieBackingPa
++      mWideDartPhysBase = mNwoasRam.PhysBase;                       // low bound (same layout as the backing)
+       UINTN L1Lo = (UINTN)(mWideDartPhysBase >> APCIE_L1_SHIFT);
+       UINTN L1Hi = (UINTN)((NwoasBacking - 1) >> APCIE_L1_SHIFT);
+       if (L1Lo < APCIE_L1_ENTRIES) {
+@@ -1076,9 +1080,9 @@
+ //      the PCI root is hidden from Windows (PCI0._STA=0) so pci.sys will never
+ //      enable decode itself; the platform XHC0 needs the path pre-enabled.
+ // ============================================================================
+-// APCIE_WIN_IOVA_BASE / APCIE_WIN_SIZE were moved UP to the top static block (the EXP-5 §4.3
+-// window-aware Map translation, which precedes this section, needs them). backing PA =
+-// RAM top - APCIE_WIN_SIZE, computed once at DXE init into mApcieBackingPa (also moved up).
++// APCIE_WIN_IOVA_BASE / APCIE_WIN_SIZE were moved UP to the top static block (the EXP-5 §4.3
++// window-aware Map translation, which precedes this section, needs them). backing PA =
++// NwoasGuestRam.h Layout.BackingPa (S161), computed once at DXE init into mApcieBackingPa.
+ #define APCIE_ECAM_BASE     0x690000000ULL
+ #define FL1100_XHCI_BAR_CPU 0x6C0000000ULL
+
+@@ -1126,7 +1130,7 @@
+     // Windows -- a LIVE page, not the carved backing slice -- so the old PcdGet64 sum made the xHCI
+     // DART translate the low IPA window onto live Windows RAM while the hv aliased that same window
+     // onto phys_base+mem_size-0x20000000: the DMA-corruption root cause. mApcieBackingPa was computed
+-    // at DXE init as phys_base+mem_size-APCIE_WIN_SIZE, matching the hv map_hw alias (pcie_emul.py)
++    // at DXE init by NwoasComputeGuestRamLayout (S161; S102: phys_base+mem_size), matching the hv map_hw alias
+     // and the AdtParser invariant (the four consumers: hv alias / MemoryInitPeiLib HOB / this DART
+     // window / DSDT _DMA all point at the same carved backing PA).
+     UINT64 Backing = mApcieBackingPa;
+@@ -1247,26 +1251,30 @@
+       struct boot_args *NwoasBA = (struct boot_args *)FixedPcdGet64 (PcdBootArgsPointer);
+       UINT64 PhysBase = NwoasBA->phys_base;
+       UINT64 MemSize  = NwoasBA->mem_size;
+-      if ((PhysBase >= 0x800000000ULL) && (MemSize > APCIE_WIN_SIZE)) {
+-#if NWOAS_WINDOW_AFTER_RAM
+-        // S102: the hv now excludes the window backing from boot_args.mem_size, so the backing
+-        // starts exactly where guest RAM ends (m1n1 mem_top - win - skew == phys_base + mem_size).
+-        mApcieBackingPa = PhysBase + MemSize;
+-#else
+-        mApcieBackingPa = PhysBase + MemSize - APCIE_WIN_SIZE;
+-#endif
+-      } else {
++      NWOAS_GUEST_RAM_STATUS LayoutStatus;
++
++      // NWOAS S161: ONE helper, shared with PrePi/AdtParser (PcdSystemMemorySize), NwoasHideHighRamDxe
++      // and MemoryInitPeiLib. S102 (NWOAS_WINDOW_AFTER_RAM=1): backing == phys_base + mem_size, the hv
++      // already excluded the window backing; legacy (0): minus APCIE_WIN_SIZE exactly once. The helper
++      // rejects phys_base < 32GB, unaligned / zero / underflowing mem_size and UINT64 wrap.
++      LayoutStatus = NwoasComputeGuestRamLayout (PhysBase, MemSize, &mNwoasRam);
++      if (LayoutStatus == NwoasGuestRamOk) {
++        mNwoasRamValid  = TRUE;
++        mApcieBackingPa = mNwoasRam.BackingPa;
++      } else {
+         // BootArgs looked invalid (null-ish pointer / clobbered): fall back to the patchable PCDs and
+         // shout, rather than program a wild DART PTE. This path is the OLD (buggy) behaviour, taken
+         // only if boot_args is unreadable -- in which case the framebuffer/boot would already be dead.
+         mApcieBackingPa = PcdGet64 (PcdSystemMemoryBase) + PcdGet64 (PcdSystemMemorySize);
+-        DEBUG ((DEBUG_ERROR,
+-                "HVLOG: NWOAS DART backing: BootArgs invalid (phys_base=0x%lx mem_size=0x%lx) -> fell back to PCD 0x%lx\n",
+-                PhysBase, MemSize, mApcieBackingPa));
++        mNwoasRamValid  = FALSE;
++        DEBUG ((DEBUG_ERROR,
++                "HVLOG: NWOAS DART backing: BootArgs invalid (%a: phys_base=0x%lx mem_size=0x%lx) -> fell back to PCD 0x%lx\n",
++                NwoasGuestRamStatusName (LayoutStatus), PhysBase, MemSize, mApcieBackingPa));
+       }
+-      DEBUG ((DEBUG_ERROR,
+-              "HVLOG: NWOAS DART backing computed 0x%lx (phys_base=0x%lx mem_size=0x%lx win=0x%lx)\n",
+-              mApcieBackingPa, PhysBase, MemSize, (UINT64)APCIE_WIN_SIZE));
++      DEBUG ((DEBUG_ERROR,
++              "HVLOG: NWOAS DART backing computed 0x%lx (phys_base=0x%lx mem_size=0x%lx guest_end=0x%lx win=0x%lx mode=%d valid=%d)\n",
++              mApcieBackingPa, PhysBase, MemSize, mNwoasRamValid ? mNwoasRam.GuestRamEnd : 0ULL,
++              (UINT64)APCIE_WIN_SIZE, NWOAS_WINDOW_AFTER_RAM, (UINT32)mNwoasRamValid));
+     }
+
+     //
+diff --git a/Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c b/Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c
+--- a/Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c
++++ b/Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c
+@@ -56,6 +56,7 @@
+ #include <Library/PcdLib.h>
+ #include <Library/BaseLib.h>
+ #include <Library/AppleDTLib.h>
++#include <Library/NwoasGuestRam.h>   // NWOAS S161: ONE helper for guest RAM end / window backing
+ #include <Library/NonDiscoverableDeviceRegistrationLib.h>
+
+ #ifndef NWOAS_UEFI_NVME
+@@ -372,9 +373,9 @@
+   BA       = (struct boot_args *)FixedPcdGet64 (PcdBootArgsPointer);
+   PhysBase = BA->phys_base;
+   MemSize  = BA->mem_size;
+-  // S102: the hv excludes the window backing from mem_size, so backing == PhysBase + MemSize.
+-  Backing  = ((PhysBase >= 0x800000000ULL) && (MemSize > 0x100000000ULL))
+-               ? (PhysBase + MemSize) : 0;
++  // NWOAS S161: same helper as PrePi/AppleDartIoMmuDxe (S102: PhysBase + MemSize; legacy: minus
++  // 4GB exactly once). 0 == invalid boot_args. Log-only here: the hide policy below is unchanged.
++  Backing  = NwoasGuestRamBackingPa (PhysBase, MemSize);
+
+   DEBUG ((DEBUG_ERROR,
+     "HVLOG: NWOAS HIDE begin phys_base=0x%lx mem_size=0x%lx backing=0x%lx "
+diff --git a/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c b/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
+--- a/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
++++ b/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
+@@ -29,22 +29,23 @@
+
+ //Device memory map configuration file for UEFI (this is to help with pagetable initialization)
+ #include <Library/T810XFamilyVirtualMemoryMapDefines.h>
++#include <Library/NwoasGuestRam.h>   // NWOAS S161: NWOAS_DMA_WIN_BASE/SIZE + guest RAM/backing helper (shared)
+
+ #define MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS 20
+
+ //
+ // NWOAS Stage 4 (low-RAM DMA alias for the platform xHCI, see DSDT SCB0/XHC0):
+-// The m1n1 hypervisor aliases guest IPA [NWOAS_DMA_WIN_BASE, +NWOAS_DMA_WIN_SIZE) onto the
+-// TOP NWOAS_DMA_WIN_SIZE bytes of real guest RAM (SystemMemoryTop - NWOAS_DMA_WIN_SIZE).
++// The m1n1 hypervisor aliases guest IPA [NWOAS_DMA_WIN_BASE, +NWOAS_DMA_WIN_SIZE) onto the
++// NWOAS_DMA_WIN_SIZE bytes of real RAM that start at SystemMemoryTop (== Layout.BackingPa from
++// NwoasGuestRam.h; PrePi sizes PcdSystemMemorySize with the same helper, S161).
+ // Because the Apple PCIe DART is 32-bit-IOVA-only and Windows' AllocateCommonBuffer caps a
+ // 32-bit device's *physical* allocation at 4GB (it does NOT relocate via ACPI _DMA _TRA), we
+ // must make real, device-reachable RAM physically appear below 4GB. We advertise this low
+ // window as usable system memory (Windows allocates xHCI DMA rings/DCBAA from it) and RESERVE
+ // the high backing so the same DRAM is never double-allocated. Must stay consistent with the
+ // hv map_hw() alias, the UEFI DART EBS window, and the DSDT _DMA (_TRA=0).
+ //
+-#define NWOAS_DMA_WIN_BASE   0x0000000000000000ULL   // EXP-5 5c-v7: base lowered 0x20000000 -> 0 (whole sub-4GB is the window). bootmgfw needs RAM at 0x10000000 (ConvertPages failed when [0,0x20000000) was NonExist under Method A)
+-#define NWOAS_DMA_WIN_SIZE   0x0000000100000000ULL   // 4GB (EXP-5 5c-v7: 0xE0000000 -> 0x100000000; base+size == 0x100000000, window top pinned at 4GB)
++// NWOAS_DMA_WIN_BASE (0) / NWOAS_DMA_WIN_SIZE (4GB) now come from NwoasGuestRam.h -- same values.
+
+ //
+ // NWOAS deferred-application gate (2026-07-10 pivot, see MemoryPeim() !Found block).
+@@ -235,8 +236,9 @@
+     //
+     // NWOAS deferred approach (2026-07-10 pivot, NWOAS_METHOD_A==0): advertise the high system RAM
+     // [PcdSystemMemoryBase, +PcdSystemMemorySize) == [phys_base, backing) as normal SYSTEM_MEMORY.
+-    // PcdSystemMemorySize is already (mem_size - 4GB) from AdtParser EarlySetup, so this covers only
+-    // the low 12GB and leaves the top-4GB backing slice out of the Conventional pool -- exactly the
++    // PcdSystemMemorySize is Layout.GuestRamSize from AdtParser EarlySetup (NwoasGuestRam.h, S161:
++    // S102 == boot_args.mem_size as-is, legacy == mem_size - 4GB once), so this range ends exactly at
++    // the backing and leaves the 4GB backing slice out of the Conventional pool -- exactly the
+     // range the low [0,4GB) window (built below) is aliased onto by the hv, so the same DRAM is never
+     // double-allocated. Result: UEFI/DXE run in device-reachable real RAM (FL1100 reaches UEFI's own
+     // xHCI buffers via the dynamic per-Map DART -> UEFI USB reads work like no-EXP-5), while the low
+@@ -358,9 +360,9 @@
+
+   //
+   // NWOAS EXP-5 5c Method A (design §4.4): the low DMA-alias window is now the ONLY
+-  // EFI_RESOURCE_SYSTEM_MEMORY resource -> the ONLY Conventional pool Windows sees. Backing = top
+-  // NWOAS_DMA_WIN_SIZE of RAM; SystemMemoryTop (computed above) matches the m1n1 hv's mem_top (both
+-  // = BootArgs phys_base + mem_size), so all four consumers (hv alias / this HOB / DART EBS window /
++  // EFI_RESOURCE_SYSTEM_MEMORY resource -> the ONLY Conventional pool Windows sees. Backing =
++  // [SystemMemoryTop, +NWOAS_DMA_WIN_SIZE); SystemMemoryTop == PcdSystemMemoryBase+PcdSystemMemorySize
++  // == Layout.GuestRamEnd (S161, NwoasGuestRam.h), so all four consumers (hv alias / this HOB / DART EBS window /
+   // DSDT _DMA) agree on the same backing physical range. High RAM is now EFI_RESOURCE_MEMORY_RESERVED
+   // (see the !Found block above), so Windows cannot use it -> the xHCI common buffer is forced here.
+   //
+@@ -380,10 +382,14 @@
+   // so the window no longer needs to be withheld from the free pool.
+   //   (removed) BuildMemoryAllocationHob (NWOAS_DMA_WIN_BASE, NWOAS_DMA_WIN_SIZE, EfiBootServicesData);
+   //
+-  DEBUG ((DEBUG_ERROR,
+-    "NWOAS: low DMA window 0x%lx..0x%lx (Conventional, sole pool) aliased to backing 0x%lx..0x%lx (high RAM reserved)\n",
+-    NWOAS_DMA_WIN_BASE, NWOAS_DMA_WIN_BASE + NWOAS_DMA_WIN_SIZE,
+-    SystemMemoryTop - NWOAS_DMA_WIN_SIZE, SystemMemoryTop));
++  // NWOAS S161: SystemMemoryTop == PcdSystemMemoryBase + PcdSystemMemorySize == Layout.GuestRamEnd ==
++  // the BACKING START (PrePi sizes the PCD with the same helper). The old range printed [Top-4GB, Top),
++  // i.e. the last 4GB of ADVERTISED RAM, which under S102 was never the backing (stale).
++  DEBUG ((DEBUG_ERROR,
++    "NWOAS: low DMA window 0x%lx..0x%lx (Conventional, sole sub-4GB pool) aliased to backing 0x%lx..0x%lx (guest RAM 0x%lx..0x%lx, mode=%d)\n",
++    NWOAS_DMA_WIN_BASE, NWOAS_DMA_WIN_BASE + NWOAS_DMA_WIN_SIZE,
++    (UINT64)SystemMemoryTop, (UINT64)SystemMemoryTop + NWOAS_DMA_WIN_SIZE,
++    (UINT64)PcdGet64 (PcdSystemMemoryBase), (UINT64)SystemMemoryTop, NWOAS_WINDOW_AFTER_RAM));
+
+   // Build Memory Allocation Hob
+   InitMmu (MemoryTable);

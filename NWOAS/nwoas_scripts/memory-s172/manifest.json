@@ -1,0 +1,14 @@
+{
+  "payload": "/Volumes/X31/NWOAS/nwoas_scripts/memory-s172/m1n1-payload-s172-8cpu-usba.bin",
+  "bytes": 32342016,
+  "sha256": "e55e257efb7efec44c3968d4bd73c0aff009e75cc9228d34b9f30a68303cc8c7",
+  "change": "S161 normalization plus first 8 GiB high RAM kept; 8 CPUs; XHC1 hidden",
+  "source_sha256": {
+    "Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c": "03eb8896cc9f84b04924f5029333fee004b4b8dc2790bded9a5c99349ce8a71c",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c": "d14b5f0497a85ef08fd44e6268c3db79f29106faa3404555bde322dff2438d6e",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c": "365298fa4bd8be71150c870bdf410c44c3c080939552ff0b0abb6968eb9dbb37",
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c": "bcfcbdcd083f90906d421a976045abf524c468213d1bc5cced71eb94d6fb46ca",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf": "885b5d5288498a7f3b307f783611b7d346e68a4d977d7057ef84cf8e8aa74749",
+    "Platform/MacMini2020Pkg/AcpiTables/DSDT.asl": "4129263c97bdb78f9cbe58e01eea1ff618a610c1f47e984bb38435155d2fcbed"
+  }
+}

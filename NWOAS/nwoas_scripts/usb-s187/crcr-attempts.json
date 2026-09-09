@@ -1,0 +1,16 @@
+{
+  "attempts": [
+    {
+      "run": "usb-s187-crcr-20260910-051059.LauU6r",
+      "phase": "pre-UEFI DCP hook",
+      "result": "HPD/modes not ready; assertion; Windows not entered"
+    },
+    {
+      "run": "usb-s187-crcr-20260910-051157.Fk1i8F",
+      "phase": "DCP management restart without full SoC reset",
+      "result": "ASC wait_boot timed out, Windows not entered"
+    }
+  ],
+  "usb_result": "Not tested; no driver conclusion",
+  "recovery": "full Mini proxy reboot issued; no Windows session was active"
+}

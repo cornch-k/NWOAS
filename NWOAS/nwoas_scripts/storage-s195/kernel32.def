@@ -1,0 +1,17 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+ GetFileAttributesW
+ GetDiskFreeSpaceExW
+ CreateFileW
+ WriteFile
+ ReadFile
+ FlushFileBuffers
+ GetFileSizeEx
+ CloseHandle
+ GetLastError
+ VirtualAlloc
+ VirtualFree
+ QueryPerformanceCounter
+ QueryPerformanceFrequency
+ GetStdHandle
+ ExitProcess

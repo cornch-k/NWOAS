@@ -1,0 +1,63 @@
+/* S162: one bounded, read-only attribute observation of the real Windows CQ.
+ * x21 is the CQ context in the verified 26100 stornvme completion routine.
+ * Do not trust that register until its pointer translates into RAM and the
+ * first qword resolves to the exact armed CQ IPA. No memory/cache/MMIO writes.
+ * Record in RAM; print only on an explicit diagnostic/bugcheck. */
+static struct {
+    u64 va, ipa, par_s1, par_s12, s2, context, pc;
+    u32 attempts;
+    bool found;
+} nwoas_nvme_cq_map;
+
+static u64 nwoas_probe_at_el1(u64 va, bool combined, u64 *par)
+{
+    u64 saved = mrs(PAR_EL1);
+    if (combined)
+        asm volatile("at s12e1r, %0\n\tisb" : : "r"(va) : "memory");
+    else
+        asm volatile("at s1e1r, %0\n\tisb" : : "r"(va) : "memory");
+    *par = mrs(PAR_EL1);
+    msr(PAR_EL1, saved);
+    return (*par & PAR_F) ? 0 : ((*par & PAR_PA) | (va & 0xfff));
+}
+
+static void nwoas_nvme_probe_cq_map(struct exc_info *ctx)
+{
+    if (nwoas_nvme_cq_map.found || nwoas_nvme_cq_map.attempts >= 64 ||
+        ctx->elr < 0xffff000000000000UL || ctx->regs[21] < 0xffff000000000000UL)
+        return;
+    nwoas_nvme_cq_map.attempts++;
+    u64 par, context = ctx->regs[21];
+    u64 pa = nwoas_probe_at_el1(context, true, &par);
+    if (!pa || (pa & 7) || !nwoas_in_dram(pa, 8))
+        return;
+    u64 va = read64(pa);
+    if (va < 0xffff000000000000UL)
+        return;
+    u64 s1, s12;
+    u64 ipa = nwoas_probe_at_el1(va, false, &s1);
+    if (ipa != nwoas_nvme_fp.cq_base)
+        return;
+    u64 cq_pa = nwoas_probe_at_el1(va, true, &s12);
+    if (!cq_pa || !nwoas_in_dram(cq_pa, 16) ||
+        cq_pa != nwoas_ipa_to_pa(nwoas_nvme_fp.cq_base))
+        return;
+    nwoas_nvme_cq_map.va = va;
+    nwoas_nvme_cq_map.ipa = ipa;
+    nwoas_nvme_cq_map.par_s1 = s1;
+    nwoas_nvme_cq_map.par_s12 = s12;
+    nwoas_nvme_cq_map.s2 = hv_pt_walk(ipa);
+    nwoas_nvme_cq_map.context = context;
+    nwoas_nvme_cq_map.pc = ctx->elr;
+    nwoas_nvme_cq_map.found = true;
+}
+
+static void nwoas_nvme_dump_cq_map(void)
+{
+    printf("HVLOG: S162 CQMAP found=%u attempts=%u va=%lx ipa=%lx "
+           "s1=%lx s12=%lx s2=%lx ctx=%lx pc=%lx\n",
+           nwoas_nvme_cq_map.found, nwoas_nvme_cq_map.attempts,
+           nwoas_nvme_cq_map.va, nwoas_nvme_cq_map.ipa,
+           nwoas_nvme_cq_map.par_s1, nwoas_nvme_cq_map.par_s12,
+           nwoas_nvme_cq_map.s2, nwoas_nvme_cq_map.context, nwoas_nvme_cq_map.pc);
+}

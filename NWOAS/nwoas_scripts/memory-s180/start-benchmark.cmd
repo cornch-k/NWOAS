@@ -1,0 +1,5 @@
+@echo off
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; if(Get-Process -Name Cinebench -ErrorAction SilentlyContinue){throw 'Benchmark already running'}; Set-Date -Date ([DateTime]::Parse('2026-09-09T19:28:39.413025Z').ToLocalTime()); $p='C:\NWOAS-BENCH\run-user.cmd'; if((Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash -ne 'a2f2bbaf66bbff94bee6cc39428945bdeef9848b53d0dbbfb04e8ed71b7c93f3'){throw 'Launch script mismatch'}; $sig=Get-AuthenticodeSignature -LiteralPath 'C:\NWOAS-BENCH\Cinebench2026\Cinebench.exe'; $sig | Select Status,StatusMessage | Format-List; if($sig.Status -ne 'Valid'){throw 'Signature not valid'}; $log='C:\Users\Public\Documents\NWOAS-BENCH\cb-user-s176-v2.log'; if(Test-Path -LiteralPath $log){Move-Item -LiteralPath $log -Destination ($log+'.before-s180-'+[DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))}; Get-CimInstance Win32_LogicalDisk -Filter 'DeviceID=''C:''' | Select FreeSpace | Format-List"
+if errorlevel 1 exit /b %errorlevel%
+D:\USERCB.EXE
+exit /b %errorlevel%

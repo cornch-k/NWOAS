@@ -1,0 +1,7 @@
+{
+  "hv": "/Volumes/X31/NWOAS/m1n1_windows-s159/build/m1n1-s163-eoi-gap200.bin",
+  "sha256": "5c14b870824bffd1a62d81e7a18edb579801323b484194e5b22905711156a173",
+  "bytes": 2162688,
+  "build_flags": "-DNWOAS_NVME_MAX_BLOCKS=256 -DNWOAS_NVME_REASSERT_US=200",
+  "payload": "unchanged S139 eight-core USB-A"
+}

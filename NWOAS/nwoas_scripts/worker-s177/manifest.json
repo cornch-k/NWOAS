@@ -1,0 +1,5 @@
+{
+  "sha256": "14a1c914cd54f122a6899d3ae784c290bea641dadc4378883a150abc80db1b7f",
+  "bytes": 7168,
+  "change": "RAM scratch selected by authenticated physical disk number plus exact FAT extent and serial; child stdin inherited NUL, CREATE_NO_WINDOW; no timeout implemented; original preserved"
+}

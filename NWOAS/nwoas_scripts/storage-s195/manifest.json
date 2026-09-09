@@ -1,0 +1,15 @@
+{
+  "artifact": "IOTEST.EXE",
+  "bytes": 10752,
+  "sha256": "effd43ff105cb5d4ede2d72a9f415eac02557012f0b419254688f53f47fa2bb8",
+  "sha256_prev_candidate": "fd8be7cda63fa972a66164c7135830bcc1284d6f6921b2c208c27b31d2b7fe9d",
+  "status": "built and host-tested only; not deployed, not run on the Mini; no hardware pass claimed",
+  "target": "native Windows ARM64 console, no CRT, kernel32 imports only",
+  "output_file": "C:\\ProgramData\\NWOAS\\IO195.DAT",
+  "file_bytes": 268435456,
+  "block_bytes": 1048576,
+  "deadline_seconds": 300,
+  "purpose": "CREATE_NEW 256 MiB unbuffered write-through write, flush, reopen unbuffered read-only, verify every 64-bit word against offset pattern",
+  "sha256_review_candidate": "d1d3e081e89b1cae5090be8b83230c917902c16446ce0f1f8d952e7839b987af",
+  "main_review": "Backwards/negative QPC fails closed; elapsed reporting overflow saturates; host suite passed."
+}

@@ -1,0 +1,6 @@
+{
+  "recorded_utc": "2026-09-09T20:07:44.876975+00:00",
+  "run": "usb-s187-control-20260910-045957.aLelRo.link",
+  "result": "Three worker jobs complete; present USB-A and USB-C hosts OK; trackpad MI00 Code10 remains. No physical input or hotplug verification.",
+  "publication_note": "Raw worker transcripts omitted; device identifiers stay in local logs."
+}

@@ -1,0 +1,11 @@
+{
+  "run": "cpufreq-s189-native-20260910-051312.0p23NQ",
+  "start_utc": "2026-09-09T20:15:16.5152131Z",
+  "end_utc": "2026-09-09T20:26:17.0777167Z",
+  "score": null,
+  "native_exit_code": null,
+  "stdout_bytes": 0,
+  "stderr_bytes": 0,
+  "result": "Not a valid score sample: process ran and exited but CMD wrapper did not capture output. Numeric ERRORLEVEL adjacent to >> parsed as descriptor redirection, also no stdout under nonconsole user launcher. Existing first S180 score remains valid.",
+  "process_evidence": "PID1488 session1; CPU4388.265625s at567s; process gone on next observation; no HV pauses or host forced restart during run"
+}

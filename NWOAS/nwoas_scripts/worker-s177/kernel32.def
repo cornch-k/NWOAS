@@ -1,0 +1,21 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+GetStdHandle
+WriteFile
+ReadFile
+CreateFileW
+SetFilePointerEx
+DeviceIoControl
+CloseHandle
+VirtualAlloc
+ExitProcess
+Sleep
+GetLastError
+CreateProcessW
+WaitForSingleObject
+GetExitCodeProcess
+CreatePipe
+SetHandleInformation
+PeekNamedPipe
+GetEnvironmentVariableW
+GetVolumeInformationW

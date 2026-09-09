@@ -1,0 +1,12 @@
+{
+  "payload": "/Volumes/X31/NWOAS/nwoas_scripts/cpufreq-s170/m1n1-payload-s170-p12-usba.bin",
+  "bytes": 32342016,
+  "sha256": "19aa9dcf50ce257eee860031c22f36208140877bd13fd602a1869aad778c6e3f",
+  "change": "S139 layout and cap plus ReadyToBoot P12; 8 cores USB-A; no late host P12 module",
+  "header_sha256": "63a117a807bb1304dd286d8d0a372eed23a24be78ff7c07fbf13a794f77b0b2b",
+  "source_sha256": {
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c": "35e030a11bb47d322cea0c16a3e2c16ca248d9c9ee3793bacc182af6db53d478",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf": "dcf0a920158b6d7d91b0353e9bc329ec45eb23b950a0aeaf32ae306de15a2fb7",
+    "Platform/MacMini2020Pkg/AcpiTables/DSDT.asl": "4129263c97bdb78f9cbe58e01eea1ff618a610c1f47e984bb38435155d2fcbed"
+  }
+}

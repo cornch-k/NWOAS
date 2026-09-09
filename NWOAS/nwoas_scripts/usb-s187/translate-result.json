@@ -1,0 +1,6 @@
+{
+  "recorded_utc": "2026-09-09T20:10:43.347575+00:00",
+  "run": "usb-s187-translate-20260910-050757.UwMq91.link",
+  "result": "DART1/SID1 translate setup OK with DAPF preserved. Both present input devices belong to XHC0/USB-A, not XHC1/USB-C. No USB-C DMA or hotplug acceptance possible in this topology.",
+  "publication_note": "Raw worker transcripts omitted; device identifiers stay in local logs."
+}

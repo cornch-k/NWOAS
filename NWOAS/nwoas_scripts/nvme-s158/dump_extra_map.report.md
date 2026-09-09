@@ -1,0 +1,2 @@
+# Review correction
+The original generated parser omitted the 16-byte ArchitectureSpecific union and used the wrong validity marker. Those errors are corrected and tested. The initial generated analysis is superseded by S154-extra-map.txt and test_dump_extra_map.py. S154 has 56 data blocks; arg4 is captured with signature 0xaebecede. The profile start derived from the public global triage header is not mapped. The trailing DumpBlob data has not been decoded; this tool only maps the bounded triage structure. Do not infer an offending DPC from raw stack module candidates.

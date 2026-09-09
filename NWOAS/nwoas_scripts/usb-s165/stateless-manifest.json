@@ -1,0 +1,7 @@
+{
+  "image": "/Volumes/X31/NWOAS/nwoas_scripts/usb-s165/m1n1-s165-stateless-gap50.bin",
+  "bytes": 2162688,
+  "sha256": "2742051583cb237ed8f2a1060c3fbeb9b69882a7dc8f9b26316a75fdb3a9c189",
+  "change": "S163 50us plus only USB-C S157 cursor persistence removal",
+  "hv_vm_sha256": "ca21a72f92909a8915c46f8726536c2c4405e332fc16113e72f2218501c4593f"
+}

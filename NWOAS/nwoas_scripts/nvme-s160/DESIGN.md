@@ -1,0 +1,9 @@
+# S160 candidate: target interrupt mask MMIO
+
+Evidence:S159extra block41 contains saved ARM64 trapframebasefffff801d8c916c0,SPSR80001344,previousIRQL2,PCstorport!StorPortWriteRegisterUlong+1c,LRstornvme!NVMeCompletionDpcRoutine+5b4,x1ffffe68126652010,x2=1. CurrentMMIOlogrepeatedINTMC(offset0x10)writes1. Exact binaryRSDScheckedviaWindowsfiles;officialsymbolserverkernelkeyreturnsidenticalexistingPDB. This identifies a relevant DPC path, not proof that mask-MMIO is sole watchdogcause.
+
+Scope: use fasterS158inlineSQ behavior; intercept32bitINTMS/INTMC reads/writes only while targetfastpatharmed AND Python-owned interrupt-enabled CQs have NO pendingcompletions. InthatcasehostIRQlevelisfalseandonlyfastCQmaskneedsupdating. Otherwisefallthrough toexistingPythonhandling. No physicalI/O frommaskoperation; preservebitset/bitclearandreadbacksemantics.
+
+Hostconsistency: additionalflagsbit3 communicates eligibility. Before EVERY fallbackMMIOorPCIread/write, pulltargetmaskvia newqueryaction8(signatureupper32,S160;masklower32) whenarmed and featureenabled, thenperformPythonoperationandexistingpolicysync. Python-owned CQpendingstatus recalculated in flags aftereach mutation. Ifadmincompletionarrives, featureineligibleuntilack, soitsIRQmaskcannotbeoutofsync. FeaturegatedenvNWOAS_NVME_FAST_MASK=1,olderlaunchersremainunchanged. NewlauncherhashpinsmatchingCbuild, runtimecapabilityassertionmustrejectolderHV.
+
+Testsneeded: actualCmaskbits/readback/noI/O and ineligiblefallthrough; Pythonfakeproxytestshowfallbackpullbeforemutation,adminpendingtoggle,PCIINTxdisablemaskpreservation; existingNVMeprotocoltests. Build256blockceilingexplicitly. NochangeDPCwatchdoglimits,nophysicaldisklayoutchanges. Hardwarecompare8cores/readchecksums,maskhostlogreduction,30minstabilitythenextendifhealthy.

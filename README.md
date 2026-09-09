@@ -10,33 +10,45 @@ the author's own hardware.
 ## Boot chain
 
 ```
-Apple Boot ROM -> iBoot -> m1n1 (EL2 hypervisor, vGIC)
-  -> UEFI (Project Mu, EL1) -> Windows install media (+ AIC HAL extension driver)
-  -> Windows Boot Manager (USB-C external boot) -> Windows loader + RAMDisk
-  -> loader-to-kernel handoff
+Apple Boot ROM -> iBoot -> m1n1 (EL2 mediation)
+  -> guest m1n1 -> Project Mu UEFI -> internal-SSD Windows Boot Manager
+  -> Windows 11 ARM64 desktop
 ```
 
-## Current status — 2026-09-09
+A second Mac still supplies boot orchestration and runtime service transport.
 
-Windows 11 ARM64 now reaches the desktop from the Mac mini M1 internal SSD while
-retaining Tahoe firmware. S124 made the guarded host-mediated NVMe path durable
-enough to apply and verify the Windows image. S126 added a RAM-backed command
-transport, S128 exposed the internal SSD to UEFI, and S129 selected it before USB.
-The observed sequence was installed-OS user-space handshake, a Windows-initiated
-restart, OOBE, offline local setup, and the Windows 11 desktop.
+## Current status — 2026-09-10
 
-This is an important boot milestone, but it is not yet a production native-driver
-stack. The current desktop reports one CPU core, one logical processor, 4.1 GB of
-RAM, and an unreliable 0.04 GHz speed value. Storage is still relayed through the
-host process, USB-C hot-unplug/replug does not recover reliably, and networking,
-GPU acceleration, SMP, full memory, standalone storage, and benchmark performance
-remain unfinished. The next work is bottleneck measurement and CPU/memory exposure,
-followed by native device drivers.
+Windows 11 ARM64 boots from the Mac mini M1 internal SSD with Tahoe firmware
+retained. All eight CPU cores execute Windows workloads, and Windows sees
+15.08 GB (about 14.05 GiB) of RAM. Native UEFI code reads the hardware PMU clock
+at boot and selects performance-core P-state 12. S193/S200 boot and checksum
+tests passed with both initial and late host CPU-state writes removed.
 
-Start with the [latest session status](NWOAS/NWOAS-STATUS-2026-09-09-SESSION.md),
-[hardware evidence](NWOAS/nwoas_scripts/nvme-s93/hardware-evidence.json), and
-[companion source patches](NWOAS/companion-patches/2026-09-07/README.md).
-Build success alone is never treated as hardware success.
+Official Cinebench 2026.1.3 ARM64 CPU multi-core completed at **1905.281 points**
+(S196, one run, 629.8-second render, native exit 0). This is native ARM64 CPU
+execution under the current EL2-mediated system. A matching macOS baseline has
+not been measured. CPU speed/name metadata in Windows remains incorrect.
+
+The storage path still presents an emulated NVMe interface, with a target-side
+fast data path and host-side control/service transport. The S163 50µs interrupt
+reassert delay passed the recorded 30-minute soak; it mitigates a watchdog
+failure without establishing its complete cause. A dedicated 256MiB write-through
+file passed verification of every 64-bit word in S193 and S200, with identical
+SHA-256 hashes. These bounded tests are not a production stability claim.
+
+Standalone boot, native networking and GPU drivers, reliable USB-C and display
+hotplug, power management, and the intended SSD partition layout remain work in
+progress. The active Windows volume is about 24.8 GB, not a completed 128/128 GB
+split. The live keyboard and trackpad were enumerated under USB-A; an empty
+USB-C root hub does not demonstrate USB-C device-transfer success.
+
+Start with the [session record](NWOAS/NWOAS-STATUS-2026-09-10-SESSION.md),
+[Cinebench evidence](NWOAS/nwoas_scripts/bench-s196/result.json),
+[host CPU-init removal](NWOAS/nwoas_scripts/cpufreq-s193/hardware-result.json), and
+[companion source patches](NWOAS/companion-patches/2026-09-10/README.md).
+Historical stage files preserve unsuccessful experiments and are not current
+installation instructions. Build success alone is not hardware success.
 
 ## Layout
 

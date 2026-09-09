@@ -1,0 +1,11 @@
+{
+  "pass": true,
+  "session": "nwoas_scripts/logs/usb-s163g50-20260910-012616.VFQrah.link",
+  "job": 5,
+  "source": {
+    "name": "binary-test",
+    "bytes": 1048613,
+    "sha256": "026ceec48d4f9090d485c816f48395cc854d8190dfd9aef284901dd867e928e9"
+  },
+  "output": "/Volumes/X31/NWOAS/nwoas_scripts/logs/usb-s163g50-20260910-012616.VFQrah.link/job-5.log"
+}

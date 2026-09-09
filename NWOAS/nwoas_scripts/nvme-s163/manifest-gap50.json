@@ -1,0 +1,7 @@
+{
+  "hv": "/Volumes/X31/NWOAS/m1n1_windows-s159/build/m1n1-s163-eoi-gap50.bin",
+  "sha256": "bd8f16f286c8d1141df4a17d9b85eafdd4c2d39d5680c6ed75b63429f061d166",
+  "bytes": 2162688,
+  "gap_us": 50,
+  "source": "same S163 source; hv_exc.o explicitly rebuilt for50us"
+}

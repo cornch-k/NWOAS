@@ -1,0 +1,3 @@
+@echo off
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $f=[IO.File]::Open('C:\NWOAS-BENCH\run-user-s196.new',[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::None); try {if($f.Length -ne 3600){throw 'Unexpected staging length'}; $f.Position=3600; $b=[Convert]::FromBase64String('SndBcEFBb0FKQUJ3QUM0QVJBQnBBSE1BY0FCdkFITUFaUUFvQUNrQUNnQnBBR1lBS0FBa0FIUUFhUUJ0QUdVQVpBQlBBSFVBZEFBcEFIc0FaUUI0QUdrQWRBQWdBREVBTWdBMEFIMEFDZ0JsQUhnQWFRQjBBQ0FBSkFCdUFHRUFkQUJwQUhZQVpRQkRBRzhBWkFCbEFBb0EgPiIlUFVCTElDJVxEb2N1bWVudHNcTldPQVMtQkVOQ0hcY2ItczE5Ni53cmFwcGVyIiAyPiYxCmV4aXQgL2IgJWVycm9ybGV2ZWwlCg=='); $f.Write($b,0,$b.Length); $f.Flush()} finally {$f.Dispose()}"
+exit /b %errorlevel%

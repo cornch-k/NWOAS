@@ -1,0 +1,12 @@
+{
+  "sha256": "3801b7164320cb2087ca35293ad9058174d797450af81a80d71fec5ae9135b06",
+  "bytes": 2162688,
+  "change": "S163 same source, NVMe IRQ reassert gap25us instead50us. No local USB-C translate changes. Hardware untested.",
+  "base_commit": "bddf7f06f033a7411834ac61381d8c997034f532",
+  "cflags": "-DNWOAS_NVME_MAX_BLOCKS=256 -DNWOAS_NVME_REASSERT_US=25",
+  "source_sha256": {
+    "hv_exc.c": "9c0c6d1148a0ebfa45d63e5d3afe09208fba0b711e7cc6bc4b2c7a228622d009",
+    "hv_vm.c": "11f19007bc360e08dfd1cd66dcc7062108f8d2302a5d6475eef005744134c0d5",
+    "nwoas_stage8.inc": "9a5cce7811f5f0f24a43be252d0a75f32a10200b8dc4b3c3de51d94c6337b5c3"
+  }
+}

@@ -1,0 +1,21 @@
+--- a/src/hv_vm.c
++++ b/src/hv_vm.c
+@@ -1571,6 +1571,7 @@
+ static bool nwoas_nvme_fastpath_mmio(struct exc_info *ctx, u64 ipa, u64 *val, bool write,
+                                      u64 width)
+ {
++    (void)ctx; /* S159 executes queued I/O from the tick's context. */
+     if (!nwoas_nvme_fp.armed || ipa < NWOAS_NVME_BAR ||
+         ipa >= NWOAS_NVME_BAR + NWOAS_NVME_BAR_SIZE)
+         return false;
+@@ -1592,7 +1593,9 @@
+             if (backlog > nwoas_nvme_diag.max_sq_backlog)
+                 nwoas_nvme_diag.max_sq_backlog = backlog;
+             nwoas_nvme_fp.deferred = nwoas_nvme_fp.sq_head != nwoas_nvme_fp.sq_tail;
+-            nwoas_nvme_fastpath_process(ctx, 1);
++            /* S159 experiment: publish the producer cursor immediately.
++             * The existing HV tick consumes in SQ order; CQ phase publication
++             * still follows physical completion. No completion is fabricated. */
+         } else {
+             nwoas_nvme_fp.errors++;
+         }

@@ -1,0 +1,3 @@
+@echo off
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $i=New-Object Diagnostics.ProcessStartInfo; $i.FileName=$env:ComSpec; $i.Arguments='/d /c exit 19'; $i.UseShellExecute=$false; $i.CreateNoWindow=$true; $i.RedirectStandardOutput=$true; $i.RedirectStandardError=$true; $p=New-Object Diagnostics.Process; $p.StartInfo=$i; if(-not $p.Start()){throw 'Start failed'}; $h=$p.Handle; $o=$p.StandardOutput.ReadToEndAsync(); $e=$p.StandardError.ReadToEndAsync(); if(-not $p.WaitForExit(10000)){throw 'Probe timed out'}; $p.WaitForExit(); $code=$p.ExitCode; Write-Output ('CODE='+$code+' OUT='+$o.Result+' ERR='+$e.Result); if($code -ne 19){throw 'Native exit-code mismatch'}; $p.Dispose(); Write-Output 'PROCESS PREFLIGHT PASS'"
+exit /b %errorlevel%

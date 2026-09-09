@@ -1,0 +1,22 @@
+{
+  "payload": "/Volumes/X31/NWOAS/nwoas_scripts/rtc-s185/m1n1-payload-s185-hwrtc.bin",
+  "bytes": 32342016,
+  "sha256": "fa8711f5446f3f135cda50648fe3121a6dcee6e82103f458033263bb5d38da83",
+  "change": "S180 10GiBhigh+low4GiB,8cores,USB-A; direct SERA hardwareRTC boot read with physicalcounter runtime advance; no host date seed, SetTime unsupported",
+  "source_sha256": {
+    "Silicon/Apple/AppleSiliconPkg/PrePi/AdtParser.c": "03eb8896cc9f84b04924f5029333fee004b4b8dc2790bded9a5c99349ce8a71c",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/AppleDartIoMmuDxe/AppleDartIoMmuDxe.c": "d14b5f0497a85ef08fd44e6268c3db79f29106faa3404555bde322dff2438d6e",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.c": "39856271f7e228bd7a07e03c1d264218253d0a4a1b5ee69b1b6995e6d2162710",
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c": "bcfcbdcd083f90906d421a976045abf524c468213d1bc5cced71eb94d6fb46ca",
+    "Silicon/Apple/AppleSiliconPkg/Drivers/NwoasHideHighRamDxe/NwoasHideHighRamDxe.inf": "885b5d5288498a7f3b307f783611b7d346e68a4d977d7057ef84cf8e8aa74749",
+    "Platform/MacMini2020Pkg/AcpiTables/DSDT.asl": "4129263c97bdb78f9cbe58e01eea1ff618a610c1f47e984bb38435155d2fcbed"
+  },
+  "rtc_source_sha256": {
+    "NwoasHardwareBootRtcLib.c": "4301c16e5ed0534e9509efc1e888fceb1b129a33a9e24123881e5345dc0c284a",
+    "NwoasRtcSeedCore.c": "27ebcc90e6cfc48604fef58933c34b9d6bc87aeb6c21a849331ac96937aec549",
+    "nwoas_sera_rtc.h": "78def5aa9f13ecb39509455dfa12cd4376c560ec531ddc0305b96c5785b8f84f",
+    "NwoasHardwareBootRtcLib.inf": "ae9d646f48d51839fada9bdc29bce0f5fe755d54777c526a0dcb18c35fe78653",
+    "NwoasRtcSeedCore.h": "28c5ded09c3c8c6b92f0a94dec52961795f59fe16c31f60f794ef4ed1e54c74c",
+    "nwoas_sera_rtc.c": "275364be36d3d1c70c199a61da0063846bb6582d02cfca49556778dfdee05df7"
+  }
+}

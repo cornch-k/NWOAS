@@ -1,0 +1,13 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+GetCurrentThread
+GetCurrentProcess
+SetThreadAffinityMask
+GetProcessAffinityMask
+GetCurrentProcessorNumber
+GetActiveProcessorCount
+QueryPerformanceCounter
+QueryPerformanceFrequency
+GetStdHandle
+WriteFile
+ExitProcess
