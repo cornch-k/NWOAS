@@ -46,3 +46,7 @@ rather than stacking callbacks. See claude-review.md and claude-resolution.md.
 See EXECUTION-MODE.md for the current boot chain and the distinction between
 ARM64 execution on the physical Mini and hypervisor-free standalone Windows.
 S225/S226 are future admin-owner foundations only. They are not in this image.
+
+## Final S224 extension result
+
+Second-boot active reads passed 2229 iterations over 300093 ms, median 125800 us (logical compressed-file reads, not raw SSD throughput). Final read-only target query returned the S224 capability and zero target I/O error count. Both boot sessions have acknowledged test exit0. The current MacBook runtime remains running and required; no reboot or mutation job remains queued. Source, build and first-boot/second-boot evidence are included. No S224 Cinebench, native GPU/network driver, standalone boot or macOS parity result is claimed.

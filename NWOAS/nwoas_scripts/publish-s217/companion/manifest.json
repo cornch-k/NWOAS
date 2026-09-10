@@ -175,7 +175,7 @@
     "payload_sha256": "2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7",
     "recipe": "NWOAS/nwoas_scripts/native-s224/prepare.py",
     "scope": "Read projection only. Host control/admin writes, NS2 and boot setup remain.",
-    "hardware_status": "Two boots; integration, 10 GiB x3 memory, five-minute active reads, 30-minute mixed soak and clean-reboot persistence PASS",
+    "hardware_status": "PASS: two boots, integration, 10 GiB x3 memory, five-minute active reads on both boots, 30-minute mixed soak and clean-reboot persistence",
     "cinebench": "No S224 measurement"
   }
 }

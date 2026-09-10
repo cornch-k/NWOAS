@@ -1,7 +1,7 @@
 {
   "base_commit": "bddf7f06f033a7411834ac61381d8c997034f532",
   "baseline_patch_sha256": "676dbc416c51c7bec2a9ef24ae9d2a4a4adbdc2ef80b059de709c8728abeb1d7",
-  "status": "Two Windows boots, integration, 10 GiB x3 memory, first-boot five-minute active reads and 30-minute mixed soak, and clean-reboot persistence PASS; second-boot active reads in progress",
+  "status": "PASS: two boots, integration, 10 GiB x3 memory, five-minute active reads on both boots, 30-minute mixed soak and clean-reboot persistence",
   "scope": "Read projection only. Host control/admin writes and NS2 remain.",
   "hv_flags": "-DNWOAS_NVME_MAX_BLOCKS=256 -DNWOAS_NVME_REASSERT_US=50",
   "hv_sha256": "6679506629bc77a3e428b33a5f4229009abdaef6b1e71087e4cebeaa6c222955",
@@ -22,5 +22,7 @@
   "local_reads_after_soak": {
     "pci": 209,
     "register": 99
-  }
+  },
+  "final_session": "nwoas_scripts/logs/native-s224-read-mirror-20260910-101056.Tq5Myx.link",
+  "runtime": "MacBook host service remains running and required"
 }

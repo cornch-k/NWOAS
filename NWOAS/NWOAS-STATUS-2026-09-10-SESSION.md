@@ -436,3 +436,7 @@ explicit lifecycle obligations. Both components remain offline-only.
 ACPI/memory setup and remaining MacBook service dependency. The public README
 states this distinction explicitly. No native GPU/network completion, standalone
 boot, newer Cinebench result or macOS performance parity is claimed.
+
+## Final S224 extension result
+
+Second-boot active reads passed 2229 iterations over 300093 ms, median 125800 us (logical compressed-file reads, not raw SSD throughput). Final read-only target query returned the S224 capability and zero target I/O error count. Both boot sessions have acknowledged test exit0. The current MacBook runtime remains running and required; no reboot or mutation job remains queued. Source, build and first-boot/second-boot evidence are included. No S224 Cinebench, native GPU/network driver, standalone boot or macOS parity result is claimed.

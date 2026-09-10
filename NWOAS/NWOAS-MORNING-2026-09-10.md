@@ -48,3 +48,7 @@ completion/DMA/IRQ/lifecycle work. Current problem-device inventory still has
 USB Input Device code10 and two unnamed code28 entries. VideoController returned
 no rows; this does not establish GPU driver support. C: free was 4,130,156,544 B.
 Do not infer pointer operation or hotplug success from these checks.
+
+## Final S224 extension result
+
+Second-boot active reads passed 2229 iterations over 300093 ms, median 125800 us (logical compressed-file reads, not raw SSD throughput). Final read-only target query returned the S224 capability and zero target I/O error count. Both boot sessions have acknowledged test exit0. The current MacBook runtime remains running and required; no reboot or mutation job remains queued. Source, build and first-boot/second-boot evidence are included. No S224 Cinebench, native GPU/network driver, standalone boot or macOS parity result is claimed.
