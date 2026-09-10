@@ -1,0 +1,37 @@
+--- a/src/hv_vm.c
++++ b/src/hv_vm.c
+@@ -1565,11 +1565,24 @@
+         nwoas_nvme_fastpath_process(ctx, 1);
+ }
+ 
++#include "nwoas_read_mirror.h"
++static struct nwoas_read_mirror nwoas_read_projection;
++
+ /* action 0=disable, 1=arm, 2=sync policy, 3=query counters, 4=query lifecycle,
+  * 5/6=query NS1/NS2 maximum execution ticks, 7=query backlog/ack counters. */
+ u64 nwoas_nvme_fastpath_control(u64 action, u64 sq_base, u64 sq_size, u64 cq_base,
+                                 u64 cq_size, u64 flags)
+ {
++    /* S224: action11 publishes under the existing proxy rendezvous. Reads
++     * below and publication are serialized by the HV big lock. */
++    if (action == 11) {
++        nwoas_mirror_publish(&nwoas_read_projection, sq_base, sq_size, cq_base, cq_size, flags);
++        return 0x5332323400000001ULL;
++    }
++    if (action == 12) return 0x5332323400000001ULL;
++    if (action == 13) return nwoas_read_projection.pci_reads;
++    if (action == 14) return nwoas_read_projection.register_reads;
++    if (action == 15) return nwoas_read_projection.publications;
+     if (action == 0) {
+         nwoas_nvme_fp.armed = false;
+         nwoas_nvme_fp.deferred = false;
+@@ -1656,6 +1669,9 @@
+ static bool nwoas_nvme_fastpath_mmio(struct exc_info *ctx, u64 ipa, u64 *val, bool write,
+                                      u64 width)
+ {
++    if (!write && nwoas_mirror_read(&nwoas_read_projection, ipa, width,
++            nwoas_nvme_fp.armed, nwoas_nvme_fp.faulted, nwoas_nvme_fp.mask, val))
++        return true;
+     if (!nwoas_nvme_fp.armed || ipa < NWOAS_NVME_BAR ||
+         ipa >= NWOAS_NVME_BAR + NWOAS_NVME_BAR_SIZE)
+         return false;

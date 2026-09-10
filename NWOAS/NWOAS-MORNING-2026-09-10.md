@@ -4,7 +4,7 @@
 
 The Mac mini is running Windows ARM64 with eight logical processors and 15,081,889,792 bytes of Windows-visible RAM. The MacBook host runtime remains required. This is not standalone native boot, and native GPU/network/USB-C hotplug drivers are not complete.
 
-The current bounded-qualified S223 launcher is `nwoas_scripts/loader-s223-fd-tail-guest-test.sh`; its matching results record integration, 10 GiB x3 memory, 15-minute mixed and five-minute active-read PASS. It uses the S208 gap50 HV and appends 480 KiB of deterministic 0xff padding to the otherwise unchanged S216 payload. The complete copy span is supplied by the payload. This does not establish a cause for historical watchdog failures.
+The previous bounded-qualified S223 fallback launcher is `nwoas_scripts/loader-s223-fd-tail-guest-test.sh`; its matching results record integration, 10 GiB x3 memory, 15-minute mixed and five-minute active-read PASS. It uses the S208 gap50 HV and appends 480 KiB of deterministic 0xff padding to the otherwise unchanged S216 payload. The complete copy span is supplied by the payload. This does not establish a cause for historical watchdog failures.
 
 Keep the active MacBook host terminal/runtime alive. Do not start another launcher against the occupied serial port. No scheduled automation was created or enabled. No automatic reboot or follow-up worker mutation is intended after final inventory.
 
@@ -21,3 +21,30 @@ S215 rebuilds the guest prefix. S216 reserves the BootArgs/ADT handoff range and
 S209 is a tested freestanding C control-state model, not an installed NVMe driver: doorbell submission remains unimplemented and no runtime host dependency was removed by it. Next milestones are integrating a bounded native control path, moving physical I/O ownership out of the host runtime, and validating native Windows drivers. Preserve current recoverable boot configurations while doing so.
 
 See `NWOAS-STATUS-2026-09-10-SESSION.md`, `nwoas_scripts/bench-s218/result.json`, and `nwoas_scripts/publish-s217/companion/README.md` for evidence and source patches. Raw device logs and identity-bearing benchmark output are intentionally not public artifacts.
+
+## 10:12 KST extension checkpoint
+
+Current live session is S224, launched by
+`nwoas_scripts/native-s224-read-mirror-guest-test.sh`, log
+`native-s224-read-mirror-20260910-101056.Tq5Myx`. Its host runtime must remain
+running. The first S224 boot passed integration, 10 GiB x3 full-word memory,
+2253 active reads over five minutes, and 31 mixed CPU/read samples spanning
+1807.49 seconds. Normal Windows reboot preserved the 256 MiB test archive hash;
+the second boot again confirmed eight cores, 15,081,889,792 bytes and P12.
+A second five-minute active-read test is running at this checkpoint.
+
+S224 serves supported PCI/register reads locally (308 cumulative reads at the
+end of the first soak) but retains the host control/admin writer, NS2 and boot
+setup. Source-built HV SHA256 is
+6679506629bc77a3e428b33a5f4229009abdaef6b1e71087e4cebeaa6c222955;
+the S223 payload remains unchanged. There is no S224 Cinebench or isolated
+whole-system speedup measurement. Small host-side offline builds overlapped
+parts of first-boot validation, so timings are qualification observations.
+
+S225/S226 local-admin payload/state foundations passed offline differential,
+sanitizer and freestanding ARM64 checks with Claude Code review corrections.
+They are not installed. `native-s226/INTEGRATION.md` records the remaining
+completion/DMA/IRQ/lifecycle work. Current problem-device inventory still has
+USB Input Device code10 and two unnamed code28 entries. VideoController returned
+no rows; this does not establish GPU driver support. C: free was 4,130,156,544 B.
+Do not infer pointer operation or hotplug success from these checks.

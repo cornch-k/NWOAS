@@ -1,0 +1,13 @@
+{
+  "status": "Offline-only tests PASS; not installed",
+  "sources": {
+    "admin_payload.c": "1aa4bcab364416481ffbff878aa84eb83abb82f2df38f812b08d9073d0542fb2",
+    "admin_payload.h": "eb0d6ddd955ff5e35e04b0f36771a8b79fdba7c5aa94278a1e5863151328c7ac",
+    "test.py": "64b2228c9e421513dfd65d7b0f457886967e43de4041378bc04c74dd01d4869f",
+    "test.sh": "7115b39e479e7f418e01c60f255013d7a5ab70e26d588dedbd9940d9751aeb16",
+    "test_bounds.c": "793de9b21214ac82e3f27b3685bfcbf02dcd57c2733d11965bd1c77b16e81a85",
+    "test_profiles.py": "df66bdce9e05a2224494c2e6bf92323e2942bba0f8b7b55626a475dd1c213582"
+  },
+  "hardware_test": false,
+  "removed_runtime_host_dependencies": 0
+}

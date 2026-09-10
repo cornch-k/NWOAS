@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "session": "nwoas_scripts/logs/native-s224-read-mirror-20260910-093051.Vp3XkX.link",
+  "job": 3,
+  "samples": 2253,
+  "elapsed_ms": 300081,
+  "disk_us": {
+    "min": 118262,
+    "median": 125379,
+    "max": 702706
+  },
+  "note": "Logical 64MiB reads on a compressed filesystem; not raw SSD throughput"
+}

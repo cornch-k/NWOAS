@@ -1,0 +1,12 @@
+{
+  "pass_": true,
+  "checks": [
+    "actual tracer callbacks",
+    "publish after owner transition",
+    "pending and command reflected",
+    "owner exception disables",
+    "publication failure disables",
+    "invalid dword disables"
+  ],
+  "scope": "Python wiring with fake target, no hardware"
+}

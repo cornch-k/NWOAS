@@ -1,0 +1,8 @@
+{
+  "pass_": true,
+  "commands": 12182,
+  "success_payloads": 4398,
+  "command_errors": 7784,
+  "oracle": "Actual S139 Controller + WindowWritableNamespace + NamespacePair",
+  "scope": "Pure payload construction only; no queues, DMA, device writes or hardware integration"
+}

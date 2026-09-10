@@ -59,3 +59,17 @@ The exported C/UEFI patches above describe S216; S223 adds packaging only.
 Cinebench1888.454 belongs to S216, not to S223. Integrity-soak timings are not
 isolated performance measurements; the S216 mixed test overlapped a short
 low-priority host build. See the result files for each qualification.
+
+## S224 extension and uninstalled native admin foundations
+
+S224 adds the separately recorded read-projection patch and header on top of this
+S208 HV companion. Its `prepare.py` verifies the baseline patch hash, applies the
+three localized HV changes in an isolated worktree, and copies the bounded read
+projection header. Its `build.sh` verifies source and toolchain identities and
+refuses to overwrite a recorded binary with a different rebuild. Consult S224's
+matching hardware results; this does not change the S216/S218 benchmark identity.
+
+S225 and S226 contain tested but uninstalled admin response/state foundations.
+They are not part of the S224 hardware binary. Their integration plan explicitly
+requires a local completion owner, validated PRP publication, IRQ/lifecycle
+synchronization and physical-backend integration before claiming host-free admin.

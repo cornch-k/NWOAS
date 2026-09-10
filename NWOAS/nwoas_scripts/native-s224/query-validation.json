@@ -1,0 +1,5 @@
+{
+  "pass_": true,
+  "allowed": "3..10,12..15",
+  "rejected": "mutation actions 0,1,2,11; invalid types, bounds and lengths"
+}

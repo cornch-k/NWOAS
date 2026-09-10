@@ -1,0 +1,7 @@
+{
+  "pass_": true,
+  "commands": 48864,
+  "profiles": 12,
+  "axes": "ReadOnly/WindowWritable; single/paired; MDTS 0,4,8",
+  "coverage": "All CNS/LID bytes, partial-page untouched tails, full random command bytes"
+}

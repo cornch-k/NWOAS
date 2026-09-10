@@ -1,0 +1,15 @@
+{
+  "baseline_s223": {
+    "pci_read": 168,
+    "pci_write": 32,
+    "register_read": 105,
+    "register_write": 32
+  },
+  "candidate_s224": {
+    "pci_read": 0,
+    "pci_write": 34,
+    "register_read": 0,
+    "register_write": 31
+  },
+  "scope": "Observed log lines at this snapshot, subject to log sampling, not total callbacks or matched-duration performance comparison. Target S224 counters separately prove locally served reads."
+}

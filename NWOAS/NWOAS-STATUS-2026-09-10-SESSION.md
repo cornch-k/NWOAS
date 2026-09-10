@@ -397,3 +397,42 @@ S223 integration passed with eight cores and 15,081,889,792 bytes RAM. Its 10 Gi
 The deterministic 480 KiB FD tail supplies the complete inline copy span while preserving all existing executable bytes. No historical watchdog cause is claimed. Source rebuilds, evidence, Claude Code reviews and current/fallback instructions are included in the public delta. Host-independent native boot and Windows drivers remain incomplete.
 
 Final S222 inventory exited 0: eight cores, 15,081,889,792 bytes RAM, C: free 4,416,102,400 bytes; subsequent CPU/read checks passed. Device enumeration still reports one USB Input Device with code 10 and two unnamed code-28 entries. No present network adapter was listed. This does not prove pointer operation or hotplug support. IO195.DAT was hash-verified and renamed IO195-s223-tail.DAT. No final reboot was issued.
+
+## 09:18–10:18 KST extension — work in progress
+
+The user requested one additional live hour. No scheduler was created. S224
+adds a target-local read projection for the existing synthetic PCI/NVMe
+controller. It preserves the Python admin/control writer and adds a synchronized
+snapshot publication after its writes. First Windows integration, 10 GiB x3
+memory, and five-minute active reads (2253 iterations) passed. Target counters
+showed 209 PCI and 93 register reads handled locally; no sampled Python read
+lines appeared in this candidate boot. This is partial host-dependency removal,
+not a native Windows driver, standalone boot or proven overall speedup.
+
+S225 response construction and S226 admin-command state are separate uninstalled
+C foundations, with differential, sanitizer and freestanding ARM64 checks.
+Claude Code reviewed S224/S225; confirmations and contract/test corrections are
+recorded beside each component. The S224 30-minute mixed soak is still active
+at this checkpoint; final results and reboot validation will follow below.
+
+## 10:12 KST — S224 clean reboot and persistence PASS
+
+The 30-minute test completed with exit0: 31 correct CPU/read samples spanning
+1807.494624 seconds. First-boot projection counters ended at 209 PCI reads,
+99 register reads and 325 publications. Read counter growth is predominantly
+boot/status traffic, not a demonstrated bulk-I/O speedup. Normal Windows restart
+followed a SHA256-verified rename of the owned 256 MiB test file. The second
+S224 boot re-read the identical archive hash, reported 8 cores/15,081,889,792 B,
+and passed P12, CPU and read checks. Second-boot five-minute active reads are
+underway. Source and binary hash pins are unchanged between these boots.
+
+S225 adds 12,182 response comparisons plus 48,864 commands across 12 policies.
+S226 adds 11,714 state comparisons, 241 held AER cases, 32 generic feature
+commands and directed plus 100,000 malformed sanitized cases. Claude Code's
+S226 findings prompted cache-resync signaling, callback/range coverage and
+explicit lifecycle obligations. Both components remain offline-only.
+
+`native-s224/EXECUTION-MODE.md` now explains the vGIC/PSCI EL2 guest arrangement,
+ACPI/memory setup and remaining MacBook service dependency. The public README
+states this distinction explicitly. No native GPU/network completion, standalone
+boot, newer Cinebench result or macOS performance parity is claimed.

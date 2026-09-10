@@ -1,0 +1,17 @@
+{
+  "pass_": true,
+  "compared_reads": 204,
+  "actual_source": "S160 callback functions, S139 Controller, S224 overlay and compiled C mirror",
+  "covered": [
+    "admin queue enable",
+    "create CQ/SQ",
+    "pending completion and acknowledgement",
+    "fastpath arm/disarm",
+    "target mask -> host state synchronization",
+    "PCI INTx mask",
+    "delete SQ/CQ",
+    "shutdown flush",
+    "CC disable"
+  ],
+  "scope": "Fake physical backend, not hardware"
+}

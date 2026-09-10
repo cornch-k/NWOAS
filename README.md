@@ -1,6 +1,6 @@
 # NWOAS — Native Windows on Apple Silicon
 
-Personal research project to boot Windows 11 ARM natively on a
+Personal research project aiming to boot Windows 11 ARM natively on a
 user-owned Apple Silicon Mac (Mac mini M1), in the same spirit as Asahi
 Linux or the broader Windows-on-ARM community: legitimate bootloader,
 firmware, and driver development built on public hardware documentation
@@ -15,7 +15,10 @@ Apple Boot ROM -> iBoot -> m1n1 (EL2 mediation)
   -> Windows 11 ARM64 desktop
 ```
 
-A second Mac still supplies boot orchestration and runtime service transport.
+The current system runs Windows as an ARM64 guest under m1n1 EL2 mediation,
+not as hypervisor-free bare-metal Windows. A second Mac still supplies boot
+orchestration and runtime service transport. Native driver and standalone boot
+support are goals, not completed outcomes.
 
 ## Current status — 2026-09-10
 
@@ -52,6 +55,14 @@ hotplug, power management, and the intended SSD partition layout remain work in
 progress. The active Windows volume is about 24.8 GB, not a completed 128/128 GB
 split. The live keyboard and trackpad were enumerated under USB-A; an empty
 USB-C root hub does not demonstrate USB-C device-transfer success.
+
+S224 now serves supported PCI/NVMe register reads on the target while retaining
+host control/admin ownership. Two boots, full-word 10GiB x3 memory, a five-minute
+active-read run, a thirty-minute mixed soak and clean-reboot file persistence
+passed. These are bounded qualification results, not a general speedup or
+standalone-driver claim. S225/S226 are uninstalled local-admin foundations.
+See the [execution-mode explanation](NWOAS/nwoas_scripts/native-s224/EXECUTION-MODE.md)
+and [S224 results](NWOAS/nwoas_scripts/native-s224/README.md).
 
 Start with the [session record](NWOAS/NWOAS-STATUS-2026-09-10-SESSION.md),
 [Cinebench evidence](NWOAS/nwoas_scripts/bench-s218/result.json),

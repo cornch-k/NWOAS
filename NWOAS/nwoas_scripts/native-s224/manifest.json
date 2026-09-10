@@ -1,0 +1,26 @@
+{
+  "base_commit": "bddf7f06f033a7411834ac61381d8c997034f532",
+  "baseline_patch_sha256": "676dbc416c51c7bec2a9ef24ae9d2a4a4adbdc2ef80b059de709c8728abeb1d7",
+  "status": "Two Windows boots, integration, 10 GiB x3 memory, first-boot five-minute active reads and 30-minute mixed soak, and clean-reboot persistence PASS; second-boot active reads in progress",
+  "scope": "Read projection only. Host control/admin writes and NS2 remain.",
+  "hv_flags": "-DNWOAS_NVME_MAX_BLOCKS=256 -DNWOAS_NVME_REASSERT_US=50",
+  "hv_sha256": "6679506629bc77a3e428b33a5f4229009abdaef6b1e71087e4cebeaa6c222955",
+  "hv_bytes": 2162688,
+  "payload_sha256": "2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7",
+  "projection_sha256": "2a5f05ac16caeee0307bb4c8339e6291eab99e6c935ceda7cbce99a1e597d6d5",
+  "hv_vm_sha256": "93a67e92d46dcdac65ad09e09325b97d46eb9aeff735e2dd8b2fe2a7836e56d4",
+  "local_reads_first_snapshot": {
+    "pci": 209,
+    "register": 93
+  },
+  "limits": [
+    "Read projection only: host control/admin writes and NS2 remain",
+    "One publication per host-owned write; no overall speedup measured",
+    "S160 local-mask-read counter excludes reads now handled by S224",
+    "Small offline host builds/tests overlapped parts of the active/soak run; timings are not isolated performance measurements"
+  ],
+  "local_reads_after_soak": {
+    "pci": 209,
+    "register": 99
+  }
+}

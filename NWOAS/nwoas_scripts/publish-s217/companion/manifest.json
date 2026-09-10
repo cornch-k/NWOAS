@@ -167,5 +167,15 @@
     "pad": "0xff",
     "status": "PASS: 8-core integration, 10 GiB x3 memory, 15-minute mixed soak and five-minute active reads; no S223 Cinebench measurement"
   },
-  "validation_scope": "Integrity-soak timings are not isolated performance measurements; a two-job low-priority host source build overlapped part of the S216 soak. Benchmarks ran separately without host builds."
+  "validation_scope": "Integrity-soak timings are not isolated performance measurements; a two-job low-priority host source build overlapped part of the S216 soak. Benchmarks ran separately without host builds.",
+  "additional_read_projection": {
+    "stage": "S224",
+    "baseline_patch_sha256": "676dbc416c51c7bec2a9ef24ae9d2a4a4adbdc2ef80b059de709c8728abeb1d7",
+    "hv_sha256": "6679506629bc77a3e428b33a5f4229009abdaef6b1e71087e4cebeaa6c222955",
+    "payload_sha256": "2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7",
+    "recipe": "NWOAS/nwoas_scripts/native-s224/prepare.py",
+    "scope": "Read projection only. Host control/admin writes, NS2 and boot setup remain.",
+    "hardware_status": "Two boots; integration, 10 GiB x3 memory, five-minute active reads, 30-minute mixed soak and clean-reboot persistence PASS",
+    "cinebench": "No S224 measurement"
+  }
 }

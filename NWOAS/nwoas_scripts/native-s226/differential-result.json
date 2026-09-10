@@ -1,0 +1,8 @@
+{
+  "pass_": true,
+  "commands": 11714,
+  "deferred_aers": 241,
+  "state_checks": "queue descriptors, generation deltas, features, held AER, cache state, set-cache/flush calls and cache-resync signal after every command/reset",
+  "oracle": "Actual S139/S124 admin owner with current NamespacePair",
+  "scope": "Fake memory range and physical callbacks. No DMA, CQ production, IRQ, host-dependency removal or hardware installation"
+}

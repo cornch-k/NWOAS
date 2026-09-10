@@ -1,0 +1,8 @@
+{
+  "pass_": true,
+  "states": 200,
+  "compared_reads": 263597,
+  "oracle": "Actual imported S139/S124 controller",
+  "covered": "Widths, arbitrary slices, bounds, absent PCI functions, mask overlay, existing fatal CSTS override, disabled projection",
+  "scope": "Offline byte equivalence, not hardware stability"
+}
