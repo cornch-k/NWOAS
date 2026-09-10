@@ -1,6 +1,6 @@
 {
   "status": "PASS",
-  "python_and_shell_syntax_files": 22,
+  "python_and_shell_syntax_files": 23,
   "source_hashes": {
     "query.py": "c6f7c19b3a0bc3f10833c8216233c1ed73b1241e77dff3ac8889479e5df89242",
     "test_process_cases.inc": "450e5b85f606916fbc978c1a7a498f0a2af2371e46b765ec92e47de91ac0731f",
@@ -14,6 +14,7 @@
     "qualify_reboot.py": "6a0586946b0bfb3f66b40de0a4d5323d9f6f19dee854386391f317fca999f69a",
     "prepare.py": "b376c11a1a84391aca53b5e90610379fc72a7658fc2177e91aff525c46512f0f",
     "qualify.py": "8147dfaef89bfbebb9ca64a1c22f45631275fdd3e7a2bb351b00ad3e33f15684",
-    "test_adapter.sh": "fdfd7d7220c056eb07260cbdadb2835a4de29b398af158c4673c4c6c6dcf8dab"
+    "test_adapter.sh": "fdfd7d7220c056eb07260cbdadb2835a4de29b398af158c4673c4c6c6dcf8dab",
+    "latency_query.py": "49965b8735739471127e2f5562fee00b5ede606429324878cbdce0d4c35d26e4"
   }
 }

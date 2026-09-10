@@ -1,0 +1,10 @@
+{
+  "status": "Read-only post-test observation; root cause unresolved",
+  "source": "latency-counters.json",
+  "max_ns1_execution_ticks": 178046,
+  "max_ns2_execution_ticks": 389955,
+  "max_sq_backlog": 1,
+  "cq_ack_writes": 2064360,
+  "tick_frequency_this_boot": "Not collected; do not convert these counters to seconds using a guessed frequency",
+  "scope": "Boot-cumulative single-command execution maxima, not the latency of one entire Windows 64MiB read. Includes NS2 diagnostic observer effect. No correlation to the 1177709us outlier has been established."
+}

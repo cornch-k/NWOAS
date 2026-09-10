@@ -1,0 +1,30 @@
+{
+  "status": "Analysis of existing successful run; no new hardware test",
+  "samples": 2555,
+  "percentile_method": "nearest rank",
+  "read_us": {
+    "p50": 125558,
+    "p90": 130924,
+    "p95": 141097,
+    "p99": 169788
+  },
+  "above_us": {
+    "250000": 10,
+    "500000": 3,
+    "1000000": 1
+  },
+  "maximum": {
+    "sample_1_based": 2455,
+    "us": 1177709,
+    "neighbor_read_us": [
+      132732,
+      286570,
+      1177709,
+      137613,
+      164978
+    ]
+  },
+  "first_100_median_us": 52399.5,
+  "last_100_median_us": 125970.0,
+  "scope": "Logical compressed-file reads including Windows scheduling/filesystem effects. Successful checksums throughout. No synchronized trace correlates outliers to physical I/O or NS2; no causal or raw-SSD-throughput claim."
+}

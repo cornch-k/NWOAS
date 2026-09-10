@@ -54,3 +54,10 @@ queued. HV/runtime stays alive. Reboot inventory still reports USB Input
 Device code10 and two unnamed code28 entries; VideoController returned no rows.
 C: free at that inventory was3,584,143,360B. No driver improvement is claimed.
 See NEXT.md for the source-audited NS2 ownership migration plan.
+
+Read-latency distribution from the same successful active test: p90=130924us,
+p99=169788us; 3 of2555 samples exceeded500000us, and one exceeded1s.
+The first100-read median was52399.5us versus125970us for the last100.
+No synchronized trace identifies the cause. See read-latency-distribution.json
+and latency-analysis.json; boot-cumulative command ticks are not equivalent to
+end-to-end Windows file-read latency.

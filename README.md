@@ -64,7 +64,7 @@ An occasional read-latency outlier remains. Qualification is recorded in the
 [S230 results](NWOAS/nwoas_scripts/native-s230/README.md). This reduces host
 rendezvous for controller management; no overall speedup has been measured.
 S224 is the prior bounded-qualified fallback. See the
-[execution-mode explanation](NWOAS/nwoas_scripts/native-s224/EXECUTION-MODE.md).
+[execution-mode explanation](NWOAS/nwoas_scripts/native-s230/EXECUTION-MODE.md).
 
 Start with the [session record](NWOAS/NWOAS-STATUS-2026-09-10-SESSION.md),
 [Cinebench evidence](NWOAS/nwoas_scripts/bench-s218/result.json),
