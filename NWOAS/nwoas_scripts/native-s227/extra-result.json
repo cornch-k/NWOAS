@@ -1,0 +1,5 @@
+{
+  "pass_": true,
+  "comparisons": 65,
+  "scope": "Multi-command full-CQ/AER/PRP batches, create/delete batch, invalid doorbells, fetch and three logical publication failures against actual S139 oracle. Fake RAM only."
+}

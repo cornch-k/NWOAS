@@ -1,0 +1,25 @@
+{
+  "status": "PASS",
+  "session": "nwoas_scripts/logs/native-s230-admin-20260910-111548.TRiw43.link",
+  "job": 1,
+  "normal_windows_restart": true,
+  "persisted_test_file_bytes": 268435456,
+  "persisted_test_file_sha256": "eb11897202f621134a7ec3c737c4ac3fbeee61ef69faa50d4b9469d8998538d6",
+  "cpu_count": 8,
+  "memory_bytes": 15081889792,
+  "cpu_us": 82201,
+  "read64m_us": 52910,
+  "free_c_bytes": 3584143360,
+  "native_p12": {
+    "phase": "Windows worker connected; no host P-state writes",
+    "utc": 1789006585.702267,
+    "p_cmd": "0x4000010c10c",
+    "p_status": "0xcc",
+    "e_cmd": "0x40000105105",
+    "e_status": "0x55",
+    "p12_selected": true
+  },
+  "hv_sha256": "2d763bfb3aa6c55d8fbcd3d8ed90eeb4bb322f177d87ae279c1c53efbe7fa2c1",
+  "problem_devices": "USB Input Device code10 and two unnamed code28 entries; pointer/hotplug not tested",
+  "video_inventory": "Win32_VideoController returned no rows; no GPU-driver completion established"
+}

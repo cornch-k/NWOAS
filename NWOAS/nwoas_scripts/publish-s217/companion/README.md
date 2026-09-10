@@ -73,3 +73,12 @@ S225 and S226 contain tested but uninstalled admin response/state foundations.
 They are not part of the S224 hardware binary. Their integration plan explicitly
 requires a local completion owner, validated PRP publication, IRQ/lifecycle
 synchronization and physical-backend integration before claiming host-free admin.
+
+## S230 target control/admin frontend
+
+`../../native-s230/prepare.py` composes the pinned m1n1 Windows base and this
+companion patch with the S209/S225/S226/S227/S228 C modules and S230 adapter.
+Run its build.sh with the recorded toolchain; it pins all generated source
+hashes and the HV binary. The unchanged guest payload is S223. See the S230
+README, manifest and hardware result files for qualification status. NS2
+transport and host boot/DCP setup remain; this is an EL2-mediated system.

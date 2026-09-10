@@ -1,0 +1,26 @@
+{
+  "stage": "S229",
+  "base_commit": "bddf7f06f033a7411834ac61381d8c997034f532",
+  "status": "First Windows boot/integration PASS; superseded for sustained testing by S230 tick-log/shutdown fix",
+  "sources": {
+    "Makefile": "734f18a2e64fbc99ea56e7cbb138b1eee89af1b8e39444cbce49587d81b590aa",
+    "src/nvme.c": "fa91666a884d526f1b59fe47980f61aeaee3471615c99d625abe5748069050b6",
+    "src/hv_vm.c": "dd8d9eb5fcc7f89ad2c4a791485e481ebec973ae23c5fe7d3c26ac3165568a88",
+    "src/nwoas_s229_adapter.inc": "97c962610409320cdc9d15210a8dd4389acdf43f82b17c14fd071bf4cfeb85a4",
+    "src/nwoas_frontend/admin_payload.c": "1aa4bcab364416481ffbff878aa84eb83abb82f2df38f812b08d9073d0542fb2",
+    "src/nwoas_frontend/admin_payload.h": "eb0d6ddd955ff5e35e04b0f36771a8b79fdba7c5aa94278a1e5863151328c7ac",
+    "src/nwoas_frontend/admin_ring.c": "724f87af5b73a75c0faf0cf02693dd80e9afdcbf410c77e4b274ae7b96a9bcf8",
+    "src/nwoas_frontend/admin_ring.h": "72e312bf56e2c31fc3ae5cbd93689daa0ff565c11f41f608432eff9c8a4186b6",
+    "src/nwoas_frontend/admin_state.c": "7bb6b415ddf5a586c9df9ee2fa302ff35366d5739b6dd249b3097e7f8171fb03",
+    "src/nwoas_frontend/admin_state.h": "3d0d3d4028c4acdbd3511b67ad8c337adc4e09360622e7b4960fe4e5afc40a98",
+    "src/nwoas_frontend/frontend.c": "4bcbf11d5c9ba57437061f240b5f86a80c382f4d816365ffdf9fd69a2d1a5689",
+    "src/nwoas_frontend/frontend.h": "660e5854c52857efc1dc88c361f25c4d41be47972df07877d0fd598f149eaa03",
+    "src/nwoas_frontend/model.c": "2927046481983a91842974e62b810bedf8560cd1b6ea825cf5788f7fce5f98b3",
+    "src/nwoas_frontend/model.h": "8f3ef1dd39a84c16eb9185bdfb3cd1d8b3b80b16d3b7ff8ce266acc3421196f0"
+  },
+  "scope": "Local PCI/control/admin owner; existing ANS data path, NS2 and host boot setup retained",
+  "superseded_uninstalled_hv_sha256": "49ded07899917021a39c259dc253e1287c2470d3c9eeadb17bea9afa7a2b687a",
+  "hv_sha256": "6ae35d6a13c0843afc7b0d5fd051c1c215cf7b84e101f9d99acc1f6911d7b70b",
+  "hv_bytes": 2162688,
+  "hardware_result": "hardware-result.json"
+}

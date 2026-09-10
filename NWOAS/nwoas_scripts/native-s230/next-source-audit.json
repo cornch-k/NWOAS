@@ -1,0 +1,10 @@
+{
+  "status": "Source-audited plan only; no new implementation",
+  "sources": {
+    "transport-s123/transport.py": "e84d15f15c976949ae2c172bcc05ee28d6a9875e93a287cad4750a06e905c95d",
+    "memory-s180/link_module.py": "3fe6ffe87a0f89b45513d381e0953dbd44d4ab9fd1b0369f326f9c9d9c25750e",
+    "file-delivery-s168/adapter.py": "ff67e437d68f460c4a9b0759bfdfaf7a5134f4ae00218ad34f47049e91061869",
+    "file-delivery-s168/channel.py": "365123769a2d87b02cc024f9061df580c01184017b3fb494dd289384b74a02e9",
+    "native-s230/query_module.py": "af4eeb7f45aa9669c264d2e3520ae3d79da4020c89354e85738989c55f80f09b"
+  }
+}

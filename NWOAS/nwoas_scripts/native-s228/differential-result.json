@@ -1,0 +1,11 @@
+{
+  "pass_": true,
+  "actual_held_aers": 170,
+  "state_comparisons": 11663,
+  "submitted_commands": 5867,
+  "configurations": 21,
+  "cq_acknowledgements_without_fetch": 2634,
+  "full_cq_submissions": 1821,
+  "observed_phase_wraps": 329,
+  "scope": "Composed S209/S227/S226/S225 control+admin frontend against actual S139 memory/register/IRQ state; fake RAM only. No hardware."
+}

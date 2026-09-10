@@ -1,0 +1,11 @@
+{
+  "pass_": true,
+  "actual_held_aers": 207,
+  "state_comparisons": 11830,
+  "submitted_commands": 7273,
+  "configurations": 21,
+  "cq_acknowledgements_without_fetch": 3176,
+  "full_cq_submissions": 2259,
+  "observed_phase_wraps": 411,
+  "scope": "Actual S139 Controller memory bytes and ring/admin state; fake RAM/callbacks only. No hardware."
+}

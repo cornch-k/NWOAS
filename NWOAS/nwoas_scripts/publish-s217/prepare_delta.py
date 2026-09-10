@@ -3,14 +3,14 @@ from pathlib import Path
 import json,hashlib
 ROOT=Path('/Volumes/X31/NWOAS');S=ROOT/'nwoas_scripts'
 D=Path('/Volumes/X31/NWOAS-publish-20260907/NWOAS/nwoas_scripts')
-folders=['loader-s197','loader-s199','firmware-s204','rebuild-s205','native-s207','nvme-s208','native-s209','firmware-s210','nvme-s211','loader-s213','nvme-s214','loader-s215','firmware-s216','publish-s217','bench-s218','native-s219','validation-s220','dtb-s221','diagnostics-s222','loader-s223','native-s224','native-s225','native-s226','loader-s203','nvme-s202','storage-s195']
+folders=['loader-s197','loader-s199','firmware-s204','rebuild-s205','native-s207','nvme-s208','native-s209','firmware-s210','nvme-s211','loader-s213','nvme-s214','loader-s215','firmware-s216','publish-s217','bench-s218','native-s219','validation-s220','dtb-s221','diagnostics-s222','loader-s223','native-s224','native-s225','native-s226','native-s227','native-s228','native-s229','native-s230','loader-s203','nvme-s202','storage-s195']
 excluded={'out','build','source-before','source-candidate','s131-build','__pycache__','logs','verified-backup','certificates','symbols','venv','.git'}
 allowed={'.py','.c','.h','.md','.json','.sh','.patch','.diff','.cmd','.ps1','.inc','.inf','.txt','.def','.asl','.aslc','.dsc','.dts'}
 block={'native-s219/commit-api.json','publish-s217/prepared-delta.json','publish-s217/stage-paths.txt'}
 paths=set()
 for folder in folders:
  paths.update(p for p in (S/folder).rglob('*') if p.is_file())
-for stage in [203,204,206,211,212,214,215,216,223,224]:paths.update(S.glob(f'*s{stage}*guest-test.sh'))
+for stage in [203,204,206,211,212,214,215,216,223,224,229,230]:paths.update(S.glob(f'*s{stage}*guest-test.sh'))
 paths.add(S/'smp-s133/pmgr_gate.py')
 paths.add(S/'nvme-s163/assess_soak.py')
 records=[]

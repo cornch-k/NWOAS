@@ -44,7 +44,8 @@ rebuilds the exact existing DTB; the complete S216 pipeline reproduces the same
 payload. The DTB's historical upstream revision remains unconfirmed.
 
 The storage path still presents an emulated NVMe interface, with a target-side
-fast data path and host-side control/service transport. The S163 50µs interrupt
+C data path. S230 also owns synthetic PCI/control/admin in target C; host NS2
+service transport and boot/DCP orchestration remain. The S163 50µs interrupt
 reassert delay passed the recorded 30-minute soak; these bounded passes follow earlier watchdog
 failures, whose complete cause remains unresolved. A dedicated 256MiB write-through
 file passed verification of every 64-bit word in S193 and S200, with identical
@@ -56,13 +57,14 @@ progress. The active Windows volume is about 24.8 GB, not a completed 128/128 GB
 split. The live keyboard and trackpad were enumerated under USB-A; an empty
 USB-C root hub does not demonstrate USB-C device-transfer success.
 
-S224 now serves supported PCI/NVMe register reads on the target while retaining
-host control/admin ownership. Two boots, full-word 10GiB x3 memory, a five-minute
-active-read run, a thirty-minute mixed soak and clean-reboot file persistence
-passed. These are bounded qualification results, not a general speedup or
-standalone-driver claim. S225/S226 are uninstalled local-admin foundations.
-See the [execution-mode explanation](NWOAS/nwoas_scripts/native-s224/EXECUTION-MODE.md)
-and [S224 results](NWOAS/nwoas_scripts/native-s224/README.md).
+S230 integrates the bounded C admin-ring and control frontend with the existing
+ANS data path. Two Windows boots, 256 MiB full-word write/read, 10 GiB x3 memory, a ten-minute
+mixed soak, clean-reboot persistence and five-minute active reads passed.
+An occasional read-latency outlier remains. Qualification is recorded in the
+[S230 results](NWOAS/nwoas_scripts/native-s230/README.md). This reduces host
+rendezvous for controller management; no overall speedup has been measured.
+S224 is the prior bounded-qualified fallback. See the
+[execution-mode explanation](NWOAS/nwoas_scripts/native-s224/EXECUTION-MODE.md).
 
 Start with the [session record](NWOAS/NWOAS-STATUS-2026-09-10-SESSION.md),
 [Cinebench evidence](NWOAS/nwoas_scripts/bench-s218/result.json),

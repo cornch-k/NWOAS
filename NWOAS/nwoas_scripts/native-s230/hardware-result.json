@@ -1,0 +1,24 @@
+{
+  "status": "PASS",
+  "session": "nwoas_scripts/logs/native-s230-admin-20260910-110251.Jw3NWh.link",
+  "job": 1,
+  "cpu_count": 8,
+  "memory_bytes": 15081889792,
+  "cpu_us": 79566,
+  "read64m_us": 53389,
+  "write256m_us": 133898,
+  "read256m_us": 202082,
+  "all_words_verified": 33554432,
+  "native_p12": {
+    "phase": "Windows worker connected; no host P-state writes",
+    "utc": 1789005809.4317062,
+    "p_cmd": "0x4000010c10c",
+    "p_status": "0xcc",
+    "e_cmd": "0x40000105105",
+    "e_status": "0x55",
+    "p12_selected": true
+  },
+  "qualification": "Short integration only; see separate active/soak results",
+  "hv_sha256": "2d763bfb3aa6c55d8fbcd3d8ed90eeb4bb322f177d87ae279c1c53efbe7fa2c1",
+  "payload_sha256": "2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7"
+}

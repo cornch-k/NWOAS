@@ -1,0 +1,99 @@
+{
+  "session": "nwoas_scripts/logs/native-s230-admin-20260910-110251.Jw3NWh.link",
+  "job": 3,
+  "pass_": true,
+  "completed_exit0": true,
+  "samples": [
+    {
+      "number": 1,
+      "guest_time": "2026-09-10T11:04:19.8959382+09:00",
+      "valid": true,
+      "cpu_us": 81767,
+      "disk_us": 53209
+    },
+    {
+      "number": 2,
+      "guest_time": "2026-09-10T11:05:20.0678091+09:00",
+      "valid": true,
+      "cpu_us": 111128,
+      "disk_us": 126499
+    },
+    {
+      "number": 3,
+      "guest_time": "2026-09-10T11:06:20.3334343+09:00",
+      "valid": true,
+      "cpu_us": 106555,
+      "disk_us": 148816
+    },
+    {
+      "number": 4,
+      "guest_time": "2026-09-10T11:07:20.6144182+09:00",
+      "valid": true,
+      "cpu_us": 111577,
+      "disk_us": 128503
+    },
+    {
+      "number": 5,
+      "guest_time": "2026-09-10T11:08:20.8717559+09:00",
+      "valid": true,
+      "cpu_us": 107009,
+      "disk_us": 128715
+    },
+    {
+      "number": 6,
+      "guest_time": "2026-09-10T11:09:21.1373811+09:00",
+      "valid": true,
+      "cpu_us": 107159,
+      "disk_us": 127724
+    },
+    {
+      "number": 7,
+      "guest_time": "2026-09-10T11:10:21.3978327+09:00",
+      "valid": true,
+      "cpu_us": 118062,
+      "disk_us": 127760
+    },
+    {
+      "number": 8,
+      "guest_time": "2026-09-10T11:11:21.6496815+09:00",
+      "valid": true,
+      "cpu_us": 108200,
+      "disk_us": 128276
+    },
+    {
+      "number": 9,
+      "guest_time": "2026-09-10T11:12:21.9141599+09:00",
+      "valid": true,
+      "cpu_us": 104912,
+      "disk_us": 127794
+    },
+    {
+      "number": 10,
+      "guest_time": "2026-09-10T11:13:22.1504056+09:00",
+      "valid": true,
+      "cpu_us": 111190,
+      "disk_us": 128646
+    },
+    {
+      "number": 11,
+      "guest_time": "2026-09-10T11:14:22.4010853+09:00",
+      "valid": true,
+      "cpu_us": 96325,
+      "disk_us": 128800
+    }
+  ],
+  "note": "Repeated read-only 64MiB test and bounded CPU work; not a general SSD benchmark or lifetime stability proof.",
+  "cpu_us": {
+    "min": 81767,
+    "median": 107159,
+    "max": 118062
+  },
+  "disk_us": {
+    "min": 53209,
+    "median": 128276,
+    "max": 148816
+  },
+  "guest_timestamp_span_s": 602.505147,
+  "host_queue_to_last_log_write_s": 603.9120991230011,
+  "required_span_s": 600.0
+}

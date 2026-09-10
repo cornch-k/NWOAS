@@ -177,5 +177,15 @@
     "scope": "Read projection only. Host control/admin writes, NS2 and boot setup remain.",
     "hardware_status": "PASS: two boots, integration, 10 GiB x3 memory, five-minute active reads on both boots, 30-minute mixed soak and clean-reboot persistence",
     "cinebench": "No S224 measurement"
+  },
+  "additional_admin_frontend": {
+    "stage": "S230",
+    "base_commit": "bddf7f06f033a7411834ac61381d8c997034f532",
+    "baseline_patch_sha256": "676dbc416c51c7bec2a9ef24ae9d2a4a4adbdc2ef80b059de709c8728abeb1d7",
+    "hv_sha256": "2d763bfb3aa6c55d8fbcd3d8ed90eeb4bb322f177d87ae279c1c53efbe7fa2c1",
+    "payload_sha256": "2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7",
+    "recipe": "NWOAS/nwoas_scripts/native-s230/prepare.py",
+    "scope": "Target C synthetic PCI/control/admin ownership and existing C ANS data path; NS2 transport, host boot/DCP setup and EL2 mediation remain.",
+    "hardware_status": "PASS: two S230 Windows boots, 8-core/P12 integration, 256 MiB full-word write/read, 10 GiB x3 memory, 11 mixed samples over 602.505147s, normal-reboot file persistence, 2555 active reads over 300030ms; no new Cinebench"
   }
 }

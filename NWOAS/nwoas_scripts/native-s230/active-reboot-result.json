@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "session": "nwoas_scripts/logs/native-s230-admin-20260910-111548.TRiw43.link",
+  "job": 2,
+  "samples": 2555,
+  "elapsed_ms": 300030,
+  "disk_us": {
+    "min": 49008,
+    "median": 125558,
+    "max": 1177709
+  },
+  "note": "Logical 64MiB reads on a compressed filesystem; not raw SSD throughput"
+}

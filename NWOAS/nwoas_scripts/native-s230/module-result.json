@@ -1,0 +1,5 @@
+{
+  "pass_": true,
+  "cases": 8,
+  "scope": "Fake preboot proxy; exact policy/capability gating, no guest state owner retained, NS2 handler preserved and fallback callbacks fail closed"
+}

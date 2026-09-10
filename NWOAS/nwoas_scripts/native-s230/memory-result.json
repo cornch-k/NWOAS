@@ -1,0 +1,8 @@
+{
+  "status": "PASS",
+  "bytes_per_pass": 10737418240,
+  "passes": 3,
+  "elapsed_ms": 28046,
+  "evidence": "memory-evidence.txt",
+  "hv_sha256": "2d763bfb3aa6c55d8fbcd3d8ed90eeb4bb322f177d87ae279c1c53efbe7fa2c1"
+}

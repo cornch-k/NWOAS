@@ -1,0 +1,19 @@
+
+
+TotalPhysicalMemory       : 15081889792
+NumberOfLogicalProcessors : 8
+
+
+
+S230 PERSISTED TEST FILE PASS
+
+Name             PNPClass ConfigManagerErrorCode
+----             -------- ----------------------
+                                              28
+USB Input Device HIDClass                     10
+                                              28
+
+
+S230 FREE_BYTES=3584143360
+S140 CPU PASS active=8 threads=8 elapsed_us=82201 checksum=14964600543233568963
+S140 DISK PASS active=8 bytes=67108864 elapsed_us=52910 failed=0 checksum=2755686512017749371

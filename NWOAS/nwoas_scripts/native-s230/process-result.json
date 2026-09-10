@@ -1,0 +1,11 @@
+{
+  "status": "PASS",
+  "output": "PASS production execute/process/poll/IRQ/link fixtures: read/write policy, FUA, recoverable refusal, terminal physical/flush errors, NS2 result/cancel, mapping fault, CQ backpressure and deferred process",
+  "hv_vm_sha256": "9befd3aa9152522bc981efff3fbe121c87ede6be9ab8efd65720f6888c56e640",
+  "header_sha256": {
+    "nvme.h": "cce2667a7eded4a1be6c0c5e6321eaf0158d0a2195c856eb69bfe59e7e47e198",
+    "hv.h": "8db7f25688b3cb79f4fd9788dd2a2d5bbe02559553cb7d1a73fc3fc6689d79a2"
+  },
+  "directed_cases": 28,
+  "scope": "Actual execute/process/poll/IRQ/link/guest_ptr code; mocked physical callbacks, hv_exc_proxy response, clock, IPA translation and DRAM range. Production NVME_GUEST constants extracted from nvme.h; no physical device fault injection"
+}

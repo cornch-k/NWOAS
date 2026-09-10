@@ -440,3 +440,62 @@ boot, newer Cinebench result or macOS performance parity is claimed.
 ## Final S224 extension result
 
 Second-boot active reads passed 2229 iterations over 300093 ms, median 125800 us (logical compressed-file reads, not raw SSD throughput). Final read-only target query returned the S224 capability and zero target I/O error count. Both boot sessions have acknowledged test exit0. The current MacBook runtime remains running and required; no reboot or mutation job remains queued. Source, build and first-boot/second-boot evidence are included. No S224 Cinebench, native GPU/network driver, standalone boot or macOS parity result is claimed.
+
+## 10:19–11:30 KST extension — S227–S230
+
+The user extended this live work until 11:30 KST; no scheduler was created.
+S227 bounded admin rings and S228 control/admin/IRQ composition were built,
+differential-tested and reviewed with Claude Code Fable5.1. S229 connected
+those components to the existing target C S149 ANS data path and booted Windows.
+Supported PCI, control and admin requests now stay on the target. The host
+Python controller no longer owns those requests. NS2 service/RAM transport,
+host boot/DCP setup and EL2 mediation still remain. This is not a standalone
+Windows ANS driver, native GPU/network completion or measured overall speedup.
+
+S230 fixes the S229 review's tick-path printf and post-shutdown doorbell
+handling. First boot passed 8-core integration, P12, 256 MiB complete-word
+write/read verification and 10 GiB memory across three passes. It also verified
+the 256 MiB archive saved on S229 before a normal Windows restart.
+The S230 ten-minute mixed soak and second-boot qualification are pending at
+this checkpoint; final evidence will follow. Current launcher is
+`nwoas_scripts/native-s230-admin-guest-test.sh`; host runtime must remain alive.
+HV SHA256: `2d763bfb3aa6c55d8fbcd3d8ed90eeb4bb322f177d87ae279c1c53efbe7fa2c1`.
+The unchanged S223 payload SHA256 is
+`2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7`.
+
+S224 is the previous bounded-qualified fallback. Earlier paragraphs saying
+S225/S226 are uninstalled describe their earlier checkpoint; they are now
+linked into S229/S230. No new Cinebench run was made during this extension.
+
+## 11:22 KST — S230 bounded qualification complete
+
+Two S230 Windows boots passed. The first completed 8-core/P12 integration,
+256 MiB full-word write/read, 10 GiB memory x3, and 11 mixed CPU/read samples
+over602.505147s. Normal Windows restart preserved the exact256MiB archive hash.
+The second boot passed2555 consecutive logical64MiB reads over300030ms, median
+125558us and maximum1177709us. The maximum remains an unexplained latency
+outlier; these results do not prove raw SSD throughput or overall speedup.
+Final target I/O error count was0 and CSTS was1. Admin fetch/completion counters
+were112/111; a held AER accounts for a possible one-command difference.
+
+Claude Code Fable5.1 reviews of S227–S230 prompted bounded-ring/IRQ lifecycle
+corrections, the target tick-log and shutdown fixes, and stronger test coverage.
+The final extracted production process/poll/IRQ/link harness passed28 directed
+ASan/UBSan cases with physical/proxy/memory callbacks mocked. Source hashes and
+review dispositions are recorded. The first soak assessment's default30-minute
+completion marker was corrected to the actual10-minute marker; checksums,
+exit0 and the600-second duration threshold were unchanged.
+
+Current runtime: `native-s230-admin-20260910-111548.TRiw43.link`; launcher
+`nwoas_scripts/native-s230-admin-guest-test.sh`. Keep the MacBook runtime alive.
+No pending reboot/mutation remains after acknowledged second-boot checks.
+The previous S224 runtime is the fallback, not the current execution.
+
+Windows still sees15,081,889,792B and8cores. USB Input Device code10 and two
+unnamed code28 entries remain; VideoController inventory is empty. No new GPU,
+network or USB hotplug support is claimed. C: free was3,584,143,360B.
+No new Cinebench was run;1888.454 remains the earlier S216 CPU multi-core result.
+Target C now owns synthetic PCI/control/admin plus the existing ANS data path;
+NS2 transport and host boot/DCP/EL2 dependencies remain. `native-s230/NEXT.md`
+records the exact dynamic NS2 sectors and RAM coherence requirements for the
+next migration. Earlier status paragraphs are historical checkpoints.
