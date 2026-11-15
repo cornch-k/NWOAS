@@ -1,0 +1,478 @@
+{
+  "experiment": "S240-wifi-m1",
+  "writes_to_storage": false,
+  "hardware_success_claim": false,
+  "steps": [
+    {
+      "msg": "pcie_init",
+      "rc": 0
+    },
+    {
+      "msg": "root port 0",
+      "id": 269226091,
+      "port_status": 1,
+      "linksts": 2835350024
+    },
+    {
+      "msg": "smc key info",
+      "key": "gP0d",
+      "info": "(4, 'ui32', 240)"
+    },
+    {
+      "msg": "smc write",
+      "key": "gP0d",
+      "value": 8388609
+    },
+    {
+      "msg": "port 0 PORT_PERST left as set by pcie_init (reference sequence)",
+      "before": 1
+    },
+    {
+      "msg": "port 0 LTSSM started"
+    },
+    {
+      "msg": "port 0 link",
+      "up": true,
+      "linksts": 2566914049
+    },
+    {
+      "msg": "bus1 fn0",
+      "id": 1143280868,
+      "class_rev": 41943043
+    },
+    {
+      "msg": "bus1 fn1",
+      "id": 1600722148,
+      "class_rev": 41943043
+    },
+    {
+      "msg": "power down",
+      "confirmed": true,
+      "errors": "none",
+      "port1_unchanged": true
+    }
+  ],
+  "notes": [],
+  "controller_reset_option": false,
+  "port1_before": {
+    "port1+0x208": 2835350016,
+    "port1+0x800": 1048833,
+    "port1+0x804": 1,
+    "port1+0x810": 256,
+    "port1+0x814": 1,
+    "gpio_port1_perst": 485890,
+    "rootport1_id": 269226091,
+    "rootport1_bus": 0,
+    "exc": 0
+  },
+  "link_was_up_before_power": false,
+  "perst_gpio_original": "0x76a02",
+  "port0_perst_reg": {
+    "before": "0x1",
+    "controller_reset": false
+  },
+  "link_up": true,
+  "rootport0_bus": {
+    "original": "0x0",
+    "set": "0x10100"
+  },
+  "rootport0_pcie": {
+    "cap_offset": "0x70",
+    "devctl": "0x810",
+    "relaxed_ordering": true,
+    "no_snoop": true,
+    "link_speed_code": 2,
+    "link_width": 1
+  },
+  "functions": {
+    "0": {
+      "id": "0x442514e4",
+      "vendor": "0x14e4",
+      "device": "0x4425",
+      "class": "0x28000",
+      "revision": "0x3",
+      "header_type": "0x80",
+      "command": "0x0",
+      "status": "0x10",
+      "subsystem": "0x4378106b",
+      "present": true,
+      "pcie": {
+        "cap_offset": "0xac",
+        "devctl": "0x2c10",
+        "relaxed_ordering": true,
+        "no_snoop": true,
+        "link_speed_code": 2,
+        "link_width": 1
+      },
+      "exceptions_during_read": 0,
+      "bars": [
+        {
+          "bar": 0,
+          "type": "mem64",
+          "prefetch": false,
+          "size": "0x10000",
+          "orig": "0x4",
+          "restored": true
+        },
+        {
+          "bar": 2,
+          "type": "mem64",
+          "prefetch": false,
+          "size": "0x800000",
+          "orig": "0x4",
+          "restored": true
+        },
+        {
+          "bar": 4,
+          "type": "mem32",
+          "prefetch": false,
+          "size": "0x0",
+          "orig": "0x0",
+          "restored": true
+        },
+        {
+          "bar": 5,
+          "type": "mem32",
+          "prefetch": false,
+          "size": "0x0",
+          "orig": "0x0",
+          "restored": true
+        }
+      ],
+      "exceptions_during_sizing": 0
+    },
+    "1": {
+      "id": "0x5f6914e4",
+      "vendor": "0x14e4",
+      "device": "0x5f69",
+      "class": "0x28000",
+      "revision": "0x3",
+      "header_type": "0x80",
+      "command": "0x0",
+      "status": "0x10",
+      "subsystem": "0x4378106b",
+      "present": true,
+      "pcie": {
+        "cap_offset": "0xac",
+        "devctl": "0x2c10",
+        "relaxed_ordering": true,
+        "no_snoop": true,
+        "link_speed_code": 2,
+        "link_width": 1
+      },
+      "exceptions_during_read": 0,
+      "bars": [
+        {
+          "bar": 0,
+          "type": "mem64",
+          "prefetch": false,
+          "size": "0x8000",
+          "orig": "0x4",
+          "restored": true
+        },
+        {
+          "bar": 2,
+          "type": "mem64",
+          "prefetch": false,
+          "size": "0x400000",
+          "orig": "0x4",
+          "restored": true
+        },
+        {
+          "bar": 4,
+          "type": "mem32",
+          "prefetch": false,
+          "size": "0x0",
+          "orig": "0x0",
+          "restored": true
+        },
+        {
+          "bar": 5,
+          "type": "mem32",
+          "prefetch": false,
+          "size": "0x0",
+          "orig": "0x0",
+          "restored": true
+        }
+      ],
+      "exceptions_during_sizing": 0
+    }
+  },
+  "bridge_window_prediction": {
+    "available": true,
+    "hypothesis": true,
+    "note": "prediction from EDK2 allocation rules; the real window must be read from config space after UEFI enumerates with Wi-Fi powered",
+    "mem32_bar_sizes": [
+      "0x800000",
+      "0x400000",
+      "0x10000",
+      "0x8000"
+    ],
+    "pmem64_bar_sizes": [],
+    "io_bar_sizes": [],
+    "window_alignment": "0x800000",
+    "window_length": "0xd00000",
+    "order": "Wi-Fi window first (larger alignment)",
+    "wifi_window_bus": [
+      "0xc0000000",
+      "0xc0cfffff"
+    ],
+    "wifi_window_cpu": [
+      "0x6c0000000",
+      "0x6c0cfffff"
+    ],
+    "wifi_badmemorylist_pfns": [
+      "0xc0000",
+      "0xc0cff"
+    ],
+    "fl1100_window_bus": [
+      "0xc0d00000",
+      "0xc0dfffff"
+    ],
+    "fl1100_moves": true
+  },
+  "verdict": "PASS_IDS",
+  "port1_after": {
+    "port1+0x208": 2835350016,
+    "port1+0x800": 1048833,
+    "port1+0x804": 1,
+    "port1+0x810": 256,
+    "port1+0x814": 1,
+    "gpio_port1_perst": 485890,
+    "rootport1_id": 269226091,
+    "rootport1_bus": 0,
+    "exc": 0
+  },
+  "power_down": {
+    "steps": {
+      "link_resync": "ok",
+      "root_bus_restore": "ok",
+      "perst_gpio_assert": "ok",
+      "perst_off_clear": "ok",
+      "smc_off": "ok",
+      "smc_stop": "ok",
+      "link_check": "ok",
+      "port1_snapshot": "ok"
+    },
+    "errors": {},
+    "perst_asserted": true,
+    "controller_reset_asserted": true,
+    "smc_off_written": true,
+    "smc_stopped": true,
+    "fixed_writes": {
+      "perst_gpio": "0x2",
+      "port0_perst": "0x0"
+    },
+    "link_resynced": true,
+    "resync": {
+      "drained_bytes": 0,
+      "iface_resync": true
+    },
+    "root_bus_restored": true,
+    "link_down_after": true,
+    "linksts_after": "0xc",
+    "port1_unchanged": true,
+    "required_steps": [
+      "link_resync",
+      "root_bus_restore",
+      "perst_gpio_assert",
+      "perst_off_clear",
+      "smc_off",
+      "smc_stop",
+      "link_check"
+    ],
+    "confirmed": true
+  },
+  "mmio_writes": [
+    [
+      "0x681000800",
+      "0x100101"
+    ],
+    [
+      "0x23c100260",
+      "0x76802"
+    ],
+    [
+      "0x680084004",
+      "0x8035"
+    ],
+    [
+      "0x680084000",
+      "0x1"
+    ],
+    [
+      "0x680084000",
+      "0x7"
+    ],
+    [
+      "0x680084004",
+      "0x35"
+    ],
+    [
+      "0x680084000",
+      "0x60f"
+    ],
+    [
+      "0x681000810",
+      "0x101"
+    ],
+    [
+      "0x681000814",
+      "0x1"
+    ],
+    [
+      "0x23c100260",
+      "0x76803"
+    ],
+    [
+      "0x681000080",
+      "0x1"
+    ],
+    [
+      "0x681000810",
+      "0x1"
+    ],
+    [
+      "0x681000800",
+      "0x100001"
+    ],
+    [
+      "0x690000018",
+      "0x10100"
+    ],
+    [
+      "0x690100010",
+      "0xffffffff"
+    ],
+    [
+      "0x690100014",
+      "0xffffffff"
+    ],
+    [
+      "0x690100010",
+      "0x4"
+    ],
+    [
+      "0x690100014",
+      "0x0"
+    ],
+    [
+      "0x690100018",
+      "0xffffffff"
+    ],
+    [
+      "0x69010001c",
+      "0xffffffff"
+    ],
+    [
+      "0x690100018",
+      "0x4"
+    ],
+    [
+      "0x69010001c",
+      "0x0"
+    ],
+    [
+      "0x690100020",
+      "0xffffffff"
+    ],
+    [
+      "0x690100020",
+      "0x0"
+    ],
+    [
+      "0x690100024",
+      "0xffffffff"
+    ],
+    [
+      "0x690100024",
+      "0x0"
+    ],
+    [
+      "0x690101010",
+      "0xffffffff"
+    ],
+    [
+      "0x690101014",
+      "0xffffffff"
+    ],
+    [
+      "0x690101010",
+      "0x4"
+    ],
+    [
+      "0x690101014",
+      "0x0"
+    ],
+    [
+      "0x690101018",
+      "0xffffffff"
+    ],
+    [
+      "0x69010101c",
+      "0xffffffff"
+    ],
+    [
+      "0x690101018",
+      "0x4"
+    ],
+    [
+      "0x69010101c",
+      "0x0"
+    ],
+    [
+      "0x690101020",
+      "0xffffffff"
+    ],
+    [
+      "0x690101020",
+      "0x0"
+    ],
+    [
+      "0x690101024",
+      "0xffffffff"
+    ],
+    [
+      "0x690101024",
+      "0x0"
+    ],
+    [
+      "0x690000018",
+      "0x0"
+    ],
+    [
+      "0x23c100260",
+      "0x2"
+    ],
+    [
+      "0x681000814",
+      "0x0"
+    ]
+  ],
+  "facts": {
+    "compatible": [
+      "J274AP",
+      "Macmini9,1",
+      "AppleARM"
+    ],
+    "ecam": "0x690000000",
+    "rc": "0x680000000",
+    "port0": "0x681000000",
+    "port0_phy": "0x680084000",
+    "port1": "0x682000000",
+    "gpio": "0x23c100000",
+    "gpio_phandle": "0x6a",
+    "perst_phandle": "0x6a",
+    "perst_pin": "0x98",
+    "perst_polarity": "0x0",
+    "port1_perst_phandle": "0x6a",
+    "port1_perst_pin": "0x99",
+    "smc": "0x23e400000",
+    "wlan_compatible": [
+      "wlan-pcie,bcm4378",
+      "wlan-pcie,bcm"
+    ],
+    "perst_to_config_ms": "0x64",
+    "t_refclk_to_perst_us": "0x64"
+  }
+}

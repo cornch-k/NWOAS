@@ -1,0 +1,23 @@
+23:02:44 START cur=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-s242-20261115-223918.out
+23:03:00 m1n1 idle; running S240 probe
+23:03:02 probe rc=0
+TTY> pcie: Error getting node /arm-io/apcie-ge0
+TTY> pcie: Error getting node /arm-io/apcie-ge1
+[s240] pcie_init rc=0x0
+[s240] root port 0 id=0x100c106b port_status=0x1 linksts=0xa9000208
+[s240] smc key info key=gP0d info=(4, 'ui32', 240)
+[s240] smc write key=gP0d value=0x800001
+[s240] port 0 PORT_PERST left as set by pcie_init (reference sequence) before=0x1
+[s240] port 0 LTSSM started
+[s240] port 0 link up=True linksts=0x99000001
+[s240] bus1 fn0 id=0x442514e4 class_rev=0x2800003
+[s240] bus1 fn1 id=0x5f6914e4 class_rev=0x2800003
+[s240] power down confirmed=True errors=none port1_unchanged=True
+  "verdict": "PASS_IDS",
+S240 verdict PASS_IDS. This is a config-space observation only, not a driver or boot result.
+23:03:04 rebooting m1n1
+Fetching ADT (0x0005C000 bytes)...
+m1n1 base: 0x8034b8000
+23:03:23 relaunched S242 -> /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-s242-20261115-230323-after-wifi.out
+23:04:03 S242 worker connected
+23:04:03 S240 HW DONE

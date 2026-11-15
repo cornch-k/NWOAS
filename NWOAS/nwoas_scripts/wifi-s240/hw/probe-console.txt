@@ -1,0 +1,341 @@
+Log: /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/wifi-s240-20261115-230300.9kUdJY
+TTY> Device info:
+TTY>   Model: Macmini9,1
+TTY>   Target: J274
+TTY>   Board-ID: 0x22
+TTY>   Chip-ID: 0x8103
+TTY> 
+TTY> CPU init (MIDR: 0x611f0221 smp_id:0x0)...
+TTY>   CPU part: 0x22 rev: 0x11
+TTY>   CPU: M1 Icestorm
+TTY> 
+TTY> boot_args at 0x803ce0000
+TTY>   revision:     3
+TTY>   version:      2
+TTY>   virt_base:    0x1504000
+TTY>   phys_base:    0x801504000
+TTY>   mem_size:     0x3dfafc000
+TTY>   top_of_kdata: 0x803ce4000
+TTY>   video:
+TTY>     base:       0xbe3f60000
+TTY>     display:    0x1
+TTY>     stride:     0xa00
+TTY>     width:      640
+TTY>     height:     1136
+TTY>     depth:      32bpp
+TTY>     density:    1
+TTY>   machine_type: 0
+TTY>   devtree:      0x33fc000
+TTY>   devtree_size: 0x5c000
+TTY>   cmdline:      
+TTY>   boot_flags:   0x0
+TTY>   mem_size_act: 0x400000000
+TTY> 
+TTY> 
+TTY> 
+TTY> m1n1 v1.0.2-1471-g59fb544-dirty
+TTY> Copyright The Asahi Linux Contributors
+TTY> Licensed under the MIT license
+TTY> 
+TTY> Running in EL2
+TTY> 
+TTY> OS FW version: unknown (mBoot-18000.121.3)
+TTY> System FW version: unknown (mBoot-18000.121.3)
+TTY> Heap base: 0x803ce4000
+TTY> MCC: Initializing T8103 MCC...
+TTY> MCC: Initialized T8103 MCC (8 channels)
+TTY> MMU: Initializing...
+TTY> MMU: RAM base: 0x800000000
+TTY> MMU: Top of normal RAM: 0xbe1000000
+TTY> MMU: Unmapping TZ0 region at 0xbe1008000..0xbe2c60000
+TTY> MMU: Unmapping TZ1 region at 0xbe1000000..0xbe1008000
+TTY> MMU: Unmapping TZ3 region at 0xbe6e20000..0xbffe20000
+TTY> MMU: Adding Device-nGnRE mapping at 0x400000000 (0x80000000)
+TTY> MMU: Adding Device-nGnRE mapping at 0x480000000 (0x80000000)
+TTY> MMU: Adding Device-nGnRE mapping at 0x580000000 (0x80000000)
+TTY> MMU: Adding Device-nGnRE mapping at 0x600000000 (0x80000000)
+TTY> MMU: Adding Device-nGnRE mapping at 0x6a0000000 (0x20000000)
+TTY> MMU: Adding Device-nGnRE mapping at 0x6c0000000 (0x40000000)
+TTY> MMU: Adding Device-nGnRE mapping at 0x700000000 (0x100000000)
+TTY> MMU: Adding Normal-NC mapping at 0xbfff34000 (0x28000)
+TTY> MMU: Adding Normal-NC mapping at 0xbfff04000 (0x8000)
+TTY> MMU: Adding Normal-NC mapping at 0xbffedc000 (0x28000)
+TTY> MMU: Adding Normal-NC mapping at 0xbffeac000 (0x8000)
+TTY> MMU: Adding Normal-NC mapping at 0xbfffb8000 (0x4000)
+TTY> MMU: Adding Normal-NC mapping at 0xbfff70000 (0x4000)
+TTY> MMU: SCTLR_EL1: 30100180 -> 30901085
+TTY> MMU: running with MMU and caches enabled!
+TTY> AIC: Version 1 @ 0x23b100000
+TTY> WDT registers @ 0x23d2b0000
+TTY> WDT disabled
+TTY> pmgr: Cleaning up device states...
+TTY> pmgr: Enabling 0.SIO_ADMA, parent of active device MCA1
+TTY> pmgr: Enabling 0.ANS2, parent of active device APCIE_ST
+TTY> pmgr: Enabling 0.DEBUG, parent of active device DEBUG_USB
+TTY> pmgr: initialized, 268 devices on 1 dies found.
+TTY> NWOAS-DCP-DEFER: automatic display init deferred to host
+TTY> fb init: 640x1136 (32) [s=640] @0xbe3f60000
+TTY> fb console: max rows 35, max cols 40
+TTY> fb: display logo
+TTY> Initialization complete.
+TTY> Checking for payloads...
+TTY> Devicetree compatible value: apple,j274
+TTY> Unknown payload at 0x8036b8000 (magic: 5b41464b)
+TTY> No valid payload found
+TTY> dart: dart /arm-io/dart-usb0 at 0x382f80000 is a t8020
+TTY> USB0: initialized at 0x80425a030
+TTY> dart: dart /arm-io/dart-usb1 at 0x502f80000 is a t8020
+TTY> USB1: initialized at 0x80425a360
+TTY> Running proxy...
+Fetching ADT (0x0005C000 bytes)...
+TTY> pcie: Initializing t8103 PCIe controller
+TTY> pcie: ADT uses 5 reg entries per port
+TTY> pcie: Initializing port 0
+TTY> pcie: Port 0 max speed = 2
+TTY> pcie: Initializing port 1
+TTY> pcie: Port 1 max speed = 2
+TTY> pcie: Initializing port 2
+TTY> pcie: Port 2 max speed = 1
+TTY> pcie: Initialized controller 0
+TTY> pcie: Error getting node /arm-io/apcie-ge0
+TTY> pcie: Error getting node /arm-io/apcie-ge1
+[s240] pcie_init rc=0x0
+[s240] root port 0 id=0x100c106b port_status=0x1 linksts=0xa9000208
+[mgmt] Starting via message
+[mgmt] Supported versions 11 .. 12
+[mgmt] Adding endpoint 0x0
+[mgmt] Adding endpoint 0x1
+[mgmt] Adding endpoint 0x2
+[mgmt] Adding endpoint 0x3
+[mgmt] Adding endpoint 0x4
+[mgmt] Adding endpoint 0x20
+Starting endpoint #0x1 (crash)
+Starting endpoint #0x2 (syslog)
+Starting endpoint #0x3 (kdebug)
+Starting endpoint #0x4 (iorep)
+[crash] buf prealloc at dva 0x23fe48000
+[iorep] buf prealloc 0x23fe4e000 / 0x23fe4e000
+[iorep] start
+[iorep] report!
+[iorep] report!
+[iorep] report!
+[iorep] report!
+[iorep] report!
+[iorep] report!
+[iorep] report!
+[iorep] report!
+[iorep] report!
+[iorep] report!
+[iorep] report!
+[iorep] report!
+[mgmt] IOP power state is now 0x20
+[syslog] count 32, entrysize 96
+[syslog] buf prealloc at dva 0x23fe4a000
+[mgmt] AP power state is now 0x20
+[mgmt] Startup complete
+Starting endpoint #0x20 (smcep)
+[smcep] Starting up
+[s240] smc key info key=gP0d info=(4, 'ui32', 240)
+[s240] smc write key=gP0d value=0x800001
+[s240] port 0 PORT_PERST left as set by pcie_init (reference sequence) before=0x1
+[s240] port 0 LTSSM started
+[s240] port 0 link up=True linksts=0x99000001
+[s240] bus1 fn0 id=0x442514e4 class_rev=0x2800003
+[s240] bus1 fn1 id=0x5f6914e4 class_rev=0x2800003
+[mgmt] Stopping via message
+[mgmt] AP power state is now 0x10
+[mgmt] IOP power state is now 0x10
+[s240] power down confirmed=True errors=none port1_unchanged=True
+{
+  "verdict": "PASS_IDS",
+  "functions": {
+    "0": {
+      "id": "0x442514e4",
+      "vendor": "0x14e4",
+      "device": "0x4425",
+      "class": "0x28000",
+      "revision": "0x3",
+      "header_type": "0x80",
+      "command": "0x0",
+      "status": "0x10",
+      "subsystem": "0x4378106b",
+      "present": true,
+      "pcie": {
+        "cap_offset": "0xac",
+        "devctl": "0x2c10",
+        "relaxed_ordering": true,
+        "no_snoop": true,
+        "link_speed_code": 2,
+        "link_width": 1
+      },
+      "exceptions_during_read": 0,
+      "bars": [
+        {
+          "bar": 0,
+          "type": "mem64",
+          "prefetch": false,
+          "size": "0x10000",
+          "orig": "0x4",
+          "restored": true
+        },
+        {
+          "bar": 2,
+          "type": "mem64",
+          "prefetch": false,
+          "size": "0x800000",
+          "orig": "0x4",
+          "restored": true
+        },
+        {
+          "bar": 4,
+          "type": "mem32",
+          "prefetch": false,
+          "size": "0x0",
+          "orig": "0x0",
+          "restored": true
+        },
+        {
+          "bar": 5,
+          "type": "mem32",
+          "prefetch": false,
+          "size": "0x0",
+          "orig": "0x0",
+          "restored": true
+        }
+      ],
+      "exceptions_during_sizing": 0
+    },
+    "1": {
+      "id": "0x5f6914e4",
+      "vendor": "0x14e4",
+      "device": "0x5f69",
+      "class": "0x28000",
+      "revision": "0x3",
+      "header_type": "0x80",
+      "command": "0x0",
+      "status": "0x10",
+      "subsystem": "0x4378106b",
+      "present": true,
+      "pcie": {
+        "cap_offset": "0xac",
+        "devctl": "0x2c10",
+        "relaxed_ordering": true,
+        "no_snoop": true,
+        "link_speed_code": 2,
+        "link_width": 1
+      },
+      "exceptions_during_read": 0,
+      "bars": [
+        {
+          "bar": 0,
+          "type": "mem64",
+          "prefetch": false,
+          "size": "0x8000",
+          "orig": "0x4",
+          "restored": true
+        },
+        {
+          "bar": 2,
+          "type": "mem64",
+          "prefetch": false,
+          "size": "0x400000",
+          "orig": "0x4",
+          "restored": true
+        },
+        {
+          "bar": 4,
+          "type": "mem32",
+          "prefetch": false,
+          "size": "0x0",
+          "orig": "0x0",
+          "restored": true
+        },
+        {
+          "bar": 5,
+          "type": "mem32",
+          "prefetch": false,
+          "size": "0x0",
+          "orig": "0x0",
+          "restored": true
+        }
+      ],
+      "exceptions_during_sizing": 0
+    }
+  },
+  "link_up": true,
+  "power_down": {
+    "steps": {
+      "link_resync": "ok",
+      "root_bus_restore": "ok",
+      "perst_gpio_assert": "ok",
+      "perst_off_clear": "ok",
+      "smc_off": "ok",
+      "smc_stop": "ok",
+      "link_check": "ok",
+      "port1_snapshot": "ok"
+    },
+    "errors": {},
+    "perst_asserted": true,
+    "controller_reset_asserted": true,
+    "smc_off_written": true,
+    "smc_stopped": true,
+    "fixed_writes": {
+      "perst_gpio": "0x2",
+      "port0_perst": "0x0"
+    },
+    "link_resynced": true,
+    "resync": {
+      "drained_bytes": 0,
+      "iface_resync": true
+    },
+    "root_bus_restored": true,
+    "link_down_after": true,
+    "linksts_after": "0xc",
+    "port1_unchanged": true,
+    "required_steps": [
+      "link_resync",
+      "root_bus_restore",
+      "perst_gpio_assert",
+      "perst_off_clear",
+      "smc_off",
+      "smc_stop",
+      "link_check"
+    ],
+    "confirmed": true
+  },
+  "bridge_window_prediction": {
+    "available": true,
+    "hypothesis": true,
+    "note": "prediction from EDK2 allocation rules; the real window must be read from config space after UEFI enumerates with Wi-Fi powered",
+    "mem32_bar_sizes": [
+      "0x800000",
+      "0x400000",
+      "0x10000",
+      "0x8000"
+    ],
+    "pmem64_bar_sizes": [],
+    "io_bar_sizes": [],
+    "window_alignment": "0x800000",
+    "window_length": "0xd00000",
+    "order": "Wi-Fi window first (larger alignment)",
+    "wifi_window_bus": [
+      "0xc0000000",
+      "0xc0cfffff"
+    ],
+    "wifi_window_cpu": [
+      "0x6c0000000",
+      "0x6c0cfffff"
+    ],
+    "wifi_badmemorylist_pfns": [
+      "0xc0000",
+      "0xc0cff"
+    ],
+    "fl1100_window_bus": [
+      "0xc0d00000",
+      "0xc0dfffff"
+    ],
+    "fl1100_moves": true
+  }
+}
+OUTPUT /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/wifi-s240/run-20261115-230301-136u9xlf/result.json
+S240 verdict PASS_IDS. This is a config-space observation only, not a driver or boot result.
