@@ -1,0 +1,84 @@
+#!/bin/bash
+# S231: S230 with the 2026-11-15 80 GB re-layout. HV differs from S230 only in the Windows write-zone
+# start (39944960) and version tag; Python guard uses the re-captured GPT entries. NOT hardware-qualified.
+# S231 install mode: Cinebench artifact delivery (file-delivery-s168/module.py) removed; zip not present after migration.
+# S208 diagnostic-corrected 50us NVMe control; host reads cluster state without initializing it.
+# PASS requires repeated checksum-correct I/O and an uninterrupted soak; build alone is insufficient.
+set -eu
+ROOT=/Users/angigyeom/Desktop/DEV/NWOAS
+M1N1="$ROOT/m1n1_windows"
+DEV=/dev/cu.usbmodemC07HL05SQ6NY1
+VUART=/dev/cu.usbmodemC07HL05SQ6NY3
+PY="$M1N1/.venv-hv/bin/python3"
+HV="$ROOT/nwoas_scripts/usb-s233/out/m1n1-s233-usbcache.bin"
+PAYLOAD="$ROOT/nwoas_scripts/loader-s223/m1n1-payload-s223-fd-tail.bin"
+LOG=$(mktemp "$ROOT/nwoas_scripts/logs/usb-s233-$(date '+%Y%m%d-%H%M%S').XXXXXX")
+
+export NWOAS_HV_READ_TIMEOUT=30
+export M1N1DEVICE="$DEV" M1N1_KEEP_BAUD=1 M1N1_SPLIT_CONSOLE=1 PYTHONDONTWRITEBYTECODE=1
+export PYTHONPATH="$M1N1/proxyclient:$ROOT/nwoas_scripts"
+export NWOAS_LINK_DIR="$LOG.link"
+export NWOAS_CONTROLLER_DIR="$ROOT/nwoas_scripts/nvme-s139"
+export NWOAS_CPU_PSTATE=7 NWOAS_LATE_P12=0 NWOAS_DELIVER_CINEBENCH=0
+export NWOAS_MAX_TRANSFER=1048576 NWOAS_NVME_FAST_MASK=1 NWOAS_TARGET_QUERY=1
+export NWOAS_EXCLUDE_WINDOW=1 NWOAS_WIN_BASE=0 NWOAS_WIN_SIZE=0x100000000 NWOAS_LOG="$LOG"
+export NWOAS_DCP_LOG="$LOG.dcp" NWOAS_HV_IMAGE="$HV"
+
+echo "Log: $LOG"
+[ -e "$DEV" ] || { echo 'STOP: direct CDC proxy missing'; exit 1; }
+[ -e "$VUART" ] || { echo 'STOP: direct CDC diagnostic pipe missing'; exit 1; }
+[ "$(stat -f %z "$HV")" -eq 2162688 ]
+[ "$(shasum -a 256 "$HV" | awk '{print $1}')" = bbeb3dbbd413dc008720a76eadf501ac51c8793f64e1508ebe786a2917c01207 ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/layout-s231/guest_module.py" | awk '{print $1}')" = e85591e9370c0aaebb5fef77ff65daf0086d12603e76e4eeed454b3174575026 ]
+[ "$(stat -f %z "$PAYLOAD")" -eq 33669120 ]
+[ "$(shasum -a 256 "$PAYLOAD" | awk '{print $1}')" = 2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7 ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/native-s230/query_module.py" | awk '{print $1}')" = af4eeb7f45aa9669c264d2e3520ae3d79da4020c89354e85738989c55f80f09b ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/cpufreq-s193/capture.py" | awk '{print $1}')" = 6fa2119c02cbcfca71c0d76c235abd0ceb91ea1e295a11d6ffdc268f6c51c494 ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/memory-s180/link_module.py" | awk '{print $1}')" = 2c1db6cbbe2d7db5aca6f917af23a91c53c363e6b3480579062b723f9e9fb035 ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/file-upload-s169/client/NWPUT.EXE" | awk '{print $1}')" = 9789268cc68311776c8f80fe8f10e6503ccc56b3a5b902a40d8546c39383985b ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/file-delivery-s168/module.py" | awk '{print $1}')" = a2d57c1aa91fd239b1508775dd7d479ec489de4c3d4ef8f078751b79d64bb5e1 ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/file-delivery-s168/channel.py" | awk '{print $1}')" = 365123769a2d87b02cc024f9061df580c01184017b3fb494dd289384b74a02e9 ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/file-delivery-s168/adapter.py" | awk '{print $1}')" = ff67e437d68f460c4a9b0759bfdfaf7a5134f4ae00218ad34f47049e91061869 ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/file-delivery-s168/client/NWOAS-S168.EXE" | awk '{print $1}')" = 1b40db539c222cd80c29cb03149e0f5d5a010848203914272eaee77434d895d9 ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/cpufreq-s164/pstate12.py" | awk '{print $1}')" = caa2c29449b721d1000ac76e2c884387a75a079d381e7658e492817e7e3b25d2 ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/cpufreq-s189/observe.py" | awk '{print $1}')" = 03acf96337939fce01bdf614000c361ba7d3e68d3a865e7c945495d093f762fa ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/bench-session-s176/USERCB.EXE" | awk '{print $1}')" = 7e31d3e69d316232d3f934408367ca2824cd2acad2531a6de44133f06c056ecd ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/bench-session-s176/CBRUN.CMD" | awk '{print $1}')" = dfd1cde563fa3849ed6464ab8e49801ae4cd006755390451a21734fe80bfc465 ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/worker-s177/NWOS.EXE" | awk '{print $1}')" = 14a1c914cd54f122a6899d3ae784c290bea641dadc4378883a150abc80db1b7f ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/memory-s180/memtest/MEMTEST.EXE" | awk '{print $1}')" = ce9303eb00c0ddca980e7df58008423913065e689b31870154d50c37933442b4 ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/usb-s174/guest_map.py" | awk '{print $1}')" = 2477172728d5554c4b2a07488e42f956cfd2e7a78e70a15c2d7a1488bf5656c0 ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/layout-s231/module.py" | awk '{print $1}')" = cce19a6c3ef3e06be61482efa02743e10cbb2cd9cf18d9e15e3f8f48ab0e2004 ]
+if /usr/sbin/lsof -t "$DEV" "$VUART" >/dev/null 2>&1; then echo 'STOP: CDC pipe busy'; exit 1; fi
+shasum -a 256 "$HV" "$PAYLOAD" "$ROOT/nwoas_scripts/cpufreq-s193/capture.py" \
+    "$ROOT/nwoas_scripts/nvme-s139/controller.py" >> "$LOG"
+echo '[S233] S232 + FL1100 event-ring sweep clean+invalidate (no ivac) + maintenance counters (USB-A read-corruption test); S223 payload; host NS2 remains' | tee -a "$LOG"
+
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/display-s190/hpd_wait.py" | awk '{print $1}')" = 112d437f30c785b167647269df5d8b1ccadcffa4cbd5c2ca16a927284f7c86a6 ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/display-s190/tahoe_dcp_guest_hook.py" | awk '{print $1}')" = 418aeaab35221382cd4e03ae096bdd3c426a276bc2674f8682510b8fece0aec6 ]
+VUART_PID=
+cleanup() {
+    if [ -n "$VUART_PID" ]; then
+        kill "$VUART_PID" >/dev/null 2>&1 || true
+        wait "$VUART_PID" >/dev/null 2>&1 || true
+    fi
+}
+trap cleanup EXIT HUP TERM
+trap ':' INT
+
+"$PY" -u "$ROOT/nwoas_scripts/recovery-s126/proxy_ready.py" >> "$LOG" 2>&1
+"$PY" -u "$M1N1/proxyclient/tools/chainload.py" -r "$HV" >> "$LOG" 2>&1
+grep -qa 'Proxy is alive again\|WARNING: chainload confirm' "$LOG" || exit 2
+"$PY" -u "$ROOT/nwoas_scripts/baud-s144/capture_vuart.py" \
+    --port "$VUART" --output "$LOG.vuart" --ignore-sigint &
+VUART_PID=$!
+
+"$PY" -u "$M1N1/proxyclient/tools/run_guest.py" -r --strict-init \
+    --pre-init-script "$ROOT/nwoas_scripts/display-s190/tahoe_dcp_guest_hook.py" \
+    -m "$ROOT/nwoas_scripts/cpufreq-s193/capture.py" \
+    -m "$ROOT/nwoas_scripts/usb-s174/guest_map.py" \
+    -m "$ROOT/nwoas_scripts/smp-s133/pmgr_gate.py" \
+    -m "$ROOT/nwoas_scripts/layout-s231/guest_module.py" \
+    -m "$ROOT/nwoas_scripts/memory-s180/link_module.py" \
+    -m "$ROOT/nwoas_scripts/layout-s231/module.py" \
+    -m "$ROOT/nwoas_scripts/native-s230/query_module.py" \
+    -m "$ROOT/nwoas_scripts/cpufreq-s189/observe.py" "$PAYLOAD" >> "$LOG" 2>&1
