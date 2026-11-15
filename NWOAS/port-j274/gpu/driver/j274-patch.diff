@@ -90,9 +90,75 @@ diff -ruN external/windows-on-m1/drivers/apple-agx/render-admission/AppleAgxRend
 +REG_MULTI_SZ=0x00010000
 +REG_SZ=0x00000000
 +REG_DWORD=0x00010001
+diff -ruN external/windows-on-m1/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.kmdonly.inf port-j274/gpu/driver/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.kmdonly.inf
+--- external/windows-on-m1/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.kmdonly.inf	1970-01-01 09:00:00
++++ port-j274/gpu/driver/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.kmdonly.inf	2026-11-15 23:08:22
+@@ -0,0 +1,62 @@
++; NWOAS-J274 PATCH P10: KMD-only variant of AppleAgxRenderAdmission.inf
++; (upstream windows-on-m1, MIT), for a first J274 kernel-driver bring-up test
++; while no ARM64 UMD can be built (the shipped UMD needs the Mesa/Asahi native
++; runtime archive).  Same device ID, service and KMD; no user-mode driver,
++; no OpenGL ICD, so D3D/OpenGL cannot use this adapter.  Not an upstream package.
++[Version]
++Signature="$WINDOWS NT$"
++Class=Display
++ClassGuid={4d36e968-e325-11ce-bfc1-08002be10318}
++Provider=%ProviderName%
++DriverVer=08/29/2026,0.1.214.0
++CatalogFile=AppleAgxRenderAdmission.cat
++PnpLockdown=1
++
++[DestinationDirs]
++; 13 = the driver store. A Universal INF that uses DIRID 13 must run its
++; service binary from there too (InfVerif 2600, driver package isolation).
++Admission.KmdCopyFiles=13
++
++[Manufacturer]
++%ManufacturerName%=Models,NTarm64.10.0...22000
++
++[Models.NTarm64.10.0...22000]
++%DeviceName%=Admission_Install,ACPI\APPL0002
++
++[Admission_Install]
++CopyFiles=Admission.KmdCopyFiles
++AddReg=Admission.SoftwareSettings
++FeatureScore=F9
++
++[Admission_Install.Services]
++AddService=AppleAgxAdmission,0x00000002,Admission_Service
++
++[Admission_Service]
++DisplayName=%ServiceName%
++ServiceType=1
++StartType=3
++ErrorControl=1
++ServiceBinary=%13%\AppleAgxRenderAdmission.sys
++
++[Admission.KmdCopyFiles]
++AppleAgxRenderAdmission.sys
++
++[Admission.SoftwareSettings]
++; P10: no UserModeDriverName / OpenGLDriverName (no UMD or ICD is shipped).
++; M2 (upstream): VidMm gives 64 KB system-memory pages only when the adapter
++; opts in here and the KMD reports SysMem64KBPageSupported.
++HKR,MemoryManager,Supports64KBPages,%REG_DWORD%,1
++
++[SourceDisksNames]
++1=%DiskName%,,,
++
++[SourceDisksFiles]
++AppleAgxRenderAdmission.sys=1
++
++[Strings]
++ProviderName="Windows on Apple Silicon Project"
++ManufacturerName="Windows on Apple Silicon Project"
++DeviceName="Apple AGX clean WDDM render-admission experiment (NWOAS J274 KMD-only test)"
++ServiceName="Apple AGX clean render-admission KMD"
++DiskName="Apple AGX clean render-admission package"
++REG_DWORD=0x00010001
 diff -ruN external/windows-on-m1/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.vcxproj port-j274/gpu/driver/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.vcxproj
 --- external/windows-on-m1/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.vcxproj	2026-11-15 19:39:30
-+++ port-j274/gpu/driver/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.vcxproj	2026-11-15 20:32:00
++++ port-j274/gpu/driver/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.vcxproj	2026-11-15 23:08:33
 @@ -19,6 +19,23 @@
      <TargetVersion>Windows10</TargetVersion>
    </PropertyGroup>
@@ -117,7 +183,7 @@ diff -ruN external/windows-on-m1/drivers/apple-agx/render-admission/AppleAgxRend
    <Import Project="package-version.props" />
    <PropertyGroup>
      <AppleAgxGpuvaG1bPageProfile Condition="'$(AppleAgxGpuvaG1bPageProfile)'==''">0</AppleAgxGpuvaG1bPageProfile>
-@@ -294,15 +311,19 @@
+@@ -294,15 +311,23 @@
    </ItemGroup>
    <ItemGroup>
      <ResourceCompile Include="package-version.rc" />
@@ -125,14 +191,19 @@ diff -ruN external/windows-on-m1/drivers/apple-agx/render-admission/AppleAgxRend
 +    <!-- NWOAS-J274 PATCH P9: /p:AppleAgxArm64Only=true packages only the ARM64
 +         KMD + ARM64 UMD with an INF that has no WOW64 (x86) files, for the first
 +         J274 firmware-qualification test.  Default (unset) = upstream package. -->
-+    <Inf Include="AppleAgxRenderAdmission.inf" Condition="'$(AppleAgxArm64Only)'!='true'" />
-+    <Inf Include="AppleAgxRenderAdmission.arm64only.inf" Condition="'$(AppleAgxArm64Only)'=='true'" />
++    <!-- NWOAS-J274 PATCH P10: /p:AppleAgxKmdOnly=true packages only the ARM64
++         KMD (no UMD, no ICD) for a first J274 kernel-driver test while the
++         Mesa-based ARM64 UMD cannot be built.  Default (unset) = unchanged. -->
++    <Inf Include="AppleAgxRenderAdmission.inf" Condition="'$(AppleAgxArm64Only)'!='true' and '$(AppleAgxKmdOnly)'!='true'" />
++    <Inf Include="AppleAgxRenderAdmission.arm64only.inf" Condition="'$(AppleAgxArm64Only)'=='true' and '$(AppleAgxKmdOnly)'!='true'" />
++    <Inf Include="AppleAgxRenderAdmission.kmdonly.inf" Condition="'$(AppleAgxKmdOnly)'=='true'" />
      <FilesToPackage Include="$(TargetPath)" Condition="'$(ConfigurationType)'=='Driver'" />
-     <FilesToPackage Include="AppleAgxRenderAdmissionUmd.dll" />
+-    <FilesToPackage Include="AppleAgxRenderAdmissionUmd.dll" />
 -    <FilesToPackage Include="AppleAgxOpenGL32.dll" />
 -    <FilesToPackage Include="AppleAgxRenderAdmissionUmd32.dll" />
-+    <FilesToPackage Include="AppleAgxOpenGL32.dll" Condition="'$(AppleAgxArm64Only)'!='true'" />
-+    <FilesToPackage Include="AppleAgxRenderAdmissionUmd32.dll" Condition="'$(AppleAgxArm64Only)'!='true'" />
++    <FilesToPackage Include="AppleAgxRenderAdmissionUmd.dll" Condition="'$(AppleAgxKmdOnly)'!='true'" />
++    <FilesToPackage Include="AppleAgxOpenGL32.dll" Condition="'$(AppleAgxArm64Only)'!='true' and '$(AppleAgxKmdOnly)'!='true'" />
++    <FilesToPackage Include="AppleAgxRenderAdmissionUmd32.dll" Condition="'$(AppleAgxArm64Only)'!='true' and '$(AppleAgxKmdOnly)'!='true'" />
    </ItemGroup>
    <ItemGroup>
      <CustomBuild Include="src\arm64_hypercalls.asm">

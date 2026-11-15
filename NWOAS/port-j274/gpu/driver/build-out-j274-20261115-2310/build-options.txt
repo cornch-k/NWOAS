@@ -1,0 +1,25 @@
+J274 GPU KMD build 2 (2026-11-15, Parallels "Windows 11" ARM64 VM, run as SYSTEM via prlctl exec)
+Toolchain: VS 2022 Community 17.14, MSVC 14.44.35207 HostArm64\arm64, MSBuild Current\Bin\arm64, WDK/SDK 10.0.26100 (WDK 10.0.26100.6584), installed kit (no NuGet packages\ dir)
+Source: port-j274/gpu/driver (upstream paulsmir/windows-on-m1 drivers/apple-agx 6c65673 + NWOAS-J274 P1-P10)
+
+KMD = upstream shipped render-admission profile (build-driver.ps1 -Configuration Release -GpuvaG3Qualification -GpuvaG1bPageProfile 16;
+UmdAdmissionTrace/NativeFrontend only affect the UMD) + board switch + P10 KMD-only packaging:
+msbuild drivers\apple-agx\render-admission\AppleAgxRenderAdmission.vcxproj /m /t:Clean,Build
+ /p:Configuration=Release /p:Platform=ARM64 /p:RunCodeAnalysis=true /p:Inf2CatUseLocalTime=true /p:AppleAgxVersionBuild=2741
+ /p:AppleAgxMemoryQualification=false /p:AppleAgxManagementQualification=false /p:AppleAgxRetainedRootQualification=false
+ /p:AppleAgxStopAfterEndpoints=false /p:AppleAgxFirmwareQualification=false /p:AppleAgxBackendQualification=false
+ /p:AppleAgxSubmitQualification=false /p:AppleAgxGpuvaB1Qualification=false /p:AppleAgxGpuvaG3Qualification=true
+ /p:AppleAgxBltProbeQualification=false /p:AppleAgxVisibleScanoutQualification=false /p:AppleAgxVisibleAgxQualification=false
+ /p:AppleAgxGpuvaG1bPageProfile=16 /p:AppleAgxGpuvaG1bAllocationHint=0 /p:AppleAgxBoard=J274 /p:AppleAgxKmdOnly=true
+ /p:WindowsTargetPlatformVersion=10.0.26100.0 + build-driver.ps1 $pinnedWdkProperties (WDKContentRoot/WindowsSdkDir/UniversalCRT*/WindowsSDK_LibraryPath_ARM64 = C:/Program Files (x86)/Windows Kits/10/, 10.0.26100.0)
+Resulting CL defines (from the log): CODE_ANALYSIS APPLE_AGX_GPUVA_G3_QUALIFICATION=1 APPLE_AGX_EXP907_FRAME_RECEIPT=1
+ DXGKDDI_INTERFACE_VERSION=DXGKDDI_INTERFACE_VERSION_WDDM3_2 ADMISSION_GPUVA_G1B_PAGE_PROFILE=16 ADMISSION_GPUVA_G1B_ALLOCATION_HINT=0
+ APPLE_AGX_PLATFORM_EXTERNAL_RENDER_ONLY=1 APPLE_AGX_FULL_CONTEXT0_BROKER=1 APPLE_AGX_VERSION_BUILD=2741 APPLE_AGX_BOARD_J274=1
+ (+ WDK defaults _ARM64_ ARM64 _WIN32_WINNT=0x0A00 NTDDI_VERSION=0xA000010 ...), /kernel /W4 /WX /Qspectre /guard:cf /analyze (DriverMinimumRules)
+Package: stampinf -v 30.0.2741.0, ApiValidator (Universal), inf2cat /os:Server10_arm64, signtool with WDK test cert "WDKTestCert SYSTEM,134392251612905395"
+baseline-j313-g3-kmdonly = same command with /p:AppleAgxBoard=J313 (for comparison only, not for the Mac mini)
+
+UMD (upstream shipped profile: EnableNativeFrontend=true EnableGpuvaWinsys=true AppleAgxUmdAdmissionTrace=true
+ -> APPLE_AGX_UMD_ADMISSION_TRACE=1 APPLE_AGX_UMD_NATIVE_FRONTEND=1 APPLE_AGX_GPUVA_WINSYS=1 APPLE_AGX_EXP907_FRAME_RECEIPT=1
+    ADMISSION_UMD_PIPE_FACTORY_TEST=1 APPLE_AGX_D3D12_NATIVE_OWNER=1, /MD, Import $(NativeRuntimeProps)): NOT BUILT
+ -> error MSB4020 at AppleAgxRenderAdmissionUmd.vcxproj(160): no NativeRuntimeProps (Mesa/Asahi native runtime archive) exists here.

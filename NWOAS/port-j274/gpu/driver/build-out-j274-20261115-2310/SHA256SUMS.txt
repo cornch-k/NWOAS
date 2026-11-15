@@ -1,0 +1,10 @@
+f7b551e680907726fc506fff9ad906735384f9beeb779fbecc214b09228f1c57  ./baseline-j313-g3-kmdonly/AppleAgxRenderAdmission.cer
+deafc685f14fa1ed614ef549c26e7384ceaa4e90d5bca64a5beff7f48b685925  ./baseline-j313-g3-kmdonly/AppleAgxRenderAdmission.pdb
+24e5a1a047e94f7cb435949c04468288648b08da1db5aa07f0461c177938ef44  ./baseline-j313-g3-kmdonly/package/AppleAgxRenderAdmission.kmdonly.inf
+137e33b7a8dbe41cd135084aa4591a7decade51e2ce18984992cfc9a43573d75  ./baseline-j313-g3-kmdonly/package/AppleAgxRenderAdmission.sys
+46f509b1807495eec5b378d252d0c53b1d9b31dced8ea5d1c1bad348530d960e  ./baseline-j313-g3-kmdonly/package/appleagxrenderadmission.cat
+f7b551e680907726fc506fff9ad906735384f9beeb779fbecc214b09228f1c57  ./kmd-j274-g3-kmdonly/AppleAgxRenderAdmission.cer
+d4855614a89f748236532c208474c11f152a18bf2693fc39bfcd4a396be44e7f  ./kmd-j274-g3-kmdonly/AppleAgxRenderAdmission.pdb
+24e5a1a047e94f7cb435949c04468288648b08da1db5aa07f0461c177938ef44  ./kmd-j274-g3-kmdonly/package/AppleAgxRenderAdmission.kmdonly.inf
+1965872e848383311793a6383ca289748c42e50b3ff27a2c0798d9a4e70ee580  ./kmd-j274-g3-kmdonly/package/AppleAgxRenderAdmission.sys
+7e8f980d7e4436b5355f155610524af23025f16755e5d1334b6a528edcc1ce5a  ./kmd-j274-g3-kmdonly/package/appleagxrenderadmission.cat

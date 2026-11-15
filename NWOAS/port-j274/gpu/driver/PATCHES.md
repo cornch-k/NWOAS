@@ -4,7 +4,7 @@
 
 - 빌드가 되는 것은 GPU가 동작하는 것이 아닙니다. 아래 어느 것도 Mac mini에서 시험하지 않았습니다.
 - 소스에는 모두 `NWOAS-J274 PATCH Pn` 주석이 붙어 있습니다. `grep -rn "NWOAS-J274" drivers/`로 찾을 수 있습니다.
-- 전체 차이: `j274-patch.diff` (원본 `external/windows-on-m1/drivers/apple-agx` 대비, 13개 파일).
+- 전체 차이: `j274-patch.diff` (원본 `external/windows-on-m1/drivers/apple-agx` 대비, 14개 파일).
 - 원본에는 **보드 번호(0x26)를 검사하는 코드가 드라이버 안에 없습니다**(grep 결과 없음). 0x26 검사는 하이퍼바이저(`m1n1_windows/src/hv_agx_retained_platform.c:454`)와 프로필 생성 도구(`tools/generate_agx_hwdata_profile.py:120`)에 있습니다. 그래서 드라이버 쪽 "0x22 받아들이기"는 보드 번호 비교가 아니라 아래 주소 값 교체입니다.
 
 ## 바꾼 것
@@ -21,6 +21,7 @@
 | P7 | `render-admission/AppleAgxRenderAdmission.vcxproj:25-28, 326` | `armasm64.exe` 경로가 `Hostx64`로 박혀 있던 것을, ARM64 빌드 기계(예: Windows 11 ARM64)에서는 `HostARM64`를 쓰게 함 | x64 기계에서는 그대로 | [사실] 원본 경로 `vcxproj:318`(원본 줄) |
 | P8 | `render-admission/src/arm64_hypercalls_gnu.S` (새 파일) | 원본 `arm64_hypercalls.asm`(armasm 문법)과 같은 두 함수(`hvc #0x4d32`, `hvc #0x4d31`)를 clang 문법으로. macOS에서 clang으로 교차 빌드할 때용. MSBuild는 원본 `.asm`을 계속 씀 | 없음 | [사실] 이 맥북에서 Windows ARM64 COFF로 어셈블하고 역어셈블해 같은 명령 확인 |
 | P9 | `render-admission/AppleAgxRenderAdmission.arm64only.inf` (새 파일), `render-admission/AppleAgxRenderAdmission.vcxproj` (Inf·FilesToPackage 조건) | `/p:AppleAgxArm64Only=true`이면 32비트(WOW64) D3D 드라이버·x86 OpenGL 파일 없이 ARM64 커널 드라이버 + ARM64 사용자 드라이버만 담은 패키지를 만듦. 원본 패키지는 x86 파일 두 개가 없으면 만들어지지 않음(원본 INF `:53-62,101-102`, vcxproj `FilesToPackage`) | 없음(속성을 안 주면 원본 INF·파일 목록) | 첫 J274 시험(펌웨어 켜기/끄기)에 x86 파일은 필요 없음 |
+| P10 | `render-admission/AppleAgxRenderAdmission.kmdonly.inf` (새 파일), `render-admission/AppleAgxRenderAdmission.vcxproj` (Inf·FilesToPackage 조건) | `/p:AppleAgxKmdOnly=true`이면 사용자 드라이버(.dll)·OpenGL 없이 **커널 드라이버(.sys)만** 담은 시험 패키지를 만듦. INF에서 `UserModeDriverName`·`OpenGLDriverName`을 뺐고 장치 ID(`ACPI\APPL0002`)·서비스·`Supports64KBPages`는 그대로. 그쪽이 실제로 내보내는 ARM64 사용자 드라이버는 Mesa/Asahi 묶음(`NativeRuntimeProps`)이 있어야만 빌드되고, 그 묶음은 여기서 만들 수 없어서(BUILD-ATTEMPT-2 참고) 넣음. 원본에 없는 패키지 형태 | 없음(속성을 안 주면 P9/원본 INF·파일 목록) | 첫 J274 커널 드라이버 시험(펌웨어 켜고 멈추기)에는 사용자 드라이버가 필요 없음 [가설: D3D만 못 쓰고 커널 드라이버 시작에는 영향 없음, 실기기 확인 전] |
 
 ### J274 값 (P1)
 
