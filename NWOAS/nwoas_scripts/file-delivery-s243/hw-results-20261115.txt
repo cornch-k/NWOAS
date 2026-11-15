@@ -1,0 +1,88 @@
+# S243 hardware run 2026-11-15 (Mac mini M1, installed Windows 11 25H2, display-s243 launcher)
+# launcher out: logs/launcher-s243-20261115-233800.out  link: logs/display-s243-20261115-233800.LQA3Ng.link
+# manifest used: scratch copy = manifests/gpu-j274-kmdonly.json (index 0-2) + random 128 MiB self-test blob (index 3)
+23:37:39 START cur=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-s242-20261115-230323-after-wifi.out
+23:37:46 JOB W4-restart.cmd id=6 wall=7s {"job": 6, "kind": 3, "exit": 0, "message": "complete"}
+    S231 W4 RESTART WINDOWS FOR S232 TEST
+    RESTART SCHEDULED
+    지정된 경로를 찾을 수 없습니다.
+23:37:50 old launcher exited: LAUNCHER EXIT 1
+23:38:00 launched S243 detached -> /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-s243-20261115-233800.out
+23:38:40 worker connected 40s after launch; log=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s243-20261115-233800.LQA3Ng
+[S243] S242 stack (S237 bridge-window fix + 1080p-first hook) + file-delivery-s243
+[S243] delivery: MANIFEST=/private/tmp/claude-501/-Users-angigyeom-Desktop-DEV-NWOAS/35d06cc4-4f0d-4573-9b44-0ee2d7358e30/scratchpad/s243/hwtest-manifest.json FILE= SHA256=
+[S243] artifact 0 AppleAgxRenderAdmission.kmdonly.inf 2077 bytes SHA256=24e5a1a047e94f7cb435949c04468288648b08da1db5aa07f0461c177938ef44
+[S243] artifact 1 AppleAgxRenderAdmission.sys 638080 bytes SHA256=1965872e848383311793a6383ca289748c42e50b3ff27a2c0798d9a4e70ee580
+[S243] artifact 2 appleagxrenderadmission.cat 2741 bytes SHA256=7e8f980d7e4436b5355f155610524af23025f16755e5d1334b6a528edcc1ce5a
+[S243] artifact 3 s243-selftest-128m.bin 134217728 bytes SHA256=5237b423066680210d049c299d2e5d22bae4af74b3941fc897bcfe68cbac537e
+[S243] 4 frozen artifact(s); NWGET243.EXE appended to NS2 FAT; request LBA127, response LBA129-144; NS1, capacity, PORT128 unchanged
+23:38:46 JOB G1-deliver-gpu-j274.cmd id=1 wall=6s {"job": 1, "kind": 3, "exit": 0, "message": "complete"}
+    S243 DELIVER BEGIN 3 file(s) to C:\NWOAS\drop\gpu-j274
+    S243 DIR READY C:\NWOAS\drop\gpu-j274
+    NWOAS S243 delivery client
+    S243 target C:\NWOAS\drop\gpu-j274\AppleAgxRenderAdmission.kmdonly.inf
+    S243 manifest index 0 of 4 name AppleAgxRenderAdmission.kmdonly.inf bytes 2077 sha256 24e5a1a047e94f7cb435949c04468288648b08da1db5aa07f0461c177938ef44
+    S243 OK index 0 bytes 2077 sha256 24e5a1a047e94f7cb435949c04468288648b08da1db5aa07f0461c177938ef44 transfer_ms 0 readback_ms 0 target C:\NWOAS\drop\gpu-j274\AppleAgxRenderAdmission.kmdonly.inf
+    NWOAS S243 delivery client
+    S243 target C:\NWOAS\drop\gpu-j274\AppleAgxRenderAdmission.sys
+    S243 manifest index 1 of 4 name AppleAgxRenderAdmission.sys bytes 638080 sha256 1965872e848383311793a6383ca289748c42e50b3ff27a2c0798d9a4e70ee580
+    S243 OK index 1 bytes 638080 sha256 1965872e848383311793a6383ca289748c42e50b3ff27a2c0798d9a4e70ee580 transfer_ms 15 readback_ms 16 target C:\NWOAS\drop\gpu-j274\AppleAgxRenderAdmission.sys
+    NWOAS S243 delivery client
+    S243 target C:\NWOAS\drop\gpu-j274\appleagxrenderadmission.cat
+    S243 manifest index 2 of 4 name appleagxrenderadmission.cat bytes 2741 sha256 7e8f980d7e4436b5355f155610524af23025f16755e5d1334b6a528edcc1ce5a
+    S243 OK index 2 bytes 2741 sha256 7e8f980d7e4436b5355f155610524af23025f16755e5d1334b6a528edcc1ce5a transfer_ms 15 readback_ms 0 target C:\NWOAS\drop\gpu-j274\appleagxrenderadmission.cat
+    S243 READBACK MATCH AppleAgxRenderAdmission.kmdonly.inf 2077 24e5a1a047e94f7cb435949c04468288648b08da1db5aa07f0461c177938ef44
+    S243 READBACK MATCH AppleAgxRenderAdmission.sys 638080 1965872e848383311793a6383ca289748c42e50b3ff27a2c0798d9a4e70ee580
+    S243 READBACK MATCH appleagxrenderadmission.cat 2741 7e8f980d7e4436b5355f155610524af23025f16755e5d1334b6a528edcc1ce5a
+    S243 DELIVER COMPLETE
+23:38:53 JOB P1-powershell-display.cmd id=2 wall=7s {"job": 2, "kind": 3, "exit": 0, "message": "complete"}
+    S243 P1 POWERSHELL DISPLAY
+    PS 5.1.26100.7920 user NT AUTHORITY\SYSTEM session 0
+    Win32_VideoController count = 0
+    DEVICE System | Microsoft Basic Display Driver | OK | ROOT\BASICDISPLAY\0000
+    DEVICE Monitor | Generic Monitor | OK | DISPLAY\DEFAULT_MONITOR\1&8713BCA&0&UID0
+    DEVICE System | Microsoft Basic Render Driver | OK | ROOT\BASICRENDER\0000
+    CCD MSNILNOEDID_1414_008D_FFFFFFFF_FFFFFFFF_0 active 1920x1080 primsurf 1920x1080 ts 2026-11-15 05:38:38Z
+    S243 P1 COMPLETE
+23:38:54 JOB R1-refuse-overwrite.cmd id=3 wall=1s {"job": 3, "kind": 3, "exit": 0, "message": "complete"}
+    S243 R1 REFUSE OVERWRITE
+    NWOAS S243 delivery client
+    S243 target C:\NWOAS\drop\gpu-j274\AppleAgxRenderAdmission.sys
+    S243 STOP: target already exists; refusing to overwrite (code 3, lasterror 0)
+    NWGET243RC=3
+    NWOAS S243 delivery client
+    S243 target C:\NWOAS\drop\s243-refuse\x.sys
+    S243 manifest index 1 of 4 name AppleAgxRenderAdmission.sys bytes 638080 sha256 1965872e848383311793a6383ca289748c42e50b3ff27a2c0798d9a4e70ee580
+    S243 STOP: host manifest SHA-256 differs from job SHA-256 (code 7, lasterror 0)
+    WRONGSHA_RC=7
+    S243 R1 COMPLETE
+23:39:36 JOB G2-selftest.cmd id=4 wall=42s {"job": 4, "kind": 3, "exit": 0, "message": "complete"}
+    S243 DELIVER BEGIN 1 file(s) to C:\NWOAS\drop\s243-selftest
+    S243 DIR READY C:\NWOAS\drop\s243-selftest
+    NWOAS S243 delivery client
+    S243 target C:\NWOAS\drop\s243-selftest\s243-selftest-128m.bin
+    S243 manifest index 3 of 4 name s243-selftest-128m.bin bytes 134217728 sha256 5237b423066680210d049c299d2e5d22bae4af74b3941fc897bcfe68cbac537e
+    S243 progress 33619712 / 134217728
+    S243 progress 67174016 / 134217728
+    S243 progress 100728320 / 134217728
+    S243 progress 134217728 / 134217728
+    S243 OK index 3 bytes 134217728 sha256 5237b423066680210d049c299d2e5d22bae4af74b3941fc897bcfe68cbac537e transfer_ms 2860 readback_ms 1218 target C:\NWOAS\drop\s243-selftest\s243-selftest-128m.bin
+    S243 READBACK MATCH s243-selftest-128m.bin 134217728 5237b423066680210d049c299d2e5d22bae4af74b3941fc897bcfe68cbac537e
+    S243 SELFTEST REMOVED s243-selftest-128m.bin
+    S243 DELIVER COMPLETE
+23:39:36 S243 HW DONE
+
+# T1 host-timed re-run of the 128 MiB self-test (host seconds since queue; guest %TIME% shown for comparison)
+S243 T1 TIMING START 14:39:23.37
+NWOAS S243 delivery client
+S243 target C:\NWOAS\drop\s243-selftest\s243-selftest-128m.bin
+S243 manifest index 3 of 4 name s243-selftest-128m.bin bytes 134217728 sha256 5237b423066680210d049c299d2e5d22bae4af74b3941fc897bcfe68cbac537e
+S243 progress 33619712 / 134217728
+S243 progress 67174016 / 134217728
+S243 progress 100728320 / 134217728
+S243 progress 134217728 / 134217728
+S243 OK index 3 bytes 134217728 sha256 5237b423066680210d049c299d2e5d22bae4af74b3941fc897bcfe68cbac537e transfer_ms 2234 readback_ms 797 target C:\NWOAS\drop\s243-selftest\s243-selftest-128m.bin
+NWGET243RC=0 END 14:39:26.43
+SELFTEST DIR REMOVED
+S243 T1 COMPLETE
+host: manifest line at 1.62 s, 100% progress at 33.48 s, job complete at 34.33 s

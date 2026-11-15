@@ -1,0 +1,34 @@
+{
+ "artifacts": [
+  {
+   "index": 0,
+   "name": "AppleAgxRenderAdmission.kmdonly.inf",
+   "bytes": 2077,
+   "sha256": "24e5a1a047e94f7cb435949c04468288648b08da1db5aa07f0461c177938ef44"
+  },
+  {
+   "index": 1,
+   "name": "AppleAgxRenderAdmission.sys",
+   "bytes": 638080,
+   "sha256": "1965872e848383311793a6383ca289748c42e50b3ff27a2c0798d9a4e70ee580"
+  },
+  {
+   "index": 2,
+   "name": "appleagxrenderadmission.cat",
+   "bytes": 2741,
+   "sha256": "7e8f980d7e4436b5355f155610524af23025f16755e5d1334b6a528edcc1ce5a"
+  },
+  {
+   "index": 3,
+   "name": "s243-selftest-128m.bin",
+   "bytes": 134217728,
+   "sha256": "5237b423066680210d049c299d2e5d22bae4af74b3941fc897bcfe68cbac537e"
+  }
+ ],
+ "client_sha256": "fc457722e1aa8e384385f6118a3719c86268cfb339497ddff218b0d113222f5b",
+ "request_lba": 127,
+ "response_lba": [
+  129,
+  144
+ ]
+}

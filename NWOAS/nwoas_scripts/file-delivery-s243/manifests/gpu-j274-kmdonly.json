@@ -1,0 +1,23 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "AppleAgxRenderAdmission.kmdonly.inf",
+   "path": "/Volumes/media/nwoas/out/j274-20261115-2310/kmd-j274-g3-kmdonly/package/AppleAgxRenderAdmission.kmdonly.inf",
+   "bytes": 2077,
+   "sha256": "24e5a1a047e94f7cb435949c04468288648b08da1db5aa07f0461c177938ef44"
+  },
+  {
+   "name": "AppleAgxRenderAdmission.sys",
+   "path": "/Volumes/media/nwoas/out/j274-20261115-2310/kmd-j274-g3-kmdonly/package/AppleAgxRenderAdmission.sys",
+   "bytes": 638080,
+   "sha256": "1965872e848383311793a6383ca289748c42e50b3ff27a2c0798d9a4e70ee580"
+  },
+  {
+   "name": "appleagxrenderadmission.cat",
+   "path": "/Volumes/media/nwoas/out/j274-20261115-2310/kmd-j274-g3-kmdonly/package/appleagxrenderadmission.cat",
+   "bytes": 2741,
+   "sha256": "7e8f980d7e4436b5355f155610524af23025f16755e5d1334b6a528edcc1ce5a"
+  }
+ ]
+}
