@@ -118,7 +118,9 @@ bash "/Volumes/Macintosh HD - Data/Users/Shared/NWOAS-recovery-D4-20261115/insta
 rsync -a --progress /Users/angigyeom/Desktop/DEV/NWOAS/stub-135/bundle/ angigyeom@100.81.93.114:/Users/Shared/stub-135-bundle/
 ```
 
-   SSH가 안 되면 콘치님이 USB 저장장치로 `bundle` 폴더를 옮기고, 맥미니 터미널에서 `cp -R /Volumes/<USB이름>/bundle /Users/Shared/stub-135-bundle`.
+   **SSH가 안 되면(추천 경로)**: 준비물이 TrueNAS 공유 `media/nwoas/stub-135-bundle`에 이미 있습니다(지문 959개 확인, 2026-11-16). 맥미니 Finder에서 서버 연결로 `media`를 연 뒤 터미널에서 `cp -R /Volumes/media/nwoas/stub-135-bundle /Users/Shared/stub-135-bundle`.
+   (2026-11-16 수정: asahi 압축본에 섞여 있던 macOS 메타 파일 `._*` 36개를 지우고 SHA256SUMS를 959개로 다시 만듦 — SMB 복사 때 이 파일들이 사라져 검사에 걸리기 때문.)
+   그것도 안 되면 콘치님이 USB 저장장치로 `bundle` 폴더를 옮기고, 맥미니 터미널에서 `cp -R /Volumes/<USB이름>/bundle /Users/Shared/stub-135-bundle`.
    AirDrop으로 옮긴 경우에만 다운로드 표시를 지웁니다(표시가 있으면 포함된 파이썬이 실행 확인 창에 막힐 수 있음 [가설]):
 
 ```sh
