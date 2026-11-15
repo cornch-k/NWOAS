@@ -1,0 +1,33 @@
+diff -ruN -x build -x *.o -x target m1n1-admin-s230/src/hv_vm.c m1n1-layout-s231/src/hv_vm.c
+--- m1n1-admin-s230/src/hv_vm.c	2026-09-10 11:00:38
++++ m1n1-layout-s231/src/hv_vm.c	2026-11-15 17:43:20
+@@ -1188,7 +1188,7 @@
+ #define NWOAS_NVME_BAR             0x700100000UL
+ #define NWOAS_NVME_BAR_SIZE        0x4000UL
+ #define NWOAS_NVME_NAMESPACE_LBAS  61279344UL
+-#define NWOAS_NVME_WRITE_FIRST_LBA 53839104UL
++#define NWOAS_NVME_WRITE_FIRST_LBA 39944960UL /* S231 WINTEST slot4 start */
+ #define NWOAS_NVME_WRITE_LAST_LBA  59968629UL
+ #define NWOAS_NVME_MAX_IO_DEPTH    256
+ 
+diff -ruN -x build -x *.o -x target m1n1-admin-s230/src/nvme.c m1n1-layout-s231/src/nvme.c
+--- m1n1-admin-s230/src/nvme.c	2026-09-10 11:00:38
++++ m1n1-layout-s231/src/nvme.c	2026-11-15 17:53:27
+@@ -534,11 +534,13 @@
+     return nvme_exec_command(&ioq, &cmd, NULL);
+ }
+ 
+-/* S96/S98: Windows zone = WINTEST (GPT slot3, verified S95 run-20260907-160641) plus the
+- * unallocated gap up to the block before Apple RecoveryOS (59968630). Outside this zone only
+- * the partition-table blocks below are writable; everything else is refused here regardless
++/* S231: Windows zone = WINTEST (GPT slot4 39944960-59968511, read-only GPT capture
++ * ans2-s87/run-20261115-174016 after the 2026-11-15 80 GB re-layout) plus the unallocated gap
++ * up to the block before Apple RecoveryOS (59968630). macOS APFS (128006-38968337) and the
++ * NWSTUB reserve (38968576-39944703) lie below this zone. Outside this zone only the
++ * partition-table blocks below are writable; everything else is refused here regardless
+  * of what the proxy caller asks for. */
+-#define NVME_WRITE_FIRST_LBA 53839104UL
++#define NVME_WRITE_FIRST_LBA 39944960UL
+ #define NVME_WRITE_LAST_LBA  59968629UL
+ #define NVME_GPT_PRIMARY_LAST 5UL         /* LBA 0 MBR, 1 header, 2..5 entries */
+ #define NVME_GPT_BACKUP_FIRST 61279339UL  /* backup entries 61279339..61279342, header 61279343 */
