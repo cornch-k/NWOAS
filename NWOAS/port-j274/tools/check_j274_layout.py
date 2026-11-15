@@ -16,9 +16,12 @@ about whether anything boots on the Mac mini.
 Exit code (fail-closed):
   0  no finding blocks: every reference-rule violation, PCD-width problem and
      carveout overlap is either absent or explicitly accepted with --allow L-n
-  1  something blocks: a MISMATCH / missing or extra key / other reference rule
-     (never acceptable), or an L-n blocker that was not accepted with --allow
-  2  usage error
+  1  something blocks: a MISMATCH / missing or extra key / other reference rule,
+     L-6 (guest ECAM inside the real apcie ECAM) or UNCHECKED (carveouts not
+     checked) -- none of these can be accepted -- or an L-1/L-2/L-8 blocker that
+     was not accepted with --allow
+  2  usage error: bad option, an explicit --carveouts path that does not exist,
+     or a layout / facts file that cannot be read or parsed
 
 Usage: python3 -I -B check_j274_layout.py [layout.json] [--fw-size N] [--json]
            [--carveouts FACTS.json | --no-carveouts] [--allow L-1 --allow L-2 ...]
@@ -53,15 +56,27 @@ J274_FW_SIZE_PADDED = 0x1e00000
 J274_FW_SIZE_UNPADDED = 0x1d88000
 J274_PLATFORM_RAM_END = 0xbe1000000  # FACT: boot_args phys_base+mem_size, every S2xx log
 J274_REAL_APCIE_ECAM = (0x690000000, 0x10000000)  # FACT: ADT /arm-io/apcie reg[0] (config/j274-adt-facts.json)
+# FACT: the RAM region itself in the recorded carveout table (config/j274-adt-facts.json,
+# region-id-24 = boot_args phys_base 0x801504000 + mem_size 0x3dfafc000 = 0xbe1000000). Only this
+# exact entry is reported as INFO; any other region that covers guest RAM is a CONFLICT.
+J274_RAM_REGION = {"id": 24, "base": 0x801504000, "size": 0x3dfafc000}
 
 # Blockers that a human may accept explicitly (J274-GUEST-LAYOUT.md section 3). Anything else that
 # fails (MISMATCH, missing/extra keys, other reference rules) can never be accepted.
 ALLOWABLE = {
     "L-1": "low window at IPA 0 (reference requires low_mem_ipa >= 0x1000)",
     "L-2": "low_mem_size does not fit the UINT32 PcdLowMemoryWindowSize",
-    "L-6": "pci_ecam inside the real J274 apcie ECAM",
-    "L-8": "iBoot carveout(s) inside guest RAM, or carveout check not run",
+    "L-8": "iBoot carveout(s) inside guest RAM (checked and found)",
 }
+# Blockers with an id that can NEVER be accepted with --allow.
+NEVER_ALLOWABLE = {
+    "L-6": "pci_ecam inside the real J274 apcie ECAM (would hide FL1100 USB-A, Wi-Fi, Ethernet)",
+    "UNCHECKED": "carveout overlap was not checked (--no-carveouts or no facts file)",
+}
+
+
+class InputError(Exception):
+    """A layout or facts file cannot be read or parsed (exit 2)."""
 
 
 def align_up(value: int, alignment: int = ALIGNMENT) -> int:
@@ -133,9 +148,25 @@ def reference_rule_violations(lay: dict) -> list[str]:
 
 def load_carveouts(path: Path) -> list[dict]:
     """Carveout list from tools/extract_adt_facts.py output: [{id, base, size}, ...] as ints."""
-    data = json.loads(path.read_text())
-    return [{"id": int(c["id"]), "base": int(c["base"], 16), "size": int(c["size"], 16)}
-            for c in data["carveouts"]]
+    try:
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict) or not isinstance(data.get("carveouts"), list):
+            raise ValueError("no 'carveouts' list")
+        return [{"id": int(c["id"]), "base": int(c["base"], 16), "size": int(c["size"], 16)}
+                for c in data["carveouts"]]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        raise InputError(f"carveout facts {path}: {type(e).__name__}: {e}") from None
+
+
+def load_layout(path: Path) -> dict:
+    """Raw layout JSON object; InputError if it cannot be read or is not a JSON object."""
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        raise InputError(f"layout {path}: {type(e).__name__}: {e}") from None
+    if not isinstance(raw, dict):
+        raise InputError(f"layout {path}: top level is {type(raw).__name__}, not an object")
+    return raw
 
 
 def layout_ranges(lay: dict) -> dict:
@@ -152,8 +183,9 @@ def layout_ranges(lay: dict) -> dict:
 
 def carveout_findings(lay: dict, carveouts: list[dict]) -> list[str]:
     """CONFLICT for every carveout that overlaps guest RAM [phys_base, ram_end), naming the
-    layout sub-ranges it hits. A region that contains ALL of guest RAM is the RAM region itself
-    (on J274 region-id-24 = boot_args phys_base..phys_base+mem_size) and is reported as INFO."""
+    layout sub-ranges it hits. Only the recorded RAM region itself (J274_RAM_REGION: region-id-24,
+    base and size exactly as recorded) is reported as INFO. Any other region, even one that
+    contains all of guest RAM, is a CONFLICT (a large reservation must not hide as INFO)."""
     lo, hi = lay["phys_base"], lay["ram_end"]
     sub = layout_ranges(lay)
     out = []
@@ -161,12 +193,14 @@ def carveout_findings(lay: dict, carveouts: list[dict]) -> list[str]:
         b, e = c["base"], c["base"] + c["size"]
         if not (b < hi and lo < e):
             continue
-        if b <= lo and e >= hi:
-            out.append(f"INFO carveout region-id-{c['id']} [{b:#x},{e:#x}) contains all of guest RAM "
-                       "(the RAM region itself, not a reservation inside it)")
+        if (c["id"], c["base"], c["size"]) == (J274_RAM_REGION["id"], J274_RAM_REGION["base"],
+                                               J274_RAM_REGION["size"]):
+            out.append(f"INFO carveout region-id-{c['id']} [{b:#x},{e:#x}) is the recorded RAM region "
+                       "itself (boot_args phys_base + mem_size), not a reservation inside it")
             continue
         hits = [n for n, (s, t) in sub.items() if b < t and s < e]
-        out.append(f"CONFLICT L-8 carveout region-id-{c['id']} [{b:#x},{e:#x}) inside guest RAM"
+        whole = "; contains all of guest RAM" if (b <= lo and e >= hi) else ""
+        out.append(f"CONFLICT L-8 carveout region-id-{c['id']} [{b:#x},{e:#x}) inside guest RAM{whole}"
                    + (f"; overlaps {', '.join(hits)}" if hits else ""))
     return out
 
@@ -207,6 +241,9 @@ def classify(text: str, source: str) -> dict:
         return {"id": "INFO", "level": "INFO", "text": text}
     if text.startswith("MISMATCH"):
         return {"id": "MISMATCH", "level": "FAIL", "text": text}
+    for fid in NEVER_ALLOWABLE:
+        if f" {fid} " in f" {text} ":
+            return {"id": fid, "level": "FAIL", "text": text}
     for fid in ALLOWABLE:
         if f" {fid} " in f" {text} ":
             return {"id": fid, "level": "BLOCK", "text": text}
@@ -217,9 +254,10 @@ def evaluate(lay: dict, fw_size: int, carveouts: list[dict] | None) -> list[dict
     found = [classify(t, "reference") for t in reference_rule_violations(lay)]
     found += [classify(t, "j274") for t in j274_extra_findings(lay, fw_size)]
     if carveouts is None:
-        found.append({"id": "L-8", "level": "BLOCK",
-                      "text": "UNCHECKED L-8 no carveout list given (--carveouts); overlap with iBoot "
-                              "carveouts not checked"})
+        found.append({"id": "UNCHECKED", "level": "FAIL",
+                      "text": "UNCHECKED no carveout list (--no-carveouts, or the default facts file is "
+                              "missing); overlap with iBoot carveouts not checked. Cannot be accepted "
+                              "with --allow"})
     else:
         found += [classify(t, "carveout") for t in carveout_findings(lay, carveouts)]
     return found
@@ -240,20 +278,34 @@ def main(argv: list[str] | None = None, out=None) -> int:
     ap.add_argument("--fw-size", type=lambda s: int(s, 0), default=J274_FW_SIZE_PADDED)
     ap.add_argument("--json", action="store_true")
     cv = ap.add_mutually_exclusive_group()
-    cv.add_argument("--carveouts", type=Path, default=here / "config/j274-adt-facts.json",
-                    help="carveout list (tools/extract_adt_facts.py output)")
+    cv.add_argument("--carveouts", type=Path, default=None,
+                    help="carveout list (tools/extract_adt_facts.py output; default "
+                         "config/j274-adt-facts.json). An explicit path that does not exist is exit 2")
     cv.add_argument("--no-carveouts", action="store_true",
-                    help="skip the carveout check (reported as an unaccepted L-8 blocker)")
+                    help="skip the carveout check (reported as UNCHECKED, which can never be accepted)")
     ap.add_argument("--allow", action="append", default=[], choices=sorted(ALLOWABLE),
-                    help="explicitly accept one L-n blocker (repeatable)")
+                    help="explicitly accept one L-1/L-2/L-8 blocker (repeatable); L-6 and "
+                         "UNCHECKED cannot be accepted")
     args = ap.parse_args(argv)
-    raw = json.loads(args.layout.read_text())
-    missing = sorted(set(FIELDS) - raw.keys())
-    extra = sorted(raw.keys() - set(FIELDS))
-    lay = decode(raw) if not missing else {}
-    carveouts = None
-    if not args.no_carveouts and args.carveouts.exists():
-        carveouts = load_carveouts(args.carveouts)
+    explicit_carveouts = args.carveouts is not None
+    if not explicit_carveouts:
+        args.carveouts = here / "config/j274-adt-facts.json"
+    try:
+        if explicit_carveouts and not args.carveouts.is_file():
+            raise InputError(f"--carveouts {args.carveouts}: no such file")
+        raw = load_layout(args.layout)
+        missing = sorted(set(FIELDS) - raw.keys())
+        extra = sorted(raw.keys() - set(FIELDS))
+        try:
+            lay = decode(raw) if not missing else {}
+        except (ValueError, TypeError) as e:
+            raise InputError(f"layout {args.layout}: {e}") from None
+        carveouts = None
+        if not args.no_carveouts and (explicit_carveouts or args.carveouts.exists()):
+            carveouts = load_carveouts(args.carveouts)
+    except InputError as e:
+        print(f"USAGE ERROR (exit 2): {e}", file=sys.stderr)
+        return 2
     found = evaluate(lay, args.fw_size, carveouts) if lay else []
     for k in missing + extra:
         found.append({"id": "KEYS", "level": "FAIL", "text": f"{'missing' if k in missing else 'extra'} key {k}"})

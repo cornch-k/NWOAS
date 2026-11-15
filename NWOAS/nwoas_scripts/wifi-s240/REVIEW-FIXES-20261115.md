@@ -122,3 +122,51 @@ Note (design question, not a defect): `--allow L-6` lets a guest ECAM inside the
 All of this is offline review. Passing tests is not a hardware or boot result.
 
 Housekeeping: my scratch files are deleted. The files N, O, P, car.txt and off.txt in /private/tmp/claude-501/-Users-angigyeom-Desktop-DEV-NWOAS/35d06cc4-4f0d-4573-9b44-0ee2d7358e30/scratchpad/rv were created at 22:02-22:03 by another agent, and I left them.
+
+## Fixes round 2 (2026-11-15)
+
+All 7 defects and the design note above are fixed, offline only. Nothing ran on the Mac mini: no /dev/cu.* opened, no `--run`, no launcher, proxy or chainload. A `run_guest.py` (pid 96507) and `capture_vuart.py` (pid 96506), started 22:39 by someone else, were running and were not touched. The only run.sh call was plan-only (exit 0). No git commits. Passing tests is not a hardware or boot result.
+
+| # | Defect | What changed (file:line) | Tests |
+|---|---|---|---|
+| 1 | Controller reset moved away from every reference | `wifi_probe.py:481-496`: default bring-up only sets PORT_PERST_OFF, as UEFI (AppleSiliconPciPlatformDxe.c:296) and m1n1 (pcie.c:591-592) do. The clear runs only with the new `--controller-reset` flag (`:798`), and is shown in the plan text (`:782-784`) and in result.json (`controller_reset_option` `:405`, `port0_perst_reg`). Docstring `:14-19`. The false claim is corrected in REVIEW-20261115.md (defect 3 note, row 3 marked superseded, new round-2 section). README §1 rows 3 and 5, §3 option table, §4 sample line, §6 "컨트롤러 쪽 리셋" row rewritten in Korean with [사실]/[가설] | `test_wifi_probe.py:567` `FixControllerReset` now tests only the flag: default has no clear before LTSSM start and keeps the UEFI order; the flag adds the clear under PERST#; parsing; plan text. `Main.test_controller_reset_flag_reaches_probe` (`:878`). The old "link trains only after the clear" fake was removed. No test says which sequence works on hardware |
+| 2 | Leftover `__pycache__` | Deleted `m1n1_windows/proxyclient/m1n1/__pycache__/{__init__,adt,utils}.cpython-314.pyc` (all 21:54:33, nothing else and nothing newer in that folder), then the empty `__pycache__` folder. The running run_guest.py is not affected: it already has its modules loaded. **Source: unknown** (the earlier "main session" attribution is withdrawn; it may also have come from an import without -B during the round-1 task) | `find m1n1_windows/proxyclient -name __pycache__` is empty after all test runs below |
+| 3 | Extractor recorded a typed-in interpreter string | `port-j274/tools/extract_adt_facts.py:56-61` `interpreter_record()` stores `sys.executable`, `sys.flags.isolated`, `sys.flags.dont_write_bytecode` and the version. `:69-73`: refuses with exit 2 unless both flags are set, before the proxyclient import and before writing. `command` is built from the real executable (`:80-88`, not symlink-resolved) | `test_check_j274_layout.py:391` `ExtractorRecordsRealInterpreter`: refusal for each missing flag (no file, no `m1n1.adt` import); record reads `sys`; a real `-I -B` subprocess run into a temp dir records `isolated`/`dont_write_bytecode` true and the same data as the committed file (venv only); the tautology was removed |
+| 4 | Missing explicit `--carveouts` silently became "unchecked" | `check_j274_layout.py:290-308`: an explicit path that is not a file is exit 2. "Not checked" (`--no-carveouts`, or the default file missing) is now its own id `UNCHECKED` (`:72-76`, `:257`), which `--allow` cannot accept | `:271` missing explicit path -> 2 even with every `--allow`; `:279` explicit existing path is used; `:365` `--no-carveouts` with every `--allow` -> 1, blocker `UNCHECKED`; `:372` `--allow UNCHECKED` -> 2 |
+| 5 | Any region covering all guest RAM was INFO | `check_j274_layout.py:62` `J274_RAM_REGION` (id 24, base 0x801504000, size 0x3dfafc000); `:196-200`: only that exact entry is INFO, anything else that covers guest RAM is `CONFLICT L-8 ... contains all of guest RAM` | `:333` synthetic whole-RAM region id 4 -> CONFLICT; `:349` exact entry INFO, other id/base/size -> CONFLICT, constant equals the recorded table entry |
+| 6 | No resync after a timeout; power-down read-modify-write | `wifi_probe.py:229-254` `resync_proxy()`: wait 0.2 s, drop pending serial bytes, `iface._resync_link()`, one `p.nop()`. It is the first power-down step `link_resync` (`:673`, limit `:95`), required whenever anything else must be undone (`:709`). PERST# GPIO and PORT_PERST are written with fixed values 0x2 and 0x0 (`:98-110`, `:684-686`), recorded in `power_down.fixed_writes`. 0x2 = UEFI GPIO_MODE_OUTPUT_0 value (AppleEmbeddedGpioControllerDxe.c:76, :136-137); clearing 0x814 on shutdown is what m1n1 pcie_shutdown does (pcie.c:757). README §1 row 5, §3 limits, §6 "PERST# 핀 쓰기 방식" and "시간 초과 뒤" rows | `test_wifi_probe.py:617` `FixPowerDownResync`: resync first and no PERST#/PORT_PERST reads in power-down; a stale reply the resync does not remove is still not written back; a working resync removes it; resync failure -> unconfirmed, other steps still run; drain -> `_resync_link` -> `nop` order with a fake interface; nothing done -> no resync required. `FixPowerDownIndependent` also faults `link_resync` alone. Mutation check (round-1 power-down put back in a scratch copy): 5 of these tests fail |
+| 7 | Bad input gave a traceback and exit 1 | `check_j274_layout.py:78-80` `InputError`; `:149-170` `load_carveouts()`/`load_layout()`; `:293-308`: unreadable file, bad JSON, non-object JSON, bad hex, list or bool value, bad facts file -> message on stderr and exit 2 | `:284` `test_bad_inputs_are_usage_errors`: 6 bad layouts, 4 bad facts files, bad `--fw-size` -> 2, no traceback |
+| Design note | `--allow L-6` passed a guest ECAM inside the real apcie ECAM | `check_j274_layout.py:66-76`: L-6 moved from `ALLOWABLE` to `NEVER_ALLOWABLE`; `--allow L-6` is now a usage error (exit 2) and an L-6 finding always blocks (`:244-246`) | `:258` `test_l6_can_never_be_allowed` |
+
+**Tests (all with `-I -B`):**
+
+| Suite | Interpreter | Ran | Result |
+|---|---|---|---|
+| wifi-s240 (was 52) | python3 | 61 | OK, 1 skipped (real-ADT test needs `construct`) |
+| wifi-s240 | .venv-hv | 61 | OK |
+| port-j274 (was 24) | python3 | 34 | OK, 2 skipped (extractor subprocess needs `construct`; committed facts file predates round 2) |
+| port-j274 | .venv-hv | 34 | OK, 1 skipped (committed facts file predates round 2) |
+
+**Checker exit codes now:** default 1 (L-1, L-2, L-8); `--allow L-1 --allow L-2 --allow L-8` 0; `--carveouts /nonexistent.json` with those three 2; `--no-carveouts` with those three 1 (UNCHECKED); `--allow L-6` 2; `--fw-size 0x1d88000` with the three 1.
+
+**sha256 after round 2:**
+
+| File | sha256 |
+|---|---|
+| wifi_probe.py | dab5251d35f68f93c117f35057770af5e63076f91a2808fcd4118c444f6a9de1 |
+| test_wifi_probe.py | 438ed68de2cc648adc1b296c63eae43c39f2adf31ed334bcf30460d0681161ad |
+| README.md (wifi-s240) | 162620c98d9f000b0f962fff3a631d96d539932815bfa5b1161109d71f268c31 |
+| run.sh | 43638a55d0061d9b0ab486a7ee87b137531956c9d75c19cb0bba148dfd2aaea4 (unchanged) |
+| check_j274_layout.py | 46c92a73e54f1a88c7240d043ab6416e80c1c7b4b6df882b5428d593ad96b86e |
+| extract_adt_facts.py | 63f44544df4c112062d038cb8916aa88a3258496565f4eeb301da72b7d09256e |
+| test_check_j274_layout.py | bf3573cd0461035ce0e1ea1f2eb22052afeca5350265ded304b68fac212c456b |
+
+The old wifi_probe.py hash (1834dc8b…9a33) was pinned only in REVIEW-20261115.md and this file. Both now list the new hash; the old rows are marked as round 1.
+
+**Not changed (outside the files I was allowed to edit):**
+- `port-j274/config/j274-adt-facts.json` still has the round-1 typed-in `interpreter` string. A fresh extractor run gives the same data (checked in a temp dir by the venv test). Regenerate it with `m1n1_windows/.venv-hv/bin/python3 -I -B port-j274/tools/extract_adt_facts.py experiments/tahoe-afk-20260906/d6-adt.bin port-j274/config/j274-adt-facts.json`; the skipped test then runs.
+- port-j274 `README.md` (lines 86-88: missing facts file reported as "UNCHECKED L-8"; `--allow L-n` wording), `J274-GUEST-LAYOUT.md:94` ("accept with `--allow L-8`" is still right, but the "unchecked" case is now `UNCHECKED`) and `REVIEW-20261115.md:106-107,122-123` (ALLOWABLE listed with L-6; a command with `--allow L-6`, which is now exit 2) describe the round-1 behaviour.
+
+**Still HYPOTHESIS / open:** whether `--controller-reset` matters for link training; whether bits other than bit 0 of port0+0x814 are live (writing 0 assumes not); a reply later than the 0.2 s quiet time is not caught by the resync (the fixed writes are the second defence); everything listed under "Open questions" above.
+
+Scratch files I made (backups and a mutation copy) are deleted.

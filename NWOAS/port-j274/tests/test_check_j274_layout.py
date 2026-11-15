@@ -8,13 +8,17 @@ S231 boot log, every file in nwoas_scripts/logs (scanned for "Physical memory:" 
 extracted ADT facts JSON and the ADT dump bytes (sha256 only). Passing them says nothing about
 booting on hardware.
 """
+import contextlib
 import hashlib
+import importlib.util
 import io
 import json
 import mmap
 import re
+import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -22,6 +26,7 @@ PORT = Path(__file__).resolve().parent.parent
 N = PORT.parent
 sys.path.insert(0, str(PORT / "tools"))
 import check_j274_layout as c  # noqa: E402
+import extract_adt_facts as x  # noqa: E402  (imports nothing from the proxyclient at import time)
 
 REF_J313_LAYOUT = N / "external/windows-on-m1/config/j313-guest-layout.json"
 J274_LAYOUT = PORT / "config/j274-guest-layout.json"
@@ -95,6 +100,23 @@ def run_main(*argv):
     buf = io.StringIO()
     code = c.main(list(argv) + ["--json"], out=buf)
     return code, json.loads(buf.getvalue())
+
+
+def run_main_err(*argv):
+    """-> (exit code, stdout, stderr) for paths that may not print a JSON result."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stderr(err):
+        try:
+            code = c.main(list(argv) + ["--json"], out=out)
+        except SystemExit as e:
+            code = e.code
+    return code, out.getvalue(), err.getvalue()
+
+
+def write_json(d, name, obj):
+    p = Path(d) / name
+    p.write_text(obj if isinstance(obj, str) else json.dumps(obj))
+    return p
 
 
 class KeySet(unittest.TestCase):
@@ -233,6 +255,64 @@ class ExitCodeFailClosed(unittest.TestCase):
             c.main(["--allow", "L-99"], out=io.StringIO())
         self.assertEqual(cm.exception.code, 2)
 
+    def test_l6_can_never_be_allowed(self):
+        # Round-2 design note: a guest ECAM inside the real apcie ECAM can never pass.
+        self.assertNotIn("L-6", c.ALLOWABLE)
+        code, _, err = run_main_err("--allow", "L-6")
+        self.assertEqual(code, 2, err)
+        with tempfile.TemporaryDirectory() as d:
+            raw = json.loads(J274_LAYOUT.read_text())
+            raw["pci_ecam"] = "0x690000000"
+            p = write_json(d, "ecam.json", raw)
+            code, res = run_main(str(p), *sum((["--allow", a] for a in sorted(c.ALLOWABLE)), []))
+        self.assertEqual(code, 1)
+        self.assertEqual({b.split(":")[0] for b in res["blocking"]}, {"L-6"})
+
+    def test_explicit_missing_carveouts_is_usage_error(self):
+        # Round-2 defect 4: a typo in --carveouts must not silently become "not checked".
+        code, out, err = run_main_err("--carveouts", "/nonexistent/j274-adt-facts.json",
+                                      "--allow", "L-1", "--allow", "L-2", "--allow", "L-8")
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+        self.assertIn("no such file", err)
+
+    def test_explicit_existing_carveouts_is_used(self):
+        code, res = run_main("--carveouts", str(ADT_FACTS))
+        self.assertEqual(res["carveouts"], str(ADT_FACTS))
+        self.assertTrue(res["carveout_findings"])
+
+    def test_bad_inputs_are_usage_errors(self):
+        # Round-2 defect 7: malformed input is exit 2 with a message, not a traceback.
+        raw = json.loads(J274_LAYOUT.read_text())
+        with tempfile.TemporaryDirectory() as d:
+            layouts = {
+                "not json": write_json(d, "a.json", "{not json"),
+                "not an object": write_json(d, "b.json", [1, 2]),
+                "bad hex": write_json(d, "c.json", dict(raw, phys_base="0xzz")),
+                "list value": write_json(d, "d.json", dict(raw, cpu_count=[8])),
+                "bool value": write_json(d, "e.json", dict(raw, cpu_count=True)),
+                "missing file": Path(d) / "nope.json",
+            }
+            for name, path in layouts.items():
+                with self.subTest(layout=name):
+                    code, out, err = run_main_err(str(path))
+                    self.assertEqual(code, 2, (name, err))
+                    self.assertIn("USAGE ERROR", err)
+                    self.assertNotIn("Traceback", err)
+            facts = {
+                "not json": write_json(d, "f1.json", "]"),
+                "no carveouts key": write_json(d, "f2.json", {"x": 1}),
+                "bad base": write_json(d, "f3.json", {"carveouts": [{"id": 1, "base": "zz", "size": "0x1"}]}),
+                "missing size": write_json(d, "f4.json", {"carveouts": [{"id": 1, "base": "0x1"}]}),
+            }
+            for name, path in facts.items():
+                with self.subTest(facts=name):
+                    code, out, err = run_main_err("--carveouts", str(path))
+                    self.assertEqual(code, 2, (name, err))
+                    self.assertIn("USAGE ERROR", err)
+        code, _, err = run_main_err("--fw-size", "zz")
+        self.assertEqual(code, 2, err)
+
 
 class CarveoutOverlap(unittest.TestCase):
     """REVIEW defect 2: carveouts inside guest RAM are reported as an L-8 blocker."""
@@ -260,12 +340,38 @@ class CarveoutOverlap(unittest.TestCase):
         self.assertFalse(any("region-id-1 " in f for f in found))
         self.assertTrue(any(f.startswith("CONFLICT L-8 carveout region-id-2 ") and "firmware" in f for f in found))
         self.assertTrue(any(f.startswith("CONFLICT L-8 carveout region-id-3 ") for f in found))
-        self.assertTrue(any(f.startswith("INFO carveout region-id-4 ") for f in found))
+        # Round-2 defect 5: a region that contains all of guest RAM is NOT INFO unless it is the
+        # recorded RAM region (id 24, base 0x801504000, size 0x3dfafc000).
+        self.assertTrue(any(f.startswith("CONFLICT L-8 carveout region-id-4 ") and "contains all" in f
+                            for f in found), found)
+        self.assertFalse(any(f.startswith("INFO") for f in found), found)
+
+    def test_only_recorded_ram_region_is_info(self):
+        lay = self.lay
+        ram = dict(c.J274_RAM_REGION)
+        self.assertEqual(ram["base"] + ram["size"], c.J274_PLATFORM_RAM_END)
+        cases = {"exact": (ram, "INFO"),
+                 "other id": (dict(ram, id=25), "CONFLICT"),
+                 "other base": (dict(ram, base=ram["base"] - 0x4000, size=ram["size"] + 0x4000), "CONFLICT"),
+                 "bigger": (dict(ram, size=ram["size"] + 0x4000), "CONFLICT")}
+        for name, (cv, want) in cases.items():
+            with self.subTest(case=name):
+                found = c.carveout_findings(lay, [cv])
+                self.assertEqual(len(found), 1, found)
+                self.assertTrue(found[0].startswith(want), found)
+        rec = [cv for cv in c.load_carveouts(ADT_FACTS) if cv["id"] == 24]
+        self.assertEqual(rec, [ram], "constant equals the recorded table entry")
 
     def test_no_carveouts_is_unchecked_blocker(self):
-        code, res = run_main("--no-carveouts", "--allow", "L-1", "--allow", "L-2")
+        # Round-2 defect 4: "never checked" has its own id that --allow cannot accept.
+        code, res = run_main("--no-carveouts", "--allow", "L-1", "--allow", "L-2", "--allow", "L-8")
         self.assertEqual(code, 1)
-        self.assertTrue(any(b.startswith("L-8: UNCHECKED") for b in res["blocking"]))
+        self.assertEqual({b.split(":")[0] for b in res["blocking"]}, {"UNCHECKED"})
+        self.assertIsNone(res["carveouts"])
+
+    def test_unchecked_cannot_be_allowed(self):
+        code, _, err = run_main_err("--no-carveouts", "--allow", "UNCHECKED")
+        self.assertEqual(code, 2, err)
 
 
 class AdtFactsReproducible(unittest.TestCase):
@@ -275,12 +381,63 @@ class AdtFactsReproducible(unittest.TestCase):
         facts = json.loads(ADT_FACTS.read_text())
         dump = N / facts["source_dump"]
         self.assertEqual(hashlib.sha256(dump.read_bytes()).hexdigest(), facts["source_sha256"])
-        self.assertIn("-I -B", facts["interpreter"])
         self.assertIn("tools/extract_adt_facts.py", facts["command"])
         self.assertEqual(facts["apcie_reg0"], {"base": hex(c.J274_REAL_APCIE_ECAM[0]),
                                                "size": hex(c.J274_REAL_APCIE_ECAM[1])})
         self.assertEqual(facts["disp0_external"], 1)
         self.assertIn("J274AP", facts["compatible"])
+
+
+class ExtractorRecordsRealInterpreter(unittest.TestCase):
+    """Round-2 defect 3: the extractor records the interpreter it really runs under and refuses
+    without -I -B. (The old test only checked a typed-in string.)"""
+
+    def test_refuses_without_isolated_or_no_bytecode(self):
+        before = set(sys.modules)
+        for iso, nb in ((0, 1), (1, 0), (0, 0)):
+            with self.subTest(isolated=iso, dont_write_bytecode=nb), tempfile.TemporaryDirectory() as d:
+                out = Path(d) / "facts.json"
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    code = x.main([str(N / "experiments/tahoe-afk-20260906/d6-adt.bin"), str(out)],
+                                  flags=types.SimpleNamespace(isolated=iso, dont_write_bytecode=nb))
+                self.assertEqual(code, 2)
+                self.assertFalse(out.exists())
+                self.assertIn("REFUSED", err.getvalue())
+        self.assertNotIn("m1n1.adt", set(sys.modules) - before, "refusal happens before the import")
+
+    def test_record_reads_sys(self):
+        rec = x.interpreter_record(types.SimpleNamespace(isolated=1, dont_write_bytecode=0))
+        self.assertEqual(rec["executable"], sys.executable)
+        self.assertEqual((rec["isolated"], rec["dont_write_bytecode"]), (True, False))
+        live = x.interpreter_record()
+        self.assertEqual((live["isolated"], live["dont_write_bytecode"]),
+                         (bool(sys.flags.isolated), bool(sys.flags.dont_write_bytecode)))
+
+    def test_subprocess_run_records_its_flags(self):
+        if importlib.util.find_spec("construct") is None:
+            self.skipTest("needs construct: run with m1n1_windows/.venv-hv/bin/python3 -I -B")
+        dump = N / "experiments/tahoe-afk-20260906/d6-adt.bin"
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "facts.json"
+            r = subprocess.run([sys.executable, "-I", "-B", str(PORT / "tools/extract_adt_facts.py"),
+                                str(dump), str(out)], capture_output=True, text=True, timeout=120)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            rec = json.loads(out.read_text())
+        self.assertEqual(rec["interpreter"]["executable"], sys.executable)
+        self.assertIs(rec["interpreter"]["isolated"], True)
+        self.assertIs(rec["interpreter"]["dont_write_bytecode"], True)
+        committed = json.loads(ADT_FACTS.read_text())
+        for k in ("source_sha256", "apcie_reg0", "disp0_external", "carveouts", "compatible"):
+            self.assertEqual(rec[k], committed[k], k)
+
+    def test_committed_record_has_real_flags(self):
+        facts = json.loads(ADT_FACTS.read_text())
+        if not isinstance(facts["interpreter"], dict):
+            self.skipTest("config/j274-adt-facts.json predates round 2 (interpreter is a typed-in "
+                          "string); regenerate it with the extractor")
+        self.assertIs(facts["interpreter"]["isolated"], True)
+        self.assertIs(facts["interpreter"]["dont_write_bytecode"], True)
 
 
 class ReadmeCommands(unittest.TestCase):

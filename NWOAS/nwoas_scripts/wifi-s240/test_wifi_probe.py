@@ -46,7 +46,7 @@ class FakeHW:
 
     def __init__(self, clock, *, pcie_init_rc=0, device_present=True, refclk_ack=True,
                  ids=(wp.WIFI_ID, wp.BT_ID), mem_decode=False, exc_on=None, raise_on=None,
-                 crs_reads=0, link_already_up=False, link_stuck_up=False, require_reset_cycle=False):
+                 crs_reads=0, link_already_up=False, link_stuck_up=False, nop_clears_stale=True):
         self.clock = clock
         self.f = good_facts()
         self.regs = {}
@@ -57,8 +57,10 @@ class FakeHW:
         self.crs_left = crs_reads
         self.link_already_up = link_already_up
         self.link_stuck_up = link_stuck_up            # fault: link never goes down once up
-        self.require_reset_cycle = require_reset_cycle  # model: link trains only if PORT_PERST was 0 at REFCLK_EN
-        self.refclk_en_under_reset = False
+        self.refclk_en_under_reset = None             # observation only: PORT_PERST_OFF clear at REFCLK_EN?
+        self.stale = []                                # late replies: returned by the next read32 calls
+        self.nop_clears_stale = nop_clears_stale       # does the proxy resync remove them?
+        self.ops = []                                  # ('r', addr) / ('w', addr, val) / ('nop',)
         self.was_up = False
         self.smc_off_seen = False
         self.fault = None                              # fault hook: fault(op, addr, val) may raise
@@ -109,6 +111,14 @@ class FakeHW:
     def get_exc_count(self):
         return self.exc_count
 
+    def nop(self):
+        if self.fault:
+            self.fault('nop', None, None)
+        self.ops.append(('nop',))
+        self.events.append('proxy nop')
+        if self.nop_clears_stale:
+            self.stale.clear()
+
     def _link_up(self):
         if self.link_stuck_up and self.was_up:
             return True
@@ -119,8 +129,7 @@ class FakeHW:
             up = bool(self.device_present and self.wifi_powered and (g & 0xF) == 0x3
                       and self.regs.get(p0 + wp.PORT_PERST, 0) & 1
                       and self.regs.get(p0 + wp.PORT_REFCLK, 0) & 1
-                      and self.regs.get(p0 + wp.PORT_LTSSMCTL, 0) & 1
-                      and (self.refclk_en_under_reset or not self.require_reset_cycle))
+                      and self.regs.get(p0 + wp.PORT_LTSSMCTL, 0) & 1)
         self.was_up = self.was_up or up
         return up
 
@@ -137,6 +146,9 @@ class FakeHW:
             self.fault('r', addr, None)
         if self.raise_on and addr == self.raise_on:
             raise wp.PhaseTimeout('fake UART stall')
+        self.ops.append(('r', addr))
+        if self.stale:
+            return self.stale.pop(0)
         f = self.f
         if f['ecam'] <= addr < f['ecam'] + 0x10000000:
             bus, dev, fn, reg = self._ep(addr)
@@ -167,6 +179,7 @@ class FakeHW:
         if self.fault:
             self.fault('w', addr, val)
         self.writes.append((addr, val))
+        self.ops.append(('w', addr, val))
         f = self.f
         prev = self.regs.get(addr, 0)
         if addr == f['port0'] + wp.PORT_PERST:
@@ -239,13 +252,13 @@ class FakeSmc:
         self.hw.events.append('smc stop')
 
 
-PD_ORDER = ['root_bus_restore', 'perst_gpio_assert', 'perst_off_clear', 'smc_off', 'smc_stop',
+PD_ORDER = ['link_resync', 'root_bus_restore', 'perst_gpio_assert', 'perst_off_clear', 'smc_off', 'smc_stop',
             'link_check', 'port1_snapshot']
 
 
 def opts(**over):
     o = types.SimpleNamespace(power_settle_ms=100, link_timeout_ms=1000, config_retry_ms=1000,
-                              size_bars=True)
+                              size_bars=True, controller_reset=False)
     for k, v in over.items():
         setattr(o, k, v)
     return o
@@ -284,8 +297,8 @@ class Sequence(unittest.TestCase):
         self.assertEqual(smcs[0].written[-1], wp.SMC_GPIO_OFF)
         self.assertTrue(smcs[0].stopped)
         g = hw.regs[hw.f['gpio'] + 4 * hw.f['perst_pin']]
-        self.assertEqual(g & 0xF, 0x2, 'PERST# must be left asserted (output 0)')
-        self.assertEqual(hw.regs[hw.f['port0'] + wp.PORT_PERST] & 1, 0)
+        self.assertEqual(g, 0x2, 'PERST# must be left asserted (fixed output-0 value)')
+        self.assertEqual(hw.regs[hw.f['port0'] + wp.PORT_PERST], 0)
 
     def assert_no_forbidden_writes(self, hw):
         allowed = wp.build_allowlist(hw.f)
@@ -552,24 +565,159 @@ class FixConfirmation(unittest.TestCase):
 
 
 class FixControllerReset(unittest.TestCase):
-    """REVIEW defect 3: PORT_PERST bit 0 is cleared while PERST# is asserted, set after REFCLK."""
+    """Round-2 defect 1: the default bring-up is the reference set-only PORT_PERST_OFF sequence
+    (UEFI AppleSiliconPciPlatformDxe.c:296, m1n1 pcie.c:591-592); the clear is opt-in via
+    --controller-reset.  These tests check the flag plumbing and the write order only.  The fake
+    hardware does NOT model whether either sequence trains a link; nothing here says which one
+    works on the Mac mini."""
 
-    def test_order_matches_cold_bringup(self):
+    UEFI_ORDER = ['perst assert', 'refclk0 req', 'port refclk en', 'port perst set',
+                  'perst deassert', 'ltssm start']
+
+    def test_default_is_reference_set_only(self):
         res, hw, smcs, _, _ = run_probe()
+        ev = hw.events
+        stop = ev.index('ltssm start')
+        self.assertNotIn('port perst clear', ev[:stop], 'default must not clear PORT_PERST_OFF')
+        idx = [ev.index(e) for e in self.UEFI_ORDER]
+        self.assertEqual(idx, sorted(idx), ev)
+        self.assertEqual(res['port0_perst_reg'], {'before': '0x1', 'controller_reset': False})
+        self.assertFalse(res['controller_reset_option'])
+        self.assertIs(hw.refclk_en_under_reset, False, 'REFCLK_EN with PORT_PERST_OFF still set')
+        bringup = [v for a, v in hw.writes[:[w[0] for w in hw.writes].index(
+            hw.f['port0'] + wp.PORT_LTSSMCTL)] if a == hw.f['port0'] + wp.PORT_PERST]
+        self.assertTrue(bringup and all(v & wp.PERST_OFF for v in bringup), bringup)
+
+    def test_opt_in_clears_under_perst(self):
+        res, hw, smcs, _, _ = run_probe(controller_reset=True)
         ev = hw.events
         seq = ['perst assert', 'port perst clear', 'refclk0 req', 'port refclk en', 'port perst set',
                'perst deassert', 'ltssm start']
         idx = [ev.index(e) for e in seq]
         self.assertEqual(idx, sorted(idx), ev)
-        self.assertEqual(res['port0_perst_reg'], {'before': '0x1', 'after_clear': '0x0'})
+        self.assertEqual(res['port0_perst_reg'],
+                         {'before': '0x1', 'controller_reset': True, 'after_clear': '0x0'})
+        self.assertTrue(res['controller_reset_option'])
+        self.assertIs(hw.refclk_en_under_reset, True)
 
-    def test_link_that_needs_reset_cycle_trains(self):
-        # fault model: link trains only if the controller reset was asserted at REFCLK enable
-        # (which m1n1 pcie_init had already released). Without the fix this gives LINK_DOWN.
+    def test_flag_parsing(self):
+        self.assertFalse(wp.parse_args([]).controller_reset)
+        self.assertTrue(wp.parse_args(['--controller-reset']).controller_reset)
+
+    def test_plan_names_the_choice(self):
+        lines = []
+        self.assertEqual(wp.main([], log=lines.append), 0)
+        self.assertIn('PORT_PERST_OFF only set', lines[0])
+        lines = []
+        self.assertEqual(wp.main(['--controller-reset'], log=lines.append), 0)
+        self.assertIn('--controller-reset', lines[0])
+        self.assertIn('NOT in any reference', lines[0])
+
+
+class FixPowerDownResync(unittest.TestCase):
+    """Round-2 defect 6: power-down starts with a proxy resync and writes fixed values."""
+
+    def _pd_ops(self, hw):
+        return hw.ops[max(i for i, o in enumerate(hw.ops) if o == ('nop',)):]
+
+    def test_resync_is_first_and_writes_are_fixed(self):
+        res, hw, smcs, phases, _ = run_probe()
+        pd_phases = [n for n, _ in phases if n.startswith('power-down:')]
+        self.assertEqual(pd_phases[0], 'power-down:link_resync')
+        self.assertIs(res['power_down']['link_resynced'], True)
+        self.assertEqual(hw.ops.count(('nop',)), 1)
+        ops = self._pd_ops(hw)
+        gpio = hw.f['gpio'] + 4 * hw.f['perst_pin']
+        pperst = hw.f['port0'] + wp.PORT_PERST
+        self.assertIn(('w', gpio, 0x2), ops)
+        self.assertIn(('w', pperst, 0x0), ops)
+        self.assertFalse([o for o in ops if o[0] == 'r' and o[1] in (gpio, pperst)],
+                         'no read-modify-write of PERST# / PORT_PERST in power-down')
+        self.assertEqual(res['power_down']['fixed_writes'], {'perst_gpio': '0x2', 'port0_perst': '0x0'})
+
+    def test_stale_reply_is_not_written_back(self):
+        # A late reply is returned by the next reads and the resync does NOT remove it (worst case).
+        # The power-down writes must still be the fixed values.
         clock = Clock()
-        res, hw, smcs, _, _ = run_probe(FakeHW(clock, require_reset_cycle=True))
-        self.assertEqual(res['verdict'], 'PASS_IDS')
-        self.assertTrue(hw.refclk_en_under_reset)
+        hw = FakeHW(clock, nop_clears_stale=False)
+        hw.raise_on = wp.ecam_addr(hw.f['ecam'], 1, 0, 1, 0x00)
+
+        def arm(name, hw_, smcs):
+            if name == 'power-down:link_resync':
+                hw.stale[:] = [0xDEADBEEF] * 3
+        res, hw, smcs, _, _ = run_probe(hw, arm=arm)
+        self.assertTrue(res['verdict'].startswith('ERROR: PhaseTimeout'), res['verdict'])
+        gpio = hw.f['gpio'] + 4 * hw.f['perst_pin']
+        pperst = hw.f['port0'] + wp.PORT_PERST
+        pd_writes = [o for o in self._pd_ops(hw) if o[0] == 'w']
+        self.assertIn(('w', gpio, 0x2), pd_writes)
+        self.assertIn(('w', pperst, 0x0), pd_writes)
+        self.assertFalse([o for o in pd_writes if o[2] == 0xDEADBEEF or o[2] & 0xFFFF0000 == 0xDEAD0000])
+        self.assertEqual(hw.regs[gpio], 0x2)
+        self.assertEqual(hw.regs[pperst], 0x0)
+
+    def test_resync_removes_stale_reply(self):
+        clock = Clock()
+        hw = FakeHW(clock)
+        hw.raise_on = wp.ecam_addr(hw.f['ecam'], 1, 0, 1, 0x00)
+
+        def arm(name, hw_, smcs):
+            if name == 'power-down:link_resync':
+                hw.stale[:] = [0x1] * 3        # would read as "link up" if not removed
+        res, hw, smcs, _, _ = run_probe(hw, arm=arm)
+        self.assertEqual(hw.stale, [])
+        self.assertTrue(res['power_down']['confirmed'], res['power_down'])
+
+    def test_resync_failure_is_unconfirmed_but_rest_runs(self):
+        res, hw, smcs, _, _ = run_probe(arm=fault_in_step('link_resync', RuntimeError))
+        pd = res['power_down']
+        self.assertEqual(list(pd['errors']), ['link_resync'])
+        self.assertIs(pd['link_resynced'], False)
+        self.assertIn('link_resync', pd['required_steps'])
+        self.assertFalse(pd['confirmed'])
+        self.assertFalse(hw.wifi_powered)
+        self.assertTrue(smcs[0].stopped)
+
+    def test_real_interface_drain_then_iface_resync_then_proxy_nop(self):
+        calls = []
+
+        class Dev:
+            def __init__(self):
+                self.pending = [b'\x01\x02\x03', b'\xff\x55']
+
+            @property
+            def in_waiting(self):
+                return len(self.pending[0]) if self.pending else 0
+
+            def read(self, n):
+                calls.append('drain')
+                return self.pending.pop(0)
+
+        class Iface:
+            dev = Dev()
+
+            def _resync_link(self):
+                calls.append('iface resync')
+        clock = Clock()
+        hw = FakeHW(clock)
+        hw.iface = Iface()
+        orig_nop = hw.nop
+
+        def nop():
+            calls.append('proxy nop')
+            orig_nop()
+        hw.nop = nop
+        res, *_ = run_probe(hw)
+        self.assertEqual(calls, ['drain', 'drain', 'iface resync', 'proxy nop'])
+        self.assertEqual(res['power_down']['resync'], {'drained_bytes': 5, 'iface_resync': True})
+        self.assertTrue(res['power_down']['confirmed'])
+
+    def test_nothing_done_needs_no_resync(self):
+        clock = Clock()
+        res, hw, smcs, _, _ = run_probe(FakeHW(clock, pcie_init_rc=1))
+        self.assertEqual(res['power_down']['required_steps'], [])
+        self.assertTrue(res['power_down']['confirmed'])
+        self.assertEqual(hw.writes, [])
 
 
 class FixGp1aNotWritten(unittest.TestCase):
@@ -726,6 +874,16 @@ class Main(unittest.TestCase):
         self.assertEqual(res['verdict'], 'PASS_IDS')
         self.assertEqual(res['facts']['port0'], '0x681000000')
         self.assertFalse(hw.wifi_powered)
+
+    def test_controller_reset_flag_reaches_probe(self):
+        hw = FakeHW(Clock())
+        connect, st = self._connect(hw)
+        rc = wp.main(['--run', '--controller-reset', '--out-dir', str(self.out), '--power-settle-ms', '0'],
+                     runner=self._free, connect=connect, phase=self._null_phase, log=self.lines.append)
+        self.assertEqual(rc, 0, self.lines)
+        res = json.loads(next(self.out.glob('run-*/result.json')).read_text())
+        self.assertTrue(res['controller_reset_option'])
+        self.assertIn('port perst clear', hw.events)
 
     def test_unconfirmed_power_down_exit_4(self):
         clock = Clock()

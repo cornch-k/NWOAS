@@ -12,13 +12,17 @@ the serial port).  Default mode prints the plan and touches nothing; `--run` exe
                                writes gP1a <- 1 (line 16); this probe deliberately does NOT
                                (open hypothesis, README section 6)
   4. port-0 only PERST#/REFCLK/LTSSM bring-up in the UEFI AppleSiliconPciPlatformDxe.c order
-     (itself a port of Linux pcie-apple.c), plus an explicit controller-side reset (PORT_PERST
-     bit 0 cleared) while the PERST# GPIO is asserted, because m1n1 pcie_init already set that
-     bit (m1n1 src/pcie.c:592)
+     (itself a port of Linux pcie-apple.c).  Like UEFI (AppleSiliconPciPlatformDxe.c:296) and
+     m1n1 (src/pcie.c:591-592) it only SETS PORT_PERST_OFF (port0+0x814 bit 0); m1n1 pcie_init
+     already set it, so that set is the same no-op it is in the real boot chain.  Clearing the
+     bit first (a controller-side reset under PERST#) is NOT in any reference and is only done
+     with --controller-reset (HYPOTHESIS: it may undo the tunables/DBI setup pcie_init applied)
   5. read bus 1 dev 0 fn 0/1 config space: IDs, class, BAR sizes, PCIe DevCtl/LnkSta
   6. ALWAYS (finally), each step independently with its own time limit and error record:
-     restore root-port bus numbers, assert PERST#, clear PORT_PERST_OFF, gP0d <- 0x800000,
-     SMC quiesce, check link down, compare the port-1 (FL1100) snapshot
+     resync the proxy link (drain + nop), restore root-port bus numbers, assert PERST#, clear
+     PORT_PERST_OFF, gP0d <- 0x800000, SMC quiesce, check link down, compare the port-1
+     (FL1100) snapshot.  The PERST# and PORT_PERST writes here are fixed values, not
+     read-modify-write, so a stale reply read after a timeout cannot be written back
 
 Never touches storage (no NVMe/ANS calls).  Never writes FL1100 (port 1) registers: every MMIO
 write goes through an exact-address allowlist.  This is a hardware observation tool; a PASS here
@@ -88,8 +92,22 @@ PORT1_SNAPSHOT_OFFS = (PORT_LINKSTS, PORT_APPCLK, PORT_STATUS, PORT_REFCLK, PORT
 
 # Per-step time limits (s) of the power-down sequence. Each step has its own alarm, so a stall in
 # one step cannot use up the time of the next one.
-POWER_DOWN_STEP_SECONDS = {'root_bus_restore': 5, 'perst_gpio_assert': 5, 'perst_off_clear': 5,
-                           'smc_off': 10, 'smc_stop': 10, 'link_check': 5, 'port1_snapshot': 10}
+POWER_DOWN_STEP_SECONDS = {'link_resync': 5, 'root_bus_restore': 5, 'perst_gpio_assert': 5,
+                           'perst_off_clear': 5, 'smc_off': 10, 'smc_stop': 10, 'link_check': 5,
+                           'port1_snapshot': 10}
+
+# Power-down writes are FIXED values, never read-modify-write: after a main-sequence timeout a
+# late reply could otherwise be taken as the read value and written back (proxy.py _request only
+# checks the reply opcode).
+# FACT: UEFI GPIO_MODE_OUTPUT_0 writes exactly FIELD_PREP(GPIOx_MODE, GPIOx_OUT_MODE) = 0x2: its
+#   SetRegister computes a masked value but writes `Value` (AppleEmbeddedGpioControllerDxe.c:76,
+#   :136-137; GPIOx_MODE GENMASK(3,1), GPIOx_OUT_MODE 1 in the .h).
+# FACT: PORT_PERST (0x814) has only bit 0 defined (UEFI AppleSiliconPciPlatformDxe.h:114-115,
+#   m1n1 pcie.c:67-68); m1n1 pcie_shutdown clears that bit on power-down (pcie.c:757).
+#   HYPOTHESIS: no other bit of 0x814 is live, so writing 0 equals clearing bit 0.
+PD_GPIO_PERST_ASSERTED = GPIO_MODE_OUT      # output mode, data 0 (PERST# low), no periph/input
+PD_PORT_PERST_VALUE = 0x0
+RESYNC_QUIET_S = 0.2                        # wait for late bytes before draining them
 
 # --- Wi-Fi bridge-window prediction (HYPOTHESIS; pure arithmetic, no hardware access) ---
 # FACT: our Mu T8103 build has the 32-bit PCI aperture at bus 0xC0000000, CPU = bus + 0x600000000
@@ -206,6 +224,34 @@ class GuardedMmio:
         new = (old & ~clear) | set_
         self.w32(addr, new)
         return old, self.r32(addr)
+
+
+def resync_proxy(p, sleep=time.sleep):
+    """Bring the proxy request/reply stream back in step before power-down.
+
+    FACT: M1N1Proxy._request only checks that the reply opcode matches (proxy.py:707-736), so
+    after a PhaseTimeout interrupted a read, the late P_READ32 reply could be taken as the
+    answer to the next P_READ32.  Here: wait RESYNC_QUIET_S, drop every byte already waiting
+    on the serial device, run the interface's own NWOAS _resync_link() (REQ_NOP with retries,
+    proxy.py:426-435), then one P_NOP through the proxy request path, which raises if the
+    reply does not match.  HYPOTHESIS: a reply that arrives later than the quiet time is not
+    caught here; the fixed-value power-down writes are the second line of defence."""
+    info = {'drained_bytes': 0, 'iface_resync': False}
+    iface = getattr(p, 'iface', None)
+    if iface is not None:
+        sleep(RESYNC_QUIET_S)
+        dev = getattr(iface, 'dev', None)
+        if dev is not None and hasattr(dev, 'in_waiting'):
+            for _ in range(64):
+                n = dev.in_waiting
+                if not n:
+                    break
+                info['drained_bytes'] += len(dev.read(n))
+        if hasattr(iface, '_resync_link'):
+            iface._resync_link()
+            info['iface_resync'] = True
+    p.nop()
+    return info
 
 
 def build_allowlist(f):
@@ -356,6 +402,7 @@ class WifiProbe:
             self.res['power_down'] = {'confirmed': True, 'nothing_was_done': True}
             return self.res
         self.m = GuardedMmio(self.p, build_allowlist(self.f))
+        self.res['controller_reset_option'] = bool(self.o.controller_reset)
         try:
             self._sequence()
         except Refusal as e:
@@ -431,13 +478,22 @@ class WifiProbe:
         orig_gpio = m.r32(gpio_reg)
         self.res['perst_gpio_original'] = hex(orig_gpio)
         self._perst(assert_=True)
-        # m1n1 pcie_init already set PORT_PERST bit 0 (= RESET_DIS, m1n1 src/pcie.c:592), so the
-        # later PERST_OFF set alone would be a no-op. Clear it here so the controller-side reset
-        # really is asserted around REFCLK setup, as in a cold UEFI/Linux bring-up.
-        # HYPOTHESIS: whether this matters for link training is not known.
-        before, after = m.rmw(port + PORT_PERST, PERST_OFF, 0)
-        self.res['port0_perst_reg'] = {'before': hex(before), 'after_clear': hex(after)}
-        self.step('port 0 controller reset asserted', before=before, after=after)
+        # FACT: UEFI (AppleSiliconPciPlatformDxe.c:296), m1n1 (src/pcie.c:591-592) and Linux only
+        # SET PORT_PERST_OFF; none clears it during bring-up. m1n1 pcie_init already set it, so
+        # the set below is a no-op, exactly as it is when UEFI runs after m1n1 in the boot chain
+        # (where FL1100 still enumerates). Default = that reference sequence.
+        # --controller-reset additionally clears it here (opt-in). HYPOTHESIS: clearing RESET_DIS
+        # resets the port-0 core after pcie_init applied apcie-config-tunables, pcie-rc-tunables
+        # and DBI setup (pcie.c:560-640), so link training would run without them.
+        before = m.r32(port + PORT_PERST)
+        rec = {'before': hex(before), 'controller_reset': bool(self.o.controller_reset)}
+        if self.o.controller_reset:
+            _, after = m.rmw(port + PORT_PERST, PERST_OFF, 0)
+            rec['after_clear'] = hex(after)
+            self.step('port 0 controller reset asserted (--controller-reset)', before=before, after=after)
+        else:
+            self.step('port 0 PORT_PERST left as set by pcie_init (reference sequence)', before=before)
+        self.res['port0_perst_reg'] = rec
         m.rmw(phy + PHY_LANE_CTL, 0, CFGACC)
         m.rmw(phy + PHY_LANE_CFG, 0, REFCLK0REQ)
         ok, v = self.poll(phy + PHY_LANE_CFG, REFCLK0ACK, REFCLK0ACK, 50)
@@ -607,18 +663,27 @@ class WifiProbe:
     def _power_down(self):
         f = self.f
         pd = {'steps': {}, 'errors': {}, 'perst_asserted': False, 'controller_reset_asserted': False,
-              'smc_off_written': False, 'smc_stopped': False}
+              'smc_off_written': False, 'smc_stopped': False,
+              'fixed_writes': {'perst_gpio': hex(PD_GPIO_PERST_ASSERTED),
+                               'port0_perst': hex(PD_PORT_PERST_VALUE)}}
         powered = self.port0_touched or self.smc_on_attempted
         required = []
+        # First: get the proxy stream back in step, so later reads (link check, port-1 snapshot)
+        # are answers to our own requests. A failure is recorded; the other steps still run.
+        ok, info = self._pd_step(pd, 'link_resync', lambda: resync_proxy(self.p, self.sleep))
+        pd['link_resynced'] = ok
+        if ok:
+            pd['resync'] = info
         if self.root_bus_saved is not None:
             required.append('root_bus_restore')
             pd['root_bus_restored'], _ = self._pd_step(pd, 'root_bus_restore', self._restore_root_bus)
         if powered:
             required += ['perst_gpio_assert', 'perst_off_clear']
-            pd['perst_asserted'], _ = self._pd_step(pd, 'perst_gpio_assert',
-                                                    lambda: self._perst(assert_=True))
+            gpio_reg = f['gpio'] + 4 * f['perst_pin']
+            pd['perst_asserted'], _ = self._pd_step(
+                pd, 'perst_gpio_assert', lambda: self.m.w32(gpio_reg, PD_GPIO_PERST_ASSERTED))
             pd['controller_reset_asserted'], _ = self._pd_step(
-                pd, 'perst_off_clear', lambda: self.m.rmw(f['port0'] + PORT_PERST, PERST_OFF, 0))
+                pd, 'perst_off_clear', lambda: self.m.w32(f['port0'] + PORT_PERST, PD_PORT_PERST_VALUE))
         if self.smc is not None:
             if self.smc_on_attempted:
                 required.append('smc_off')
@@ -640,6 +705,8 @@ class WifiProbe:
                 pd['port1_unchanged'] = after == self.res['port1_before']
             else:
                 pd['port1_unchanged'] = None        # unknown: snapshot could not be taken
+        if required:                                # anything to undo => the resync is required too
+            required.insert(0, 'link_resync')
         pd['required_steps'] = required
         # Confirmed only if every required step succeeded AND (when anything was powered) the
         # link was actually seen down afterwards. A link that stays up is NOT a power-down.
@@ -706,10 +773,15 @@ def connect_real(args):
 PLAN = """S240 plan (nothing executed; add --run on a fresh idle m1n1 proxy):
   guards : lsof on {ports}; ADT j274 + recorded addresses; FL1100 port 1 never written
   1 pcie_init (proxy)            2 SMC {key} <- {on:#x}  (settle {settle} ms)
-  3 port 0 PERST#/REFCLK/LTSSM   4 read 1:0.0 and 1:0.1 config, size BARs (restore)
-  5 finally (each step on its own, own time limit): restore root bus regs, PERST# low,
-    PORT_PERST_OFF clear, SMC {key} <- {off:#x}, SMC quiesce, link-down check, port-1 compare
+  3 port 0 PERST#/REFCLK/LTSSM ({reset})
+  4 read 1:0.0 and 1:0.1 config, size BARs (restore)
+  5 finally (each step on its own, own time limit): proxy resync (drain + nop), restore root bus
+    regs, PERST# low (fixed {gpio:#x}), PORT_PERST <- {pperst:#x}, SMC {key} <- {off:#x}, SMC quiesce,
+    link-down check, port-1 compare
   then power-cycle the Mac mini before any launcher."""
+PLAN_RESET_DEFAULT = 'reference order: PORT_PERST_OFF only set, as UEFI/m1n1'
+PLAN_RESET_OPT_IN = ('--controller-reset: PORT_PERST_OFF cleared under PERST# first '
+                     '(NOT in any reference; HYPOTHESIS)')
 
 
 def parse_args(argv):
@@ -723,6 +795,9 @@ def parse_args(argv):
     ap.add_argument('--link-timeout-ms', type=int, default=1000)
     ap.add_argument('--config-retry-ms', type=int, default=1000)
     ap.add_argument('--no-bar-sizing', dest='size_bars', action='store_false')
+    ap.add_argument('--controller-reset', action='store_true',
+                    help='opt-in: clear PORT_PERST_OFF (port0+0x814 bit 0) under PERST# before REFCLK. '
+                         'Not in UEFI/m1n1/Linux; default is their set-only sequence')
     ap.add_argument('--out-dir', type=Path, default=HERE)
     a = ap.parse_args(argv)
     if a.extra_port is None:
@@ -764,7 +839,8 @@ def main(argv=None, runner=subprocess.run, connect=None, phase=alarm_phase, log=
     ports = [a.device] + a.extra_port
     if not a.run:
         log(PLAN.format(ports=ports, key=SMC_WIFI_KEY, on=SMC_GPIO_ON, off=SMC_GPIO_OFF,
-                        settle=a.power_settle_ms))
+                        settle=a.power_settle_ms, gpio=PD_GPIO_PERST_ASSERTED, pperst=PD_PORT_PERST_VALUE,
+                        reset=PLAN_RESET_OPT_IN if a.controller_reset else PLAN_RESET_DEFAULT))
         return 0
     try:
         check_serial_free(ports, runner)

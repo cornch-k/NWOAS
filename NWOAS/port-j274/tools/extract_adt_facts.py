@@ -11,6 +11,10 @@ Needs `construct`, so run it with the hv venv and -I -B (no __pycache__ is writt
 
 Only addresses/sizes are written. Identifiers, keys, MAC addresses, nonces etc. in /chosen are
 never read into the output.
+
+It refuses (exit 2, nothing imported from the proxyclient, nothing written) unless the running
+interpreter really has -I (sys.flags.isolated) and -B (sys.flags.dont_write_bytecode).  The
+record stores those flags and sys.executable as read at run time, not a typed-in string.
 """
 from __future__ import annotations
 
@@ -49,10 +53,23 @@ def extract(adt) -> dict:
     }
 
 
-def main(argv=None) -> int:
+def interpreter_record(flags=None) -> dict:
+    """What actually runs this script (read from sys at run time)."""
+    flags = sys.flags if flags is None else flags
+    return {"executable": sys.executable, "isolated": bool(flags.isolated),
+            "dont_write_bytecode": bool(flags.dont_write_bytecode),
+            "version": sys.version.split()[0]}
+
+
+def main(argv=None, flags=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 2:
         print(__doc__)
+        return 2
+    interp = interpreter_record(flags)
+    if not (interp["isolated"] and interp["dont_write_bytecode"]):
+        print(f"REFUSED: run with -I -B (isolated={interp['isolated']}, "
+              f"dont_write_bytecode={interp['dont_write_bytecode']}); nothing written", file=sys.stderr)
         return 2
     dump, out = Path(argv[0]), Path(argv[1])
     sys.path.insert(0, str(PROXYCLIENT))
@@ -60,14 +77,16 @@ def main(argv=None) -> int:
     data = dump.read_bytes()
     facts = extract(load_adt(data))
     rel = lambda p: str(p.resolve().relative_to(N)) if p.resolve().is_relative_to(N) else str(p)
+    # not resolved: a venv's bin/python3 is a symlink to the base interpreter
+    exe = interp["executable"]
+    exe = exe[len(str(N)) + 1:] if exe.startswith(str(N) + "/") else exe
     record = {
         "source_dump": rel(dump),
         "source_sha256": hashlib.sha256(data).hexdigest(),
         "parser": "m1n1_windows/proxyclient/m1n1/adt.py (load_adt)",
-        "interpreter": "m1n1_windows/.venv-hv/bin/python3 -I -B",
-        "command": f"m1n1_windows/.venv-hv/bin/python3 -I -B port-j274/tools/extract_adt_facts.py "
-                   f"{rel(dump)} {rel(out)}",
-        "python_version": sys.version.split()[0],
+        "interpreter": interp,
+        "command": f"{exe} -I -B {rel(Path(__file__))} {rel(dump)} {rel(out)}",
+        "python_version": interp["version"],
         "note": "offline extraction from a saved dump; the carveout table of the CURRENT boot may differ",
         **facts,
     }
