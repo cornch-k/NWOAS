@@ -1,0 +1,469 @@
+diff -ruN external/windows-on-m1/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.arm64only.inf port-j274/gpu/driver/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.arm64only.inf
+--- external/windows-on-m1/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.arm64only.inf	1970-01-01 09:00:00
++++ port-j274/gpu/driver/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.arm64only.inf	2026-11-15 20:32:00
+@@ -0,0 +1,88 @@
++; NWOAS-J274 PATCH P9: ARM64-only variant of AppleAgxRenderAdmission.inf
++; (upstream windows-on-m1, MIT).  Same device, KMD, ARM64 UMD and registry
++; values; the WOW64 (x86) D3D UMD and x86 OpenGL ICD entries are removed.
++[Version]
++Signature="$WINDOWS NT$"
++Class=Display
++ClassGuid={4d36e968-e325-11ce-bfc1-08002be10318}
++Provider=%ProviderName%
++DriverVer=08/29/2026,0.1.214.0
++CatalogFile=AppleAgxRenderAdmission.cat
++PnpLockdown=1
++
++[DestinationDirs]
++; 13 = the driver store. A Universal INF that uses DIRID 13 must run its
++; service binary from there too (InfVerif 2600, driver package isolation).
++Admission.KmdCopyFiles=13
++Admission.UmdCopyFiles=11
++
++[Manufacturer]
++%ManufacturerName%=Models,NTarm64.10.0...22000
++
++[Models.NTarm64.10.0...22000]
++%DeviceName%=Admission_Install,ACPI\APPL0002
++
++[Admission_Install]
++CopyFiles=Admission.KmdCopyFiles,Admission.UmdCopyFiles
++AddReg=Admission.SoftwareSettings
++FeatureScore=F9
++
++[Admission_Install.Services]
++AddService=AppleAgxAdmission,0x00000002,Admission_Service
++
++[Admission_Service]
++DisplayName=%ServiceName%
++ServiceType=1
++StartType=3
++ErrorControl=1
++ServiceBinary=%13%\AppleAgxRenderAdmission.sys
++
++[Admission.KmdCopyFiles]
++AppleAgxRenderAdmission.sys
++
++[Admission.UmdCopyFiles]
++AppleAgxRenderAdmissionUmd.dll,,,0x4000
++
++[Admission.SoftwareSettings]
++; The four names are the D3D9, D3D10, D3D11 and D3D12 UMDs. The UMD has no
++; D3D9 DDI (no OpenAdapter export), and d3d9.dll then failed every device
++; with D3DERR_NOTAVAILABLE (EXP1889 D3D9_DEFAULT). With "<>", the "no D3D9
++; driver" marker, in the D3D9 slot, the DX9 UMD-name query fails and d3d9.dll
++; runs D3D9 devices through D3D9On12 on this D3D12 UMD (validated by D3D9_ON12).
++HKR,,UserModeDriverName,%REG_MULTI_SZ%,"<>",AppleAgxRenderAdmissionUmd.dll,AppleAgxRenderAdmissionUmd.dll,AppleAgxRenderAdmissionUmd.dll
++; OpenGLFlags bit 0 is set for compatibility. EXP1194: bit 1 is set -- the
++; runtime then does not call the ICD's finish before its swap-buffers
++; ("Loading an OpenGL Installable Client Driver"). The ICD's swap flushes
++; the frame and presents through a GPU copy whose completion its present
++; ring waits for (EXP1191 winsys framebuffer), so the runtime's glFinish only
++; serialized CPU and GPU every frame (EXP1192/1193).
++; EXP1160: dxgkrnl reads OpenGLVersion/Flags and their Wow values only when
++; the native OpenGLDriverName exists, and opengl32.dll declines an ICD
++; reported as version 0. No ARM64 ICD is built yet: native callers fail to
++; load the named file and keep Microsoft's GDI Generic implementation.
++HKR,,OpenGLDriverName,%REG_SZ%,%13%\AppleAgxOpenGL64.dll
++HKR,,OpenGLVersion,%REG_DWORD%,1
++HKR,,OpenGLFlags,%REG_DWORD%,3
++; M2: VidMm (dxgmms2) gives an allocation 64 KB system-memory pages only when
++; the adapter opts in through MemoryManager\Supports64KBPages and the KMD
++; reports DXGK_GPUMMUCAPS.SysMem64KBPageSupported; AGX maps 16 KiB pages, so
++; GPU-accessed system memory needs those 64 KiB contiguous chunks
++; (investigation/analysis/M2-vidmm-64k-decision.md).
++HKR,MemoryManager,Supports64KBPages,%REG_DWORD%,1
++
++[SourceDisksNames]
++1=%DiskName%,,,
++
++[SourceDisksFiles]
++AppleAgxRenderAdmission.sys=1
++AppleAgxRenderAdmissionUmd.dll=1
++
++[Strings]
++ProviderName="Windows on Apple Silicon Project"
++ManufacturerName="Windows on Apple Silicon Project"
++DeviceName="Apple AGX clean WDDM render-admission experiment (NWOAS ARM64-only)"
++ServiceName="Apple AGX clean render-admission KMD"
++DiskName="Apple AGX clean render-admission package"
++REG_MULTI_SZ=0x00010000
++REG_SZ=0x00000000
++REG_DWORD=0x00010001
+diff -ruN external/windows-on-m1/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.vcxproj port-j274/gpu/driver/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.vcxproj
+--- external/windows-on-m1/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.vcxproj	2026-11-15 19:39:30
++++ port-j274/gpu/driver/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.vcxproj	2026-11-15 20:32:00
+@@ -19,6 +19,23 @@
+     <TargetVersion>Windows10</TargetVersion>
+   </PropertyGroup>
+   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
++  <PropertyGroup>
++    <!-- NWOAS-J274 PATCH P6: board selection (J313 default = upstream). -->
++    <AppleAgxBoard Condition="'$(AppleAgxBoard)'==''">J313</AppleAgxBoard>
++    <!-- NWOAS-J274 PATCH P7: armasm64 lives under HostARM64 on an ARM64 build host
++         (e.g. Windows 11 ARM64); upstream hard-codes Hostx64 (x64 host unchanged). -->
++    <NwoasArmasmHost Condition="'$(NwoasArmasmHost)'=='' and '$(PROCESSOR_ARCHITECTURE)'=='ARM64'">HostARM64</NwoasArmasmHost>
++    <NwoasArmasmHost Condition="'$(NwoasArmasmHost)'==''">Hostx64</NwoasArmasmHost>
++  </PropertyGroup>
++  <!-- NWOAS-J274 PATCH P6: /p:AppleAgxBoard=J274 selects apple_agx_board.h J274 values. -->
++  <ItemDefinitionGroup Condition="'$(AppleAgxBoard)'=='J274'">
++    <ClCompile>
++      <PreprocessorDefinitions>APPLE_AGX_BOARD_J274=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
++    </ClCompile>
++  </ItemDefinitionGroup>
++  <Target Name="NwoasValidateAppleAgxBoard" BeforeTargets="PrepareForBuild">
++    <Error Condition="'$(AppleAgxBoard)'!='J313' and '$(AppleAgxBoard)'!='J274'" Text="AppleAgxBoard must be J313 or J274 (got '$(AppleAgxBoard)')." />
++  </Target>
+   <Import Project="package-version.props" />
+   <PropertyGroup>
+     <AppleAgxGpuvaG1bPageProfile Condition="'$(AppleAgxGpuvaG1bPageProfile)'==''">0</AppleAgxGpuvaG1bPageProfile>
+@@ -294,15 +311,19 @@
+   </ItemGroup>
+   <ItemGroup>
+     <ResourceCompile Include="package-version.rc" />
+-    <Inf Include="AppleAgxRenderAdmission.inf" />
++    <!-- NWOAS-J274 PATCH P9: /p:AppleAgxArm64Only=true packages only the ARM64
++         KMD + ARM64 UMD with an INF that has no WOW64 (x86) files, for the first
++         J274 firmware-qualification test.  Default (unset) = upstream package. -->
++    <Inf Include="AppleAgxRenderAdmission.inf" Condition="'$(AppleAgxArm64Only)'!='true'" />
++    <Inf Include="AppleAgxRenderAdmission.arm64only.inf" Condition="'$(AppleAgxArm64Only)'=='true'" />
+     <FilesToPackage Include="$(TargetPath)" Condition="'$(ConfigurationType)'=='Driver'" />
+     <FilesToPackage Include="AppleAgxRenderAdmissionUmd.dll" />
+-    <FilesToPackage Include="AppleAgxOpenGL32.dll" />
+-    <FilesToPackage Include="AppleAgxRenderAdmissionUmd32.dll" />
++    <FilesToPackage Include="AppleAgxOpenGL32.dll" Condition="'$(AppleAgxArm64Only)'!='true'" />
++    <FilesToPackage Include="AppleAgxRenderAdmissionUmd32.dll" Condition="'$(AppleAgxArm64Only)'!='true'" />
+   </ItemGroup>
+   <ItemGroup>
+     <CustomBuild Include="src\arm64_hypercalls.asm">
+-      <Command>"$(VCToolsInstallDir)bin\Hostx64\arm64\armasm64.exe" -nologo -o "$(IntDir)arm64_hypercalls.obj" "%(FullPath)"</Command>
++      <Command>"$(VCToolsInstallDir)bin\$(NwoasArmasmHost)\arm64\armasm64.exe" -nologo -o "$(IntDir)arm64_hypercalls.obj" "%(FullPath)"</Command>
+       <Outputs>$(IntDir)arm64_hypercalls.obj</Outputs>
+       <LinkObjects>true</LinkObjects>
+       <Message>Assemble the private X0-input/X0-result HVC ABI</Message>
+diff -ruN external/windows-on-m1/drivers/apple-agx/render-admission/include/j313_agx_abi_admission.generated.h port-j274/gpu/driver/drivers/apple-agx/render-admission/include/j313_agx_abi_admission.generated.h
+--- external/windows-on-m1/drivers/apple-agx/render-admission/include/j313_agx_abi_admission.generated.h	2026-11-15 19:39:30
++++ port-j274/gpu/driver/drivers/apple-agx/render-admission/include/j313_agx_abi_admission.generated.h	2026-11-15 20:25:13
+@@ -2,6 +2,10 @@
+ #ifndef J313_AGX_ABI_ADMISSION_GENERATED_H
+ #define J313_AGX_ABI_ADMISSION_GENERATED_H
+ 
++/* NWOAS-J274 PATCH P3: board-dependent region bases come from
++ * apple_agx_board.h (J313 values unchanged by default). */
++#include "apple_agx_board.h"
++
+ #define J313_AGX_ABI_ADMISSION_PROFILE_IDENTITY "agx-abi-admission"
+ #define J313_AGX_ABI_ADMISSION_SOURCE_G2_SHA256 "7c3a7af4e86642b3b72a07132584a352ba475a681828b0be6d3d968c94ebf9a2"
+ #define J313_AGX_ABI_ADMISSION_CONTRACT_VERSION 1u
+@@ -11,9 +15,9 @@
+ #define J313_AGX_ABI_ADMISSION_SCANOUT_IRQ_MASK 0x3u
+ #define J313_AGX_ABI_ADMISSION_SGX_MMIO_BASE 0x204000000ULL
+ #define J313_AGX_ABI_ADMISSION_SGX_MMIO_SIZE 0x4000000ULL
+-#define J313_AGX_ABI_ADMISSION_GPU_BASE 0x9fffb8000ULL
++#define J313_AGX_ABI_ADMISSION_GPU_BASE APPLE_AGX_BOARD_GPU_REGION_BASE /* NWOAS-J274 PATCH P3 (upstream 0x9fffb8000ULL) */
+ #define J313_AGX_ABI_ADMISSION_GPU_SIZE 0x4000ULL
+-#define J313_AGX_ABI_ADMISSION_HANDOFF_BASE 0x9fff70000ULL
++#define J313_AGX_ABI_ADMISSION_HANDOFF_BASE APPLE_AGX_BOARD_HANDOFF_BASE /* NWOAS-J274 PATCH P3 (upstream 0x9fff70000ULL) */
+ #define J313_AGX_ABI_ADMISSION_HANDOFF_SIZE 0x4000ULL
+ #define J313_AGX_ABI_ADMISSION_POWER_BROKER_BASE 0x300000000ULL
+ #define J313_AGX_ABI_ADMISSION_POWER_BROKER_SIZE 0x1000ULL
+diff -ruN external/windows-on-m1/drivers/apple-agx/render-admission/scripts/build-driver.ps1 port-j274/gpu/driver/drivers/apple-agx/render-admission/scripts/build-driver.ps1
+--- external/windows-on-m1/drivers/apple-agx/render-admission/scripts/build-driver.ps1	2026-11-15 19:39:30
++++ port-j274/gpu/driver/drivers/apple-agx/render-admission/scripts/build-driver.ps1	2026-11-15 20:25:58
+@@ -36,7 +36,10 @@
+     [string]$WowOpenGLIcd,
+     # EXP1222: the x86 D3D UMD (umd\build-umd-x86.ps1 output) the INF installs
+     # as UserModeDriverNameWow.
+-    [string]$WowUmd
++    [string]$WowUmd,
++    # NWOAS-J274 PATCH P6: board selection forwarded as /p:AppleAgxBoard.
++    [ValidateSet('J313','J274')]
++    [string]$Board = 'J313'
+ )
+ $builderRoot = if ($env:APPLE_AGX_BUILDER_ROOT) { $env:APPLE_AGX_BUILDER_ROOT } else { 'C:\Users\pauls\APB12E~1\active' }  # builder root: APPLE AGX\active (8.3 alias, no space)
+ if (!$MesaSourceRoot) { $MesaSourceRoot = "$builderRoot\AD04-d3d10-frontend-build\mesa" }
+@@ -216,7 +219,7 @@
+     "/p:EnableGpuvaWinsys=$gpuvaWinsysValue" `
+     "/p:NativeRuntimeProps=$NativeRuntimeProps" `
+     "/p:MesaSourceRoot=$MesaSourceRoot" "/p:MesaGeneratedRoot=$MesaGeneratedRoot" `
+-    @preparedProperties @umdWdkProperties
++    "/p:AppleAgxBoard=$Board" @preparedProperties @umdWdkProperties
+ if ($LASTEXITCODE -ne 0) {
+     throw "Clean render-admission ARM64 UMD build failed with exit code $LASTEXITCODE"
+ }
+@@ -272,7 +275,7 @@
+     "/p:AppleAgxVisibleAgxQualification=$visibleAgxQualificationValue" `
+     "/p:AppleAgxGpuvaG1bPageProfile=$GpuvaG1bPageProfile" `
+     "/p:AppleAgxGpuvaG1bAllocationHint=$gpuvaG1bAllocationHintValue" `
+-    @pinnedWdkProperties
++    "/p:AppleAgxBoard=$Board" @pinnedWdkProperties
+ if ($LASTEXITCODE -ne 0) {
+     throw "Clean render-admission ARM64 WDK build failed with exit code $LASTEXITCODE"
+ }
+diff -ruN external/windows-on-m1/drivers/apple-agx/render-admission/src/arm64_hypercalls_gnu.S port-j274/gpu/driver/drivers/apple-agx/render-admission/src/arm64_hypercalls_gnu.S
+--- external/windows-on-m1/drivers/apple-agx/render-admission/src/arm64_hypercalls_gnu.S	1970-01-01 09:00:00
++++ port-j274/gpu/driver/drivers/apple-agx/render-admission/src/arm64_hypercalls_gnu.S	2026-11-15 20:28:03
+@@ -0,0 +1,16 @@
++// NWOAS-J274 PATCH P8 (new file): GNU/clang-syntax twin of upstream
++// arm64_hypercalls.asm (armasm64 syntax), for a clang-cl/lld-link cross build
++// from macOS.  Same two leaf functions, same immediates; MSBuild builds keep
++// using the upstream .asm.  Derived from windows-on-m1 (MIT, (c) 2026 paulsmir).
++        .text
++        .p2align 2
++        .globl AdmissionHvcArmConsumed
++AdmissionHvcArmConsumed:
++        hvc #0x4d32
++        ret
++
++        .p2align 2
++        .globl AdmissionHvcGuestIpaPa
++AdmissionHvcGuestIpaPa:
++        hvc #0x4d31
++        ret
+diff -ruN external/windows-on-m1/drivers/apple-agx/render-admission/umd/AppleAgxRenderAdmissionUmd.vcxproj port-j274/gpu/driver/drivers/apple-agx/render-admission/umd/AppleAgxRenderAdmissionUmd.vcxproj
+--- external/windows-on-m1/drivers/apple-agx/render-admission/umd/AppleAgxRenderAdmissionUmd.vcxproj	2026-11-15 19:39:30
++++ port-j274/gpu/driver/drivers/apple-agx/render-admission/umd/AppleAgxRenderAdmissionUmd.vcxproj	2026-11-15 20:25:48
+@@ -19,6 +19,19 @@
+     <CharacterSet>Unicode</CharacterSet>
+   </PropertyGroup>
+   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
++  <PropertyGroup>
++    <!-- NWOAS-J274 PATCH P6: board selection (J313 default = upstream). -->
++    <AppleAgxBoard Condition="'$(AppleAgxBoard)'==''">J313</AppleAgxBoard>
++  </PropertyGroup>
++  <!-- NWOAS-J274 PATCH P6: /p:AppleAgxBoard=J274 selects apple_agx_board.h J274 values. -->
++  <ItemDefinitionGroup Condition="'$(AppleAgxBoard)'=='J274'">
++    <ClCompile>
++      <PreprocessorDefinitions>APPLE_AGX_BOARD_J274=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
++    </ClCompile>
++  </ItemDefinitionGroup>
++  <Target Name="NwoasValidateAppleAgxBoard" BeforeTargets="PrepareForBuild">
++    <Error Condition="'$(AppleAgxBoard)'!='J313' and '$(AppleAgxBoard)'!='J274'" Text="AppleAgxBoard must be J313 or J274 (got '$(AppleAgxBoard)')." />
++  </Target>
+   <Import Project="..\package-version.props" />
+   <PropertyGroup>
+     <EnableInf2cat>false</EnableInf2cat>
+diff -ruN external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_board.h port-j274/gpu/driver/drivers/apple-agx/shared/include/apple_agx_board.h
+--- external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_board.h	1970-01-01 09:00:00
++++ port-j274/gpu/driver/drivers/apple-agx/shared/include/apple_agx_board.h	2026-11-15 20:25:01
+@@ -0,0 +1,72 @@
++/*
++ * NWOAS-J274 PATCH P1 (new file, not part of upstream windows-on-m1).
++ *
++ * Board selection for the Apple AGX Windows driver.  Upstream hard-codes the
++ * J313 (MacBook Air M1, board-id 0x26, 8 GB) physical layout.  This header
++ * moves the board-dependent physical addresses behind one switch so the same
++ * sources build either for J313 (default, byte-for-byte the upstream values)
++ * or for J274 (Mac mini M1 2020, board-id 0x22, 16 GB).
++ *
++ * Select J274 with the preprocessor definition APPLE_AGX_BOARD_J274=1
++ * (MSBuild: /p:AppleAgxBoard=J274).  Without it every value below is the
++ * upstream J313 value, so J313 behaviour is unchanged.
++ *
++ * Every J274 value is labelled FACT or HYPOTHESIS.  Nothing in this file has
++ * been validated on J274 hardware.  A build that compiles is NOT a GPU that
++ * works.  See port-j274/gpu/driver/PATCHES.md and INVENTORY.md.
++ */
++#ifndef APPLE_AGX_BOARD_H
++#define APPLE_AGX_BOARD_H
++
++#if defined(APPLE_AGX_BOARD_J274) && defined(APPLE_AGX_BOARD_J313)
++#error "Select exactly one Apple AGX board (APPLE_AGX_BOARD_J274 or APPLE_AGX_BOARD_J313)"
++#endif
++
++#if defined(APPLE_AGX_BOARD_J274) && APPLE_AGX_BOARD_J274
++
++#define APPLE_AGX_BOARD_NAME "J274"
++/* FACT: m1n1 prints "Board-ID: 0x22" on this Mac mini
++ * (nwoas_scripts/logs/appark-chainload-1558.log:49). */
++#define APPLE_AGX_BOARD_ID 0x22u
++#define APPLE_AGX_BOARD_CHIP_ID 0x8103u
++
++/* FACT: m1n1 maps a 0x4000-byte Normal-NC pmap-io-range at 0xbfffb8000 and
++ * another at 0xbfff70000 on this Mac mini, both with OS firmware 13.5
++ * (appark-chainload-1558.log:108-109) and with Tahoe mBoot-18000.121.3
++ * (usb-s159-20260909-234847.C3i6zw:68-69).  J313 has the same two 0x4000
++ * ranges at 0x9fffb8000 (gpu) and 0x9fff70000 (handoff) = 8 GB top - same
++ * offsets.
++ * HYPOTHESIS (high): these are the J274 sgx gpu-region and gfx-handoff
++ * regions.  Must be confirmed from the live J274 ADT (/arm-io/sgx
++ * gpu-region-base, gfx-handoff-base) under the 13.5 stub. */
++#define APPLE_AGX_BOARD_GPU_REGION_BASE 0xbfffb8000ULL
++#define APPLE_AGX_BOARD_HANDOFF_BASE 0xbfff70000ULL
++/* HYPOTHESIS (medium): gfx-shared-region keeps the J313 offset
++ * (handoff + 0x8000, size 0x40000).  No J274 log shows this region; it is
++ * not a pmap-io-range on either board.  Needs a live ADT read. */
++#define APPLE_AGX_BOARD_SHARED_REGION_BASE 0xbfff78000ULL
++
++/* FACT: in the upstream generated HwDataB profile the 8-byte J313
++ * gpu-region-base value 0x9fffb8000 occurs exactly once, at byte offset
++ * 0xa78 (apple_agx_hwdata_profile.generated.h AgxHwdataBProfile); m1n1's
++ * AGXHWDataB has a gpu_region_base field filled from the ADT
++ * (m1n1_windows/proxyclient/m1n1/fw/agx/initdata.py:1143,1372).
++ * HYPOTHESIS (high): 0xa78 is that field. */
++#define APPLE_AGX_BOARD_HWDATA_B_GPU_REGION_BASE_OFFSET 0xa78u
++
++#else /* default: upstream J313 */
++
++#ifndef APPLE_AGX_BOARD_J313
++#define APPLE_AGX_BOARD_J313 1
++#endif
++#define APPLE_AGX_BOARD_NAME "J313"
++#define APPLE_AGX_BOARD_ID 0x26u
++#define APPLE_AGX_BOARD_CHIP_ID 0x8103u
++#define APPLE_AGX_BOARD_GPU_REGION_BASE 0x9fffb8000ULL
++#define APPLE_AGX_BOARD_HANDOFF_BASE 0x9fff70000ULL
++#define APPLE_AGX_BOARD_SHARED_REGION_BASE 0x9fff78000ULL
++#define APPLE_AGX_BOARD_HWDATA_B_GPU_REGION_BASE_OFFSET 0xa78u
++
++#endif
++
++#endif /* APPLE_AGX_BOARD_H */
+diff -ruN external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_hwdata_profile.generated.h port-j274/gpu/driver/drivers/apple-agx/shared/include/apple_agx_hwdata_profile.generated.h
+--- external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_hwdata_profile.generated.h	2026-11-15 19:39:30
++++ port-j274/gpu/driver/drivers/apple-agx/shared/include/apple_agx_hwdata_profile.generated.h	2026-11-15 20:25:36
+@@ -25,6 +25,8 @@
+  */
+ #ifndef APPLE_AGX_HWDATA_PROFILE_GENERATED_H
+ #define APPLE_AGX_HWDATA_PROFILE_GENERATED_H
++/* NWOAS-J274 PATCH P5a */
++#include "apple_agx_board.h"
+ 
+ /* Raw ADT SHA-256: 7e2a944d7b2d0900209cfe11be94e2b8012ef497c8c2951111216018a734dbfe
+  * Profile SHA-256: 8a69a96ca4adfa30116dc54d53da25268e92ff85bfe7dc09a9b52c6fc2becaf8
+@@ -1594,9 +1596,22 @@
+ static const unsigned char AgxHwdataInputBytes38[4] = {
+     0x08, 0x00, 0x00, 0x00,
+ };
++/* NWOAS-J274 PATCH P5a: gpu-region-base ADT input.  J313 bytes are the
++ * upstream value 0x9fffb8000; the J274 bytes encode the HYPOTHESIS
++ * 0xbfffb8000 from apple_agx_board.h.  All other 65 inputs and the profile
++ * id are still the J313 capture: on J274 the hypervisor's
++ * AgxHwdataInputsMatch() refuses the profile (fails closed) unless the live
++ * J274 ADT happens to carry identical values.  A real J274 profile must be
++ * regenerated from a live J274 13.5 ADT (see PATCHES.md, open item O2). */
++#if defined(APPLE_AGX_BOARD_J274) && APPLE_AGX_BOARD_J274
+ static const unsigned char AgxHwdataInputBytes39[8] = {
++    0x00, 0x80, 0xfb, 0xff, 0x0b, 0x00, 0x00, 0x00,
++};
++#else
++static const unsigned char AgxHwdataInputBytes39[8] = {
+     0x00, 0x80, 0xfb, 0xff, 0x09, 0x00, 0x00, 0x00,
+ };
++#endif
+ static const unsigned char AgxHwdataInputBytes49[4] = {
+     0x30, 0x75, 0x00, 0x00,
+ };
+diff -ruN external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_hwdata_profile.h port-j274/gpu/driver/drivers/apple-agx/shared/include/apple_agx_hwdata_profile.h
+--- external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_hwdata_profile.h	2026-11-15 19:39:30
++++ port-j274/gpu/driver/drivers/apple-agx/shared/include/apple_agx_hwdata_profile.h	2026-11-15 20:25:36
+@@ -70,6 +70,12 @@
+     for(i=0;i<AGX_HWDATA_A_BYTES;i++)a_data[i]=AgxHwdataAProfile[i];
+     for(i=0;i<AGX_HWDATA_B_BYTES;i++)b_data[i]=AgxHwdataBProfile[i];
+     AgxFwIoPut(b_data+0x28,AGX_HWDATA_TIMESTAMP_BASE,8);
++#if defined(APPLE_AGX_BOARD_J274) && APPLE_AGX_BOARD_J274
++    /* NWOAS-J274 PATCH P5b: the J313 HwDataB bytes carry gpu_region_base
++     * 0x9fffb8000 at 0xa78 (HYPOTHESIS: that field); write the J274 base. */
++    AgxFwIoPut(b_data+APPLE_AGX_BOARD_HWDATA_B_GPU_REGION_BASE_OFFSET,
++               APPLE_AGX_BOARD_GPU_REGION_BASE,8);
++#endif
+     return AgxFwIoEncodeHwdataB(io,AGX_FW_IO_BYTES,epoch,root,b_data,b_bytes);
+ }
+ #endif
+diff -ruN external/windows-on-m1/drivers/apple-agx/shared/include/j313_agx_g2.generated.h port-j274/gpu/driver/drivers/apple-agx/shared/include/j313_agx_g2.generated.h
+--- external/windows-on-m1/drivers/apple-agx/shared/include/j313_agx_g2.generated.h	2026-11-15 19:39:30
++++ port-j274/gpu/driver/drivers/apple-agx/shared/include/j313_agx_g2.generated.h	2026-11-15 20:25:13
+@@ -2,6 +2,10 @@
+ #ifndef J313_AGX_G2_GENERATED_H
+ #define J313_AGX_G2_GENERATED_H
+ 
++/* NWOAS-J274 PATCH P2: board-dependent region bases come from
++ * apple_agx_board.h (J313 values unchanged by default). */
++#include "apple_agx_board.h"
++
+ #define J313_AGX_G2_ACPI_HID "APPL0002"
+ #define J313_AGX_G2_SOURCE_CONTRACT_SHA256 "b049a055eba8536caeda7d1a8bac90b81ab6357e64d3f9cb600fff4691d7e3a7"
+ #define J313_AGX_G2_FIRMWARE_GENERATION "G13"
+@@ -83,17 +87,17 @@
+ 
+ #define J313_AGX_G2_SGX_MMIO_BASE 0x204000000ULL
+ #define J313_AGX_G2_SGX_MMIO_SIZE 0x4000000ULL
+-#define J313_AGX_G2_GPU_BASE 0x9fffb8000ULL
++#define J313_AGX_G2_GPU_BASE APPLE_AGX_BOARD_GPU_REGION_BASE /* NWOAS-J274 PATCH P2 (upstream 0x9fffb8000ULL) */
+ #define J313_AGX_G2_GPU_SIZE 0x4000ULL
+ #define J313_AGX_G2_ASC_MMIO_BASE 0x206400000ULL
+ #define J313_AGX_G2_ASC_MMIO_SIZE 0x6c000ULL
+ #define J313_AGX_G2_POWER_BROKER_BASE 0x300000000ULL
+ #define J313_AGX_G2_POWER_BROKER_SIZE 0x1000ULL
+-#define J313_AGX_G2_GPU_BASE 0x9fffb8000ULL
++#define J313_AGX_G2_GPU_BASE APPLE_AGX_BOARD_GPU_REGION_BASE /* NWOAS-J274 PATCH P2 (upstream 0x9fffb8000ULL) */
+ #define J313_AGX_G2_GPU_SIZE 0x4000ULL
+-#define J313_AGX_G2_SHARED_BASE 0x9fff78000ULL
++#define J313_AGX_G2_SHARED_BASE APPLE_AGX_BOARD_SHARED_REGION_BASE /* NWOAS-J274 PATCH P2 (upstream 0x9fff78000ULL) */
+ #define J313_AGX_G2_SHARED_SIZE 0x40000ULL
+-#define J313_AGX_G2_HANDOFF_BASE 0x9fff70000ULL
++#define J313_AGX_G2_HANDOFF_BASE APPLE_AGX_BOARD_HANDOFF_BASE /* NWOAS-J274 PATCH P2 (upstream 0x9fff70000ULL) */
+ #define J313_AGX_G2_HANDOFF_SIZE 0x4000ULL
+ #define J313_AGX_G2_RTKIT_PRIVATE_BASE 0xffffff8000000000ULL
+ #define J313_AGX_G2_RTKIT_PRIVATE_SIZE 0x2000000000ULL
+diff -ruN external/windows-on-m1/drivers/apple-agx/shared/src/apple_agx_config_snapshot.c port-j274/gpu/driver/drivers/apple-agx/shared/src/apple_agx_config_snapshot.c
+--- external/windows-on-m1/drivers/apple-agx/shared/src/apple_agx_config_snapshot.c	2026-11-15 19:39:30
++++ port-j274/gpu/driver/drivers/apple-agx/shared/src/apple_agx_config_snapshot.c	2026-11-15 20:25:22
+@@ -1,4 +1,6 @@
+ #include "apple_agx_config_snapshot.h"
++/* NWOAS-J274 PATCH P4: board-selected gpu-region-base (J313 unchanged). */
++#include "apple_agx_board.h"
+ 
+ #include <string.h>
+ 
+@@ -44,7 +46,7 @@
+   if (candidate.PerfStateCount != 7u || candidate.PerfStateTableCount != 1u ||
+       candidate.BasePstate != 1u || candidate.MaxPstate != 6u ||
+       candidate.PowerSamplePeriodMs != 8u ||
+-      candidate.GpuRegionBase != 0x9fffb8000ULL)
++      candidate.GpuRegionBase != APPLE_AGX_BOARD_GPU_REGION_BASE /* NWOAS-J274 PATCH P4 (upstream 0x9fffb8000ULL) */)
+     return AppleAgxConfigResultGeometry;
+ 
+   for (index = 0u; index < APPLE_AGX_CONFIG_MAX_PERF_STATES; ++index) {
+diff -ruN external/windows-on-m1/drivers/apple-agx/shared/src/apple_agx_regionc.c port-j274/gpu/driver/drivers/apple-agx/shared/src/apple_agx_regionc.c
+--- external/windows-on-m1/drivers/apple-agx/shared/src/apple_agx_regionc.c	2026-11-15 19:39:30
++++ port-j274/gpu/driver/drivers/apple-agx/shared/src/apple_agx_regionc.c	2026-11-15 20:25:22
+@@ -1,4 +1,6 @@
+ #include "apple_agx_regionc.h"
++/* NWOAS-J274 PATCH P4: board-selected gpu-region-base (J313 unchanged). */
++#include "apple_agx_board.h"
+ 
+ #include <string.h>
+ 
+@@ -128,7 +130,7 @@
+   if (snapshot->PerfStateCount != 7u ||
+       snapshot->PerfStateTableCount != 1u || snapshot->BasePstate != 1u ||
+       snapshot->MaxPstate != 6u || snapshot->PowerSamplePeriodMs != 8u ||
+-      snapshot->GpuRegionBase != 0x9fffb8000ULL ||
++      snapshot->GpuRegionBase != APPLE_AGX_BOARD_GPU_REGION_BASE /* NWOAS-J274 PATCH P4 (upstream 0x9fffb8000ULL) */ ||
+       snapshot->ScalarPresence != APPLE_AGX_REGIONC_J313_SCALAR_PRESENCE)
+     return 0u;
+   for (index = 0u; index < 7u; ++index) {
+diff -ruN external/windows-on-m1/drivers/apple-agx/windows/AppleAgx.vcxproj port-j274/gpu/driver/drivers/apple-agx/windows/AppleAgx.vcxproj
+--- external/windows-on-m1/drivers/apple-agx/windows/AppleAgx.vcxproj	2026-11-15 19:39:30
++++ port-j274/gpu/driver/drivers/apple-agx/windows/AppleAgx.vcxproj	2026-11-15 20:25:48
+@@ -26,6 +26,19 @@
+     <TargetVersion>Windows10</TargetVersion>
+   </PropertyGroup>
+   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
++  <PropertyGroup>
++    <!-- NWOAS-J274 PATCH P6: board selection (J313 default = upstream). -->
++    <AppleAgxBoard Condition="'$(AppleAgxBoard)'==''">J313</AppleAgxBoard>
++  </PropertyGroup>
++  <!-- NWOAS-J274 PATCH P6: /p:AppleAgxBoard=J274 selects apple_agx_board.h J274 values. -->
++  <ItemDefinitionGroup Condition="'$(AppleAgxBoard)'=='J274'">
++    <ClCompile>
++      <PreprocessorDefinitions>APPLE_AGX_BOARD_J274=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
++    </ClCompile>
++  </ItemDefinitionGroup>
++  <Target Name="NwoasValidateAppleAgxBoard" BeforeTargets="PrepareForBuild">
++    <Error Condition="'$(AppleAgxBoard)'!='J313' and '$(AppleAgxBoard)'!='J274'" Text="AppleAgxBoard must be J313 or J274 (got '$(AppleAgxBoard)')." />
++  </Target>
+   <ItemDefinitionGroup>
+     <ClCompile>
+       <AdditionalIncludeDirectories>include;..\shared\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>

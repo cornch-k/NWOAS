@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline tests for wifi_probe.py. No serial port, no m1n1 proxy, no hardware.
 
-Run:  python3 -I nwoas_scripts/wifi-s240/test_wifi_probe.py
+Run:  python3 -I -B nwoas_scripts/wifi-s240/test_wifi_probe.py
       (the real-ADT test runs only when `construct` is importable, e.g. with m1n1_windows/.venv-hv)
 """
 import io
@@ -46,7 +46,7 @@ class FakeHW:
 
     def __init__(self, clock, *, pcie_init_rc=0, device_present=True, refclk_ack=True,
                  ids=(wp.WIFI_ID, wp.BT_ID), mem_decode=False, exc_on=None, raise_on=None,
-                 crs_reads=0, link_already_up=False):
+                 crs_reads=0, link_already_up=False, link_stuck_up=False, require_reset_cycle=False):
         self.clock = clock
         self.f = good_facts()
         self.regs = {}
@@ -56,6 +56,12 @@ class FakeHW:
         self.exc_on, self.raise_on = exc_on, raise_on
         self.crs_left = crs_reads
         self.link_already_up = link_already_up
+        self.link_stuck_up = link_stuck_up            # fault: link never goes down once up
+        self.require_reset_cycle = require_reset_cycle  # model: link trains only if PORT_PERST was 0 at REFCLK_EN
+        self.refclk_en_under_reset = False
+        self.was_up = False
+        self.smc_off_seen = False
+        self.fault = None                              # fault hook: fault(op, addr, val) may raise
         self.wifi_powered = False
         self.guard = 0
         self.exc_count = 0
@@ -104,13 +110,19 @@ class FakeHW:
         return self.exc_count
 
     def _link_up(self):
-        if self.link_already_up:      # someone else already powered/trained it
+        if self.link_stuck_up and self.was_up:
             return True
-        p0, g = self.f['port0'], self.regs.get(self.f['gpio'] + 4 * self.f['perst_pin'], 0)
-        return (self.device_present and self.wifi_powered and (g & 0xF) == 0x3
-                and self.regs.get(p0 + wp.PORT_PERST, 0) & 1
-                and self.regs.get(p0 + wp.PORT_REFCLK, 0) & 1
-                and self.regs.get(p0 + wp.PORT_LTSSMCTL, 0) & 1)
+        if self.link_already_up:      # someone else already powered/trained it; our SMC off drops it
+            up = not self.smc_off_seen
+        else:
+            p0, g = self.f['port0'], self.regs.get(self.f['gpio'] + 4 * self.f['perst_pin'], 0)
+            up = bool(self.device_present and self.wifi_powered and (g & 0xF) == 0x3
+                      and self.regs.get(p0 + wp.PORT_PERST, 0) & 1
+                      and self.regs.get(p0 + wp.PORT_REFCLK, 0) & 1
+                      and self.regs.get(p0 + wp.PORT_LTSSMCTL, 0) & 1
+                      and (self.refclk_en_under_reset or not self.require_reset_cycle))
+        self.was_up = self.was_up or up
+        return up
 
     def _ep(self, addr):
         e = self.f['ecam']
@@ -121,6 +133,8 @@ class FakeHW:
     def read32(self, addr):
         self.calls += 1
         self.clock.t += 0.0001
+        if self.fault:
+            self.fault('r', addr, None)
         if self.raise_on and addr == self.raise_on:
             raise wp.PhaseTimeout('fake UART stall')
         f = self.f
@@ -150,8 +164,18 @@ class FakeHW:
         return self.regs.get(addr, 0)
 
     def write32(self, addr, val):
+        if self.fault:
+            self.fault('w', addr, val)
         self.writes.append((addr, val))
         f = self.f
+        prev = self.regs.get(addr, 0)
+        if addr == f['port0'] + wp.PORT_PERST:
+            self.events.append('port perst set' if val & wp.PERST_OFF else 'port perst clear')
+        if addr == f['port0_phy'] + wp.PHY_LANE_CFG and val & wp.REFCLK0REQ and not prev & wp.REFCLK0REQ:
+            self.events.append('refclk0 req')
+        if addr == f['port0'] + wp.PORT_REFCLK and val & wp.REFCLK_EN and not prev & wp.REFCLK_EN:
+            self.events.append('port refclk en')
+            self.refclk_en_under_reset = not (self.regs.get(f['port0'] + wp.PORT_PERST, 0) & wp.PERST_OFF)
         if f['ecam'] <= addr < f['ecam'] + 0x10000000:
             bus, dev, fn, reg = self._ep(addr)
             if bus == 1 and self._link_up():
@@ -180,6 +204,9 @@ class FakeSmc:
     def __init__(self, hw, info=(4, 'ui32', 0xD0), stop_raises=False):
         self.hw, self.info, self.stop_raises = hw, info, stop_raises
         self.written, self.started, self.stopped = [], False, False
+        self.keys = []
+        self.fault = None             # fault hook: fault(op) may raise
+        self.stop_sleep = 0.0         # real seconds to block in stop() (alarm test)
 
     def start(self):
         self.started = True
@@ -191,16 +218,29 @@ class FakeSmc:
         return self.info
 
     def write32(self, key, value):
+        self.keys.append(key)
+        if self.fault:
+            self.fault('write32')
         assert key == 'gP0d'
         self.written.append(value)
         self.hw.events.append(f'smc {value:#x}')
         self.hw.wifi_powered = value == wp.SMC_GPIO_ON
+        self.hw.smc_off_seen = value == wp.SMC_GPIO_OFF
 
     def stop(self):
+        if self.fault:
+            self.fault('stop')
+        if self.stop_sleep:
+            import time as _t
+            _t.sleep(self.stop_sleep)
         if self.stop_raises:
             raise TimeoutError('fake SMC stop stall')
         self.stopped = True
         self.hw.events.append('smc stop')
+
+
+PD_ORDER = ['root_bus_restore', 'perst_gpio_assert', 'perst_off_clear', 'smc_off', 'smc_stop',
+            'link_check', 'port1_snapshot']
 
 
 def opts(**over):
@@ -211,7 +251,7 @@ def opts(**over):
     return o
 
 
-def run_probe(hw=None, facts=None, smc_kw=None, **optkw):
+def run_probe(hw=None, facts=None, smc_kw=None, arm=None, phase_impl=None, **optkw):
     clock = hw.clock if hw else Clock()
     hw = hw or FakeHW(clock)
     smcs = []
@@ -225,6 +265,10 @@ def run_probe(hw=None, facts=None, smc_kw=None, **optkw):
 
     def phase(name, seconds):
         phases.append((name, seconds))
+        if arm:
+            arm(name, hw, smcs)
+        if phase_impl:
+            return phase_impl(name, seconds)
         import contextlib
         return contextlib.nullcontext()
     probe = wp.WifiProbe(hw, facts or good_facts(), factory, opts(**optkw), sleep=clock.sleep,
@@ -283,7 +327,10 @@ class Sequence(unittest.TestCase):
         self.assertLess(clock.t, 5.0)
         self.assertEqual([p[0] for p in phases],
                          ['pcie_init', 'preflight', 'smc-on', 'port0-bringup', 'link-wait',
-                          'config-read', 'power-down'])
+                          'config-read'] + ['power-down:' + s for s in PD_ORDER])
+        self.assertEqual(res['power_down']['required_steps'], PD_ORDER[:-1])
+        self.assertEqual(res['power_down']['errors'], {})
+        self.assertIs(res['power_down']['link_down_after'], True)
         self.assertTrue(all(0 < s <= 30 for _, s in phases))
 
     def test_device_absent_link_down(self):
@@ -398,6 +445,196 @@ class Sequence(unittest.TestCase):
         self.assertTrue(res['power_down']['smc_off_written'])
 
 
+def fault_in_step(target, exc=None):
+    """arm hook: every proxy MMIO access and every SMC call raises while power-down step
+    `target` runs; everything else (including later power-down steps) works normally."""
+    def arm(name, hw, smcs):
+        on = name == f'power-down:{target}'
+
+        def boom(*_):
+            raise (exc or wp.PhaseTimeout)(f'injected fault in {target}')
+        hw.fault = boom if on else None
+        for s in smcs:
+            s.fault = boom if on else None
+    return arm
+
+
+class FixPowerDownIndependent(unittest.TestCase):
+    """REVIEW defect 1: each power-down step runs on its own, with its own error record."""
+
+    def test_gpio_failure_still_turns_smc_off_and_stops(self):
+        res, hw, smcs, _, _ = run_probe(arm=fault_in_step('perst_gpio_assert', RuntimeError))
+        pd = res['power_down']
+        self.assertEqual(pd['steps']['perst_gpio_assert'], 'error')
+        self.assertIn('injected fault', pd['errors']['perst_gpio_assert'])
+        for s in ('perst_off_clear', 'smc_off', 'smc_stop', 'link_check', 'port1_snapshot'):
+            self.assertEqual(pd['steps'][s], 'ok', s)
+        self.assertEqual(smcs[0].written[-1], wp.SMC_GPIO_OFF)
+        self.assertTrue(smcs[0].stopped)
+        self.assertFalse(hw.wifi_powered)
+        self.assertFalse(pd['confirmed'])
+
+    def test_each_step_fails_alone(self):
+        for target in PD_ORDER:
+            with self.subTest(step=target):
+                res, hw, smcs, phases, _ = run_probe(arm=fault_in_step(target))
+                pd = res['power_down']
+                self.assertEqual(list(pd['errors']), [target])
+                self.assertEqual([n for n, _ in phases if n.startswith('power-down:')],
+                                 ['power-down:' + s for s in PD_ORDER], 'every step still attempted')
+                for s in PD_ORDER:
+                    if s != target:
+                        self.assertEqual(pd['steps'][s], 'ok', s)
+                if target == 'port1_snapshot':       # not part of power confirmation -> exit 5 path
+                    self.assertTrue(pd['confirmed'])
+                    self.assertIsNone(pd['port1_unchanged'])
+                else:
+                    self.assertFalse(pd['confirmed'])
+                if target != 'smc_off':
+                    self.assertFalse(hw.wifi_powered)
+                if target != 'smc_stop':
+                    self.assertTrue(smcs[0].stopped)
+
+    def test_step_limits_come_from_table(self):
+        _, _, _, phases, _ = run_probe()
+        for name, sec in phases:
+            if name.startswith('power-down:'):
+                self.assertEqual(sec, wp.POWER_DOWN_STEP_SECONDS[name.split(':', 1)[1]])
+
+    def test_real_alarm_per_step_does_not_starve_next_step(self):
+        # smc.stop() blocks for 3 s with a real SIGALRM limit of 1 s; link check and port-1
+        # snapshot must still run under their own (fresh) alarms.
+        old = dict(wp.POWER_DOWN_STEP_SECONDS)
+        wp.POWER_DOWN_STEP_SECONDS['smc_stop'] = 1
+
+        def arm(name, hw, smcs):
+            if name == 'power-down:smc_stop':
+                smcs[0].stop_sleep = 3.0
+
+        def real_only_for_pd(name, seconds):
+            import contextlib
+            return wp.alarm_phase(name, seconds) if name.startswith('power-down:') else contextlib.nullcontext()
+        try:
+            res, hw, smcs, _, _ = run_probe(arm=arm, phase_impl=real_only_for_pd)
+        finally:
+            wp.POWER_DOWN_STEP_SECONDS.clear()
+            wp.POWER_DOWN_STEP_SECONDS.update(old)
+        pd = res['power_down']
+        self.assertIn('PhaseTimeout', pd['errors']['smc_stop'])
+        self.assertEqual(pd['steps']['link_check'], 'ok')
+        self.assertEqual(pd['steps']['port1_snapshot'], 'ok')
+        self.assertFalse(pd['confirmed'])
+
+
+class FixConfirmation(unittest.TestCase):
+    """REVIEW defect 2: a link that stays up is not a power-down; a changed port 1 is reported."""
+
+    def test_link_stuck_up_is_unconfirmed(self):
+        clock = Clock()
+        res, hw, smcs, _, _ = run_probe(FakeHW(clock, link_stuck_up=True))
+        self.assertEqual(res['verdict'], 'PASS_IDS')
+        self.assertIs(res['power_down']['link_down_after'], False)
+        self.assertEqual(res['power_down']['errors'], {})
+        self.assertFalse(res['power_down']['confirmed'])
+
+    def test_link_check_error_is_unconfirmed(self):
+        res, *_ = run_probe(arm=fault_in_step('link_check'))
+        self.assertIsNone(res['power_down']['link_down_after'])
+        self.assertFalse(res['power_down']['confirmed'])
+
+    def test_port1_changed_is_reported(self):
+        def arm(name, hw, smcs):
+            if name == 'power-down:smc_stop':
+                hw.regs[hw.f['port1'] + wp.PORT_STATUS] ^= 0x10
+        res, *_ = run_probe(arm=arm)
+        self.assertTrue(res['power_down']['confirmed'])
+        self.assertIs(res['power_down']['port1_unchanged'], False)
+
+
+class FixControllerReset(unittest.TestCase):
+    """REVIEW defect 3: PORT_PERST bit 0 is cleared while PERST# is asserted, set after REFCLK."""
+
+    def test_order_matches_cold_bringup(self):
+        res, hw, smcs, _, _ = run_probe()
+        ev = hw.events
+        seq = ['perst assert', 'port perst clear', 'refclk0 req', 'port refclk en', 'port perst set',
+               'perst deassert', 'ltssm start']
+        idx = [ev.index(e) for e in seq]
+        self.assertEqual(idx, sorted(idx), ev)
+        self.assertEqual(res['port0_perst_reg'], {'before': '0x1', 'after_clear': '0x0'})
+
+    def test_link_that_needs_reset_cycle_trains(self):
+        # fault model: link trains only if the controller reset was asserted at REFCLK enable
+        # (which m1n1 pcie_init had already released). Without the fix this gives LINK_DOWN.
+        clock = Clock()
+        res, hw, smcs, _, _ = run_probe(FakeHW(clock, require_reset_cycle=True))
+        self.assertEqual(res['verdict'], 'PASS_IDS')
+        self.assertTrue(hw.refclk_en_under_reset)
+
+
+class FixGp1aNotWritten(unittest.TestCase):
+    """REVIEW defect 4: only gP0d is written; gP1a is documented as an open hypothesis."""
+
+    def test_only_gp0d_written(self):
+        res, hw, smcs, _, _ = run_probe()
+        self.assertEqual(set(smcs[0].keys), {'gP0d'})
+
+    def test_docs_mention_gp1a(self):
+        self.assertIn('gP1a', wp.__doc__)
+        self.assertIn('gP1a', (HERE / 'README.md').read_text())
+
+
+class FixSmcKeyType(unittest.TestCase):
+    """REVIEW defect 6: the SMC key must be a 4-byte ui32/hex_ key."""
+
+    def test_wrong_type_refuses_without_write(self):
+        for info in ((4, 'flt ', 0), (4, 'si32', 0), (4,), None, 'ui32', (2, 'ui16', 0)):
+            with self.subTest(info=info):
+                res, hw, smcs, _, _ = run_probe(smc_kw={'info': info})
+                self.assertTrue(res['verdict'].startswith('REFUSED: SMC key'), res['verdict'])
+                self.assertEqual(smcs[0].written, [])
+                self.assertTrue(smcs[0].stopped)
+                self.assertTrue(res['power_down']['confirmed'])
+                self.assertEqual(hw.writes, [])
+
+    def test_accepted_types(self):
+        for t in wp.SMC_KEY_TYPES:
+            with self.subTest(type=t):
+                res, *_ = run_probe(smc_kw={'info': (4, t, 0xD0)})
+                self.assertEqual(res['verdict'], 'PASS_IDS')
+
+
+class BridgeWindowPrediction(unittest.TestCase):
+    """Wi-Fi root-port window must stay out of guest RAM too (HYPOTHESIS arithmetic only)."""
+
+    def test_fake_sizes(self):
+        res, *_ = run_probe()
+        pr = res['bridge_window_prediction']
+        self.assertTrue(pr['hypothesis'])
+        self.assertEqual(pr['wifi_window_bus'], ['0xc0000000', '0xc08fffff'])
+        self.assertEqual(pr['wifi_window_cpu'], ['0x6c0000000', '0x6c08fffff'])
+        self.assertEqual(pr['wifi_badmemorylist_pfns'], ['0xc0000', '0xc08ff'])
+        self.assertEqual(pr['fl1100_window_bus'], ['0xc0900000', '0xc09fffff'])
+        self.assertTrue(pr['fl1100_moves'])
+
+    def test_small_bars_keep_fl1100(self):
+        fns = {0: {'present': True, 'bars': [{'bar': 0, 'type': 'mem64', 'prefetch': False, 'size': '0x8000'}]},
+               1: {'present': True, 'bars': [{'bar': 0, 'type': 'mem32', 'prefetch': False, 'size': '0x2000'}]}}
+        pr = wp.predict_wifi_window(fns)
+        self.assertFalse(pr['fl1100_moves'])
+        self.assertEqual(pr['wifi_window_bus'], ['0xc0100000', '0xc01fffff'])
+
+    def test_prefetchable_64bit_not_in_low_window(self):
+        fns = {0: {'present': True, 'bars': [{'bar': 0, 'type': 'mem64', 'prefetch': True, 'size': '0x400000'}]}}
+        pr = wp.predict_wifi_window(fns)
+        self.assertIsNone(pr['wifi_window_bus'])
+        self.assertIn('pmem64_note', pr)
+
+    def test_unmeasured(self):
+        res, *_ = run_probe(size_bars=False)
+        self.assertFalse(res['bridge_window_prediction']['available'])
+
+
 class Guards(unittest.TestCase):
     def test_guarded_mmio_blocks_port1(self):
         clock = Clock()
@@ -438,6 +675,8 @@ class Main(unittest.TestCase):
         self.lines = []
 
     def tearDown(self):
+        for d in self.out.glob('run-*'):
+            d.chmod(0o700)
         self.tmp.cleanup()
 
     def _connect(self, hw, smc_kw=None):
@@ -503,6 +742,100 @@ class Main(unittest.TestCase):
         rc = wp.main(['--run', '--out-dir', str(self.out)], runner=self._free, connect=connect,
                      log=self.lines.append)
         self.assertEqual(rc, 3)
+
+    def test_connect_failure_exit_6(self):
+        # REVIEW defect 7: connect failure has its own exit code; no power step was attempted
+        def connect(args):
+            raise OSError('fake UART open failure')
+        rc = wp.main(['--run', '--out-dir', str(self.out)], runner=self._free, connect=connect,
+                     log=self.lines.append)
+        self.assertEqual(rc, wp.EXIT_CONNECT)
+        self.assertTrue(any('No power-on step was attempted' in x for x in self.lines))
+        res = json.loads(next(self.out.glob('run-*/result.json')).read_text())
+        self.assertTrue(res['verdict'].startswith('CONNECT_FAILED'))
+
+    def _run_main(self, hw, phase=None, smc_kw=None, connect_hook=None):
+        connect, st = self._connect(hw, smc_kw)
+        if connect_hook:
+            inner = connect
+
+            def connect(args):
+                connect_hook()
+                return inner(args)
+        return wp.main(['--run', '--out-dir', str(self.out), '--power-settle-ms', '0'], runner=self._free,
+                       connect=connect, phase=phase or self._null_phase, log=self.lines.append)
+
+    def test_link_stuck_up_exit_4(self):
+        rc = self._run_main(FakeHW(Clock(), link_stuck_up=True))
+        self.assertEqual(rc, wp.EXIT_POWER_UNCONFIRMED)
+        self.assertTrue(any('pull mains power' in x for x in self.lines))
+
+    def test_gpio_fault_in_power_down_exit_4(self):
+        hw = FakeHW(Clock())
+        arm = fault_in_step('perst_gpio_assert')
+
+        def phase(name, seconds):
+            arm(name, hw, [])
+            return self._null_phase(name, seconds)
+        rc = self._run_main(hw, phase=phase)
+        self.assertEqual(rc, wp.EXIT_POWER_UNCONFIRMED)
+        self.assertFalse(hw.wifi_powered, 'SMC off still written')
+
+    def test_port1_changed_exit_5(self):
+        hw = FakeHW(Clock())
+
+        def phase(name, seconds):
+            if name == 'power-down:smc_stop':
+                hw.regs[hw.f['port1'] + wp.PORT_STATUS] ^= 0x10
+            return self._null_phase(name, seconds)
+        rc = self._run_main(hw, phase=phase)
+        self.assertEqual(rc, wp.EXIT_PORT1)
+
+    def test_port1_unverified_exit_5(self):
+        hw = FakeHW(Clock())
+        arm = fault_in_step('port1_snapshot')
+
+        def phase(name, seconds):
+            arm(name, hw, [])
+            return self._null_phase(name, seconds)
+        rc = self._run_main(hw, phase=phase)
+        self.assertEqual(rc, wp.EXIT_PORT1)
+
+    def test_same_second_runs_get_separate_dirs(self):
+        # REVIEW defect 5
+        now = __import__('datetime').datetime(2026, 11, 15, 20, 0, 0)
+        a, b = wp.make_run_dir(self.out, now), wp.make_run_dir(self.out, now)
+        self.assertNotEqual(a, b)
+        self.assertTrue(a.name.startswith('run-20261115-200000-'))
+        self.assertEqual(self._run_main(FakeHW(Clock())), 0)
+        self.assertEqual(self._run_main(FakeHW(Clock())), 0)
+        self.assertEqual(len(list(self.out.glob('run-*/result.json'))), 2)
+
+    def test_unwritable_out_dir_refuses_before_connect(self):
+        blocker = self.out / 'not-a-dir'
+        blocker.write_text('x')
+        connect, st = self._connect(FakeHW(Clock()))
+        rc = wp.main(['--run', '--out-dir', str(blocker)], runner=self._free, connect=connect,
+                     log=self.lines.append)
+        self.assertEqual(rc, wp.EXIT_REFUSED)
+        self.assertEqual(st['called'], 0)
+        self.assertTrue(any('nothing was touched' in x for x in self.lines))
+
+    def test_result_write_failure_keeps_result_in_log(self):
+        hw = FakeHW(Clock())
+        self.locked = []
+
+        def lock_run_dir():
+            for d in self.out.glob('run-*'):
+                d.chmod(0o500)
+                self.locked.append(d)
+        rc = self._run_main(hw, connect_hook=lock_run_dir)
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.locked)
+        line = next(x for x in self.lines if x.startswith('RESULT_JSON '))
+        self.assertEqual(json.loads(line[len('RESULT_JSON '):])['verdict'], 'PASS_IDS')
+        for d in self.locked:
+            d.chmod(0o700)
 
     def test_option_bounds(self):
         with self.assertRaises(SystemExit):

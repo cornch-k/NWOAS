@@ -1,0 +1,1840 @@
+{
+  "s223_payload_sha256": "2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7",
+  "s237_payload_sha256": "a1f7cff837d35c380738302f92c586ae55e91635e95f05c72e6fd693985e8466",
+  "bytes": [
+    33669120,
+    33669120
+  ],
+  "regions": [
+    {
+      "region": "guest m1n1 prefix (S215)",
+      "start": "0x0",
+      "end": "0x20c000",
+      "identical": true,
+      "differing_bytes": 0,
+      "first_diff": null,
+      "last_diff": null,
+      "n_ranges_gap64": 0
+    },
+    {
+      "region": "padded J274 DTB (S221)",
+      "start": "0x20c000",
+      "end": "0x21c000",
+      "identical": true,
+      "differing_bytes": 0,
+      "first_diff": null,
+      "last_diff": null,
+      "n_ranges_gap64": 0
+    },
+    {
+      "region": "Project Mu FD",
+      "start": "0x21c000",
+      "end": "0x1fa4000",
+      "identical": false,
+      "differing_bytes": 1094460,
+      "first_diff": "0x225178",
+      "last_diff": "0x34a3f2",
+      "n_ranges_gap64": 31
+    },
+    {
+      "region": "0xff FD tail (S223)",
+      "start": "0x1fa4000",
+      "end": "0x201c000",
+      "identical": true,
+      "differing_bytes": 0,
+      "first_diff": null,
+      "last_diff": null,
+      "n_ranges_gap64": 0
+    }
+  ],
+  "repro_payload_vs_s223": {
+    "sha256": "326ca1cf56b3a540d6411cb8419b89841f53355bf310b163a5f411f617402507",
+    "identical": false
+  },
+  "modules_s216fd_vs_repro": {
+    "only_in_a": [],
+    "only_in_b": [],
+    "leaves": 241,
+    "raw_changed": [
+      {
+        "item": "FV@8000/{fa8e7979-a845-4378-b7f8-ceede175b1e9}/TE@154",
+        "ui": "",
+        "a_len": 57000,
+        "b_len": 57000
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{d6a2cb7f-6a18-4e2f-b43b-9920a733700a}/PE32@0",
+        "ui": "DxeCore",
+        "a_len": 204800,
+        "b_len": 204800
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{80cf7257-87ab-47f9-a3fe-d50b76d89541}/PE32@104",
+        "ui": "PcdDxe",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b8d9777e-d72a-451f-9bdb-bafb52a68415}/PE32@18",
+        "ui": "ArmCpuDxe",
+        "a_len": 57344,
+        "b_len": 57344
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b601f8c4-43b7-4784-95b1-f4226cb40cee}/PE32@18",
+        "ui": "RuntimeDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{f80697e9-7fd6-4665-8646-88e33ef71dfc}/PE32@18",
+        "ui": "SecurityStubDxe",
+        "a_len": 45056,
+        "b_len": 45056
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{42857f0a-13f2-4b21-8a23-53d3f714b840}/PE32@3c",
+        "ui": "CapsuleRuntimeDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{fcabe6a7-7953-4a84-b7ec-d29e89b62e87}/PE32@18",
+        "ui": "EmbeddedMonotonicCounter",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{4b28e4c7-ff36-4e10-93cf-a82159e777c5}/PE32@18",
+        "ui": "ResetSystemRuntimeDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b336f62d-4135-4a55-ae4e-4971bbf0885d}/PE32@28",
+        "ui": "RealTimeClock",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{4c6e0267-c77d-410d-8100-1495911a989d}/PE32@18",
+        "ui": "MetronomeDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{f7b773c7-660a-4da6-b641-75e9ee06bd41}/PE32@18",
+        "ui": "AppleDartIoMmuDxe",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{e04c6800-14de-4b47-8fb7-100160b25752}/PE32@18",
+        "ui": "NwoasHideHighRamDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{cbd2e4d5-7068-4ff5-b462-9822b4ad8d60}/PE32@18",
+        "ui": "VariableRuntimeDxe",
+        "a_len": 65536,
+        "b_len": 65536
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{51ccf399-4fdf-4e55-a45b-e123f84d456a}/PE32@0",
+        "ui": "ConPlatformDxe",
+        "a_len": 32768,
+        "b_len": 32768
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{408edcec-cf6d-477c-a5a8-b4844e3de281}/PE32@0",
+        "ui": "ConSplitterDxe",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{cccb0c28-4b24-11d5-9a5a-0090273fc14d}/PE32@0",
+        "ui": "GraphicsConsoleDxe",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{9e863906-a40f-4875-977f-5b93ff237fc6}/PE32@0",
+        "ui": "TerminalDxe",
+        "a_len": 45056,
+        "b_len": 45056
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{49ea041e-6752-42ca-b0b1-7344fe2546b7}/PE32@28",
+        "ui": "ArmTimerDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{de371f7c-dec4-4d21-adf1-593abcc15882}/PE32@28",
+        "ui": "ArmGicDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{f099d67f-71ae-4c36-b2a3-dceb0eb2b7d8}/PE32@28",
+        "ui": "WatchdogTimer",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{dcfd1e6d-788d-4ffc-8e1b-ca2f75651a92}/PE32@28",
+        "ui": "SimpleFbDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{7e3a1f09-d82b-47c5-bb0e-a6f914253d8c}/PE32@3c",
+        "ui": "FbDumpDxe",
+        "a_len": 185398,
+        "b_len": 185398
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{168d1a6e-f4a5-448a-9e95-795661bb3067}/PE32@18",
+        "ui": "ArmPciCpuIo2Dxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{128fb770-5e79-4176-9e51-9bb268a17dd1}/PE32@4c",
+        "ui": "PciHostBridgeDxe",
+        "a_len": 65536,
+        "b_len": 65536
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{93b80004-9fb3-11d4-9a3a-0090273fc14d}/PE32@0",
+        "ui": "PciBusDxe",
+        "a_len": 81920,
+        "b_len": 81920
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{71fd84cd-353b-464d-b7a4-6ea7b96995cb}/PE32@0",
+        "ui": "NonDiscoverablePciDeviceDxe",
+        "a_len": 32768,
+        "b_len": 32768
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{5be3bdf4-53cf-46a3-a6a9-73c34a6e5ee3}/PE32@0",
+        "ui": "NvmExpressDxe",
+        "a_len": 57344,
+        "b_len": 57344
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{88079b18-b42b-44aa-a6f2-b83911075e89}/PE32@dc",
+        "ui": "VirtualKeyboardDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{907125c0-a5f1-11e3-a3fe-a3198b49350c}/PE32@0",
+        "ui": "FvSimpleFileSystem",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{15d3c0d1-346b-462d-a40c-ecc01f8299fa}/PE32@18",
+        "ui": "AppleEmbeddedGpioControllerDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{1d0fc441-75eb-4464-8f11-beab628581d1}/PE32@18",
+        "ui": "AppleSiliconPciPlatformDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{28ea026e-d47b-4d6e-a992-eae5df6aa638}/PE32@0",
+        "ui": "AppleBootTimeEmbeddedFirmwareHelperDxe",
+        "a_len": 131072,
+        "b_len": 131072
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{a7a8b3f7-b8bb-42ff-a5d1-07ce43734461}/PE32@18",
+        "ui": "AppleUsbTypeCBringupDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{2fb92efa-2ee0-4bae-9eb6-7464125e1ef7}/PE32@0",
+        "ui": "UhciDxe",
+        "a_len": 45056,
+        "b_len": 45056
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{bdfe430e-8f2a-4db0-9991-6f856594777e}/PE32@0",
+        "ui": "EhciDxe",
+        "a_len": 49152,
+        "b_len": 49152
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b7f50e91-a759-412c-ade4-dcd03e7f7c28}/PE32@0",
+        "ui": "XhciDxe",
+        "a_len": 69632,
+        "b_len": 69632
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{2d2e62cf-9ecf-43b7-8219-94e7fc713dfe}/PE32@0",
+        "ui": "UsbKbDxe",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{4ea43463-747c-46eb-97fb-b0e5c5f05306}/PE32@0",
+        "ui": "UsbMouseAbsolutePointerDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{240612b7-a063-11d4-9a3a-0090273fc14d}/PE32@0",
+        "ui": "UsbBusDxe",
+        "a_len": 53248,
+        "b_len": 53248
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{9fb4b4a7-42c0-4bcd-8540-9bcc6711f83e}/PE32@0",
+        "ui": "UsbMassStorageDxe",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{c5d0e6b2-a841-4c67-a0e3-92354de07e51}/PE32@28",
+        "ui": "SerialStatusCodeHandlerDxe",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{8c7db881-da76-4486-8654-8152ee3470a3}/PE32@3c",
+        "ui": "MuVarPolicyFoundationDxe",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{6b38f7b4-ad98-40e9-9093-aca2b5a253c4}/PE32@0",
+        "ui": "DiskIoDxe",
+        "a_len": 32768,
+        "b_len": 32768
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{1fa1f39e-feff-4aae-bd7b-38a070a3b609}/PE32@0",
+        "ui": "PartitionDxe",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{961578fe-b6b7-44c3-af35-6bc705cd2b1f}/PE32@0",
+        "ui": "Fat",
+        "a_len": 53248,
+        "b_len": 53248
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{cd3bafb6-50fb-4fe8-8e4e-ab74d2c1a600}/PE32@0",
+        "ui": "EnglishDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{28a03ff4-12b3-4305-a417-bb1a4f94081e}/PE32@94",
+        "ui": "RamDiskDxe",
+        "a_len": 57344,
+        "b_len": 57344
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{69b5dbd8-92c0-492c-859f-7256d5100d2a}/PE32@60",
+        "ui": "BootRamdiskHelperDxe",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{348c4d62-bfbd-4882-9ece-c80bb1c4783b}/PE32@18",
+        "ui": "HiiDatabase",
+        "a_len": 118784,
+        "b_len": 118784
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{9622e42c-8e38-4a08-9e8f-54f784652f6b}/PE32@18",
+        "ui": "AcpiTableDxe",
+        "a_len": 45056,
+        "b_len": 45056
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{cb933912-df8f-4305-b1f9-7b44fa11395c}/PE32@28",
+        "ui": "AcpiPlatform",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b8e62775-bb0a-43f0-a843-5be8b14f8ccd}/PE32@0",
+        "ui": "BootGraphicsResourceTableDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{58018fb9-0e53-429a-add1-87fed52c8559}/PE32@28",
+        "ui": "SmBiosTableDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{f9d88642-0737-49bc-81b5-6889cd57d9ea}/PE32@18",
+        "ui": "SmbiosDxe",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{7c04a583-9e3e-4f1c-ad65-e05268d0b4d1}/PE32@2c",
+        "ui": "Shell",
+        "a_len": 966656,
+        "b_len": 966656
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{79e4a61c-ed73-4312-94fe-e3e7563362a9}/PE32@18",
+        "ui": "PrintDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{9b680fce-ad6b-4f3a-b60b-f59899003443}/PE32@8",
+        "ui": "DevicePathDxe",
+        "a_len": 65536,
+        "b_len": 65536
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{e660ea85-058e-4b55-a54b-f02f83a24707}/PE32@7c",
+        "ui": "DisplayEngine",
+        "a_len": 90112,
+        "b_len": 90112
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{ebf342fe-b1d3-4ef8-957c-8048606ff671}/PE32@4c",
+        "ui": "SetupBrowser",
+        "a_len": 106496,
+        "b_len": 106496
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{ebf8ed7c-0dd1-4787-84f1-f48d537dcacf}/PE32@ac",
+        "ui": "DriverHealthManagerDxe",
+        "a_len": 53248,
+        "b_len": 53248
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{6d33944a-ec75-4855-a54d-809c75241f6c}/PE32@60",
+        "ui": "BdsDxe",
+        "a_len": 380928,
+        "b_len": 380928
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{1dd0d079-406a-4b5b-af39-62d8f110f835}/PE32@18",
+        "ui": "NullAuthManager",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{0ccf27cf-e68d-4279-96b0-8a4e1cdff10c}/PE32@70",
+        "ui": "SettingsManagerDxe",
+        "a_len": 122880,
+        "b_len": 122880
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{16a5dd36-4c29-4e85-b0b9-c05883753de7}/PE32@18",
+        "ui": "MsUiThemeProtocol",
+        "a_len": 73760,
+        "b_len": 73760
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{c09e4ce4-ae29-4340-b941-078871bd89d1}/PE32@a0",
+        "ui": "DisplayEngine",
+        "a_len": 73728,
+        "b_len": 73728
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{8d865e53-bd58-4e4c-8eca-ee96b620f40f}/PE32@a4",
+        "ui": "BootMenu",
+        "a_len": 339968,
+        "b_len": 339968
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{4042708a-0f2d-4823-ac60-0d77b3111889}/PE32@4c",
+        "ui": "FrontPage",
+        "a_len": 139264,
+        "b_len": 139264
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{50670071-478f-4be7-ad13-8754f379c62f}/PE32@20",
+        "ui": "MsBootPolicy",
+        "a_len": 352256,
+        "b_len": 352256
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{e622443c-284e-4b47-a984-fd66b482dac0}/PE32@4c",
+        "ui": "BootManagerPolicyDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{3e197e9c-d8dc-42d3-89ce-b04fa9833756}/PE32@0",
+        "ui": "RegularExpressionDxe",
+        "a_len": 413696,
+        "b_len": 413696
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{07f1b357-4270-4122-a32a-7eab3c013bac}/PE32@b8",
+        "ui": "DfciManager",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{8e747032-7d55-4d95-9a84-77f83370b3a4}/PE32@10c",
+        "ui": "SimpleWindowManagerDxe",
+        "a_len": 57344,
+        "b_len": 57344
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{917c56f2-2fe3-498f-affb-87ac0e19fe5e}/PE32@f0",
+        "ui": "OnScreenKeyboardDxe",
+        "a_len": 114688,
+        "b_len": 114688
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{328ac7d1-6d2b-4f6b-8a2d-ea6302a62f60}/PE32@18",
+        "ui": "HwErrorBert",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{995f045b-0265-46a4-8d21-001211a24a4f}/PE32@28",
+        "ui": "MsWheaReportDxe",
+        "a_len": 32768,
+        "b_len": 32768
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{af8f0389-6ba2-47d3-9e55-80b3dd9b8a98}/PE32@80",
+        "ui": "HwhMenu",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{d118a4c4-deb6-4b7a-b3eb-e071148c1c6c}/PE32@18",
+        "ui": "AcpiRgrt",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{c57ad6b7-0515-40a8-9d21-551652854e37}/PE32@0",
+        "ui": "EdkShell",
+        "a_len": 966656,
+        "b_len": 966656
+      }
+    ],
+    "changed_after_rsds_mask": []
+  },
+  "modules_repro_vs_s237": {
+    "only_in_a": [],
+    "only_in_b": [],
+    "leaves": 241,
+    "raw_changed": [
+      {
+        "item": "FV@8000/{fa8e7979-a845-4378-b7f8-ceede175b1e9}/TE@154",
+        "ui": "",
+        "a_len": 57000,
+        "b_len": 57000
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{d6a2cb7f-6a18-4e2f-b43b-9920a733700a}/PE32@0",
+        "ui": "DxeCore",
+        "a_len": 204800,
+        "b_len": 204800
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{80cf7257-87ab-47f9-a3fe-d50b76d89541}/PE32@104",
+        "ui": "PcdDxe",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b8d9777e-d72a-451f-9bdb-bafb52a68415}/PE32@18",
+        "ui": "ArmCpuDxe",
+        "a_len": 57344,
+        "b_len": 57344
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b601f8c4-43b7-4784-95b1-f4226cb40cee}/PE32@18",
+        "ui": "RuntimeDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{f80697e9-7fd6-4665-8646-88e33ef71dfc}/PE32@18",
+        "ui": "SecurityStubDxe",
+        "a_len": 45056,
+        "b_len": 45056
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{42857f0a-13f2-4b21-8a23-53d3f714b840}/PE32@3c",
+        "ui": "CapsuleRuntimeDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{fcabe6a7-7953-4a84-b7ec-d29e89b62e87}/PE32@18",
+        "ui": "EmbeddedMonotonicCounter",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{4b28e4c7-ff36-4e10-93cf-a82159e777c5}/PE32@18",
+        "ui": "ResetSystemRuntimeDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b336f62d-4135-4a55-ae4e-4971bbf0885d}/PE32@28",
+        "ui": "RealTimeClock",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{4c6e0267-c77d-410d-8100-1495911a989d}/PE32@18",
+        "ui": "MetronomeDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{f7b773c7-660a-4da6-b641-75e9ee06bd41}/PE32@18",
+        "ui": "AppleDartIoMmuDxe",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{e04c6800-14de-4b47-8fb7-100160b25752}/PE32@18",
+        "ui": "NwoasHideHighRamDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{cbd2e4d5-7068-4ff5-b462-9822b4ad8d60}/PE32@18",
+        "ui": "VariableRuntimeDxe",
+        "a_len": 65536,
+        "b_len": 65536
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{51ccf399-4fdf-4e55-a45b-e123f84d456a}/PE32@0",
+        "ui": "ConPlatformDxe",
+        "a_len": 32768,
+        "b_len": 32768
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{408edcec-cf6d-477c-a5a8-b4844e3de281}/PE32@0",
+        "ui": "ConSplitterDxe",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{cccb0c28-4b24-11d5-9a5a-0090273fc14d}/PE32@0",
+        "ui": "GraphicsConsoleDxe",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{9e863906-a40f-4875-977f-5b93ff237fc6}/PE32@0",
+        "ui": "TerminalDxe",
+        "a_len": 45056,
+        "b_len": 45056
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{49ea041e-6752-42ca-b0b1-7344fe2546b7}/PE32@28",
+        "ui": "ArmTimerDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{de371f7c-dec4-4d21-adf1-593abcc15882}/PE32@28",
+        "ui": "ArmGicDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{f099d67f-71ae-4c36-b2a3-dceb0eb2b7d8}/PE32@28",
+        "ui": "WatchdogTimer",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{dcfd1e6d-788d-4ffc-8e1b-ca2f75651a92}/PE32@28",
+        "ui": "SimpleFbDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{7e3a1f09-d82b-47c5-bb0e-a6f914253d8c}/PE32@3c",
+        "ui": "FbDumpDxe",
+        "a_len": 185398,
+        "b_len": 185398
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{168d1a6e-f4a5-448a-9e95-795661bb3067}/PE32@18",
+        "ui": "ArmPciCpuIo2Dxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{128fb770-5e79-4176-9e51-9bb268a17dd1}/PE32@4c",
+        "ui": "PciHostBridgeDxe",
+        "a_len": 65536,
+        "b_len": 65536
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{93b80004-9fb3-11d4-9a3a-0090273fc14d}/PE32@0",
+        "ui": "PciBusDxe",
+        "a_len": 81920,
+        "b_len": 81920
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{71fd84cd-353b-464d-b7a4-6ea7b96995cb}/PE32@0",
+        "ui": "NonDiscoverablePciDeviceDxe",
+        "a_len": 32768,
+        "b_len": 32768
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{5be3bdf4-53cf-46a3-a6a9-73c34a6e5ee3}/PE32@0",
+        "ui": "NvmExpressDxe",
+        "a_len": 57344,
+        "b_len": 57344
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{88079b18-b42b-44aa-a6f2-b83911075e89}/PE32@dc",
+        "ui": "VirtualKeyboardDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{907125c0-a5f1-11e3-a3fe-a3198b49350c}/PE32@0",
+        "ui": "FvSimpleFileSystem",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{15d3c0d1-346b-462d-a40c-ecc01f8299fa}/PE32@18",
+        "ui": "AppleEmbeddedGpioControllerDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{1d0fc441-75eb-4464-8f11-beab628581d1}/PE32@18",
+        "ui": "AppleSiliconPciPlatformDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{28ea026e-d47b-4d6e-a992-eae5df6aa638}/PE32@0",
+        "ui": "AppleBootTimeEmbeddedFirmwareHelperDxe",
+        "a_len": 131072,
+        "b_len": 131072
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{a7a8b3f7-b8bb-42ff-a5d1-07ce43734461}/PE32@18",
+        "ui": "AppleUsbTypeCBringupDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{2fb92efa-2ee0-4bae-9eb6-7464125e1ef7}/PE32@0",
+        "ui": "UhciDxe",
+        "a_len": 45056,
+        "b_len": 45056
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{bdfe430e-8f2a-4db0-9991-6f856594777e}/PE32@0",
+        "ui": "EhciDxe",
+        "a_len": 49152,
+        "b_len": 49152
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b7f50e91-a759-412c-ade4-dcd03e7f7c28}/PE32@0",
+        "ui": "XhciDxe",
+        "a_len": 69632,
+        "b_len": 69632
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{2d2e62cf-9ecf-43b7-8219-94e7fc713dfe}/PE32@0",
+        "ui": "UsbKbDxe",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{4ea43463-747c-46eb-97fb-b0e5c5f05306}/PE32@0",
+        "ui": "UsbMouseAbsolutePointerDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{240612b7-a063-11d4-9a3a-0090273fc14d}/PE32@0",
+        "ui": "UsbBusDxe",
+        "a_len": 53248,
+        "b_len": 53248
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{9fb4b4a7-42c0-4bcd-8540-9bcc6711f83e}/PE32@0",
+        "ui": "UsbMassStorageDxe",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{c5d0e6b2-a841-4c67-a0e3-92354de07e51}/PE32@28",
+        "ui": "SerialStatusCodeHandlerDxe",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{8c7db881-da76-4486-8654-8152ee3470a3}/PE32@3c",
+        "ui": "MuVarPolicyFoundationDxe",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{6b38f7b4-ad98-40e9-9093-aca2b5a253c4}/PE32@0",
+        "ui": "DiskIoDxe",
+        "a_len": 32768,
+        "b_len": 32768
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{1fa1f39e-feff-4aae-bd7b-38a070a3b609}/PE32@0",
+        "ui": "PartitionDxe",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{961578fe-b6b7-44c3-af35-6bc705cd2b1f}/PE32@0",
+        "ui": "Fat",
+        "a_len": 53248,
+        "b_len": 53248
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{cd3bafb6-50fb-4fe8-8e4e-ab74d2c1a600}/PE32@0",
+        "ui": "EnglishDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{28a03ff4-12b3-4305-a417-bb1a4f94081e}/PE32@94",
+        "ui": "RamDiskDxe",
+        "a_len": 57344,
+        "b_len": 57344
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{69b5dbd8-92c0-492c-859f-7256d5100d2a}/PE32@60",
+        "ui": "BootRamdiskHelperDxe",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{348c4d62-bfbd-4882-9ece-c80bb1c4783b}/PE32@18",
+        "ui": "HiiDatabase",
+        "a_len": 118784,
+        "b_len": 118784
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{9622e42c-8e38-4a08-9e8f-54f784652f6b}/PE32@18",
+        "ui": "AcpiTableDxe",
+        "a_len": 45056,
+        "b_len": 45056
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{cb933912-df8f-4305-b1f9-7b44fa11395c}/PE32@28",
+        "ui": "AcpiPlatform",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b8e62775-bb0a-43f0-a843-5be8b14f8ccd}/PE32@0",
+        "ui": "BootGraphicsResourceTableDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{58018fb9-0e53-429a-add1-87fed52c8559}/PE32@28",
+        "ui": "SmBiosTableDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{f9d88642-0737-49bc-81b5-6889cd57d9ea}/PE32@18",
+        "ui": "SmbiosDxe",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{7c04a583-9e3e-4f1c-ad65-e05268d0b4d1}/PE32@2c",
+        "ui": "Shell",
+        "a_len": 966656,
+        "b_len": 966656
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{79e4a61c-ed73-4312-94fe-e3e7563362a9}/PE32@18",
+        "ui": "PrintDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{9b680fce-ad6b-4f3a-b60b-f59899003443}/PE32@8",
+        "ui": "DevicePathDxe",
+        "a_len": 65536,
+        "b_len": 65536
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{e660ea85-058e-4b55-a54b-f02f83a24707}/PE32@7c",
+        "ui": "DisplayEngine",
+        "a_len": 90112,
+        "b_len": 90112
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{ebf342fe-b1d3-4ef8-957c-8048606ff671}/PE32@4c",
+        "ui": "SetupBrowser",
+        "a_len": 106496,
+        "b_len": 106496
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{ebf8ed7c-0dd1-4787-84f1-f48d537dcacf}/PE32@ac",
+        "ui": "DriverHealthManagerDxe",
+        "a_len": 53248,
+        "b_len": 53248
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{6d33944a-ec75-4855-a54d-809c75241f6c}/PE32@60",
+        "ui": "BdsDxe",
+        "a_len": 380928,
+        "b_len": 380928
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{1dd0d079-406a-4b5b-af39-62d8f110f835}/PE32@18",
+        "ui": "NullAuthManager",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{0ccf27cf-e68d-4279-96b0-8a4e1cdff10c}/PE32@70",
+        "ui": "SettingsManagerDxe",
+        "a_len": 122880,
+        "b_len": 122880
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{16a5dd36-4c29-4e85-b0b9-c05883753de7}/PE32@18",
+        "ui": "MsUiThemeProtocol",
+        "a_len": 73760,
+        "b_len": 73760
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{c09e4ce4-ae29-4340-b941-078871bd89d1}/PE32@a0",
+        "ui": "DisplayEngine",
+        "a_len": 73728,
+        "b_len": 73728
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{8d865e53-bd58-4e4c-8eca-ee96b620f40f}/PE32@a4",
+        "ui": "BootMenu",
+        "a_len": 339968,
+        "b_len": 339968
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{4042708a-0f2d-4823-ac60-0d77b3111889}/PE32@4c",
+        "ui": "FrontPage",
+        "a_len": 139264,
+        "b_len": 139264
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{50670071-478f-4be7-ad13-8754f379c62f}/PE32@20",
+        "ui": "MsBootPolicy",
+        "a_len": 352256,
+        "b_len": 352256
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{e622443c-284e-4b47-a984-fd66b482dac0}/PE32@4c",
+        "ui": "BootManagerPolicyDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{3e197e9c-d8dc-42d3-89ce-b04fa9833756}/PE32@0",
+        "ui": "RegularExpressionDxe",
+        "a_len": 413696,
+        "b_len": 413696
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{07f1b357-4270-4122-a32a-7eab3c013bac}/PE32@b8",
+        "ui": "DfciManager",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{8e747032-7d55-4d95-9a84-77f83370b3a4}/PE32@10c",
+        "ui": "SimpleWindowManagerDxe",
+        "a_len": 57344,
+        "b_len": 57344
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{917c56f2-2fe3-498f-affb-87ac0e19fe5e}/PE32@f0",
+        "ui": "OnScreenKeyboardDxe",
+        "a_len": 114688,
+        "b_len": 114688
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{328ac7d1-6d2b-4f6b-8a2d-ea6302a62f60}/PE32@18",
+        "ui": "HwErrorBert",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{995f045b-0265-46a4-8d21-001211a24a4f}/PE32@28",
+        "ui": "MsWheaReportDxe",
+        "a_len": 32768,
+        "b_len": 32768
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{af8f0389-6ba2-47d3-9e55-80b3dd9b8a98}/PE32@80",
+        "ui": "HwhMenu",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{d118a4c4-deb6-4b7a-b3eb-e071148c1c6c}/PE32@18",
+        "ui": "AcpiRgrt",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{c57ad6b7-0515-40a8-9d21-551652854e37}/PE32@0",
+        "ui": "EdkShell",
+        "a_len": 966656,
+        "b_len": 966656
+      }
+    ],
+    "changed_after_rsds_mask": [
+      {
+        "item": "FV@8000/{fa8e7979-a845-4378-b7f8-ceede175b1e9}/TE@154",
+        "ui": "",
+        "a_len": 57000,
+        "b_len": 57000,
+        "ranges_in_image": [
+          [
+            "0x20",
+            "0x22"
+          ],
+          [
+            "0x58",
+            "0x5a"
+          ],
+          [
+            "0xf6c",
+            "0xf6d"
+          ],
+          [
+            "0xfbc",
+            "0xfc9"
+          ],
+          [
+            "0xfe0",
+            "0xfe1"
+          ],
+          [
+            "0x1039",
+            "0x1049"
+          ],
+          [
+            "0x1059",
+            "0x1067"
+          ],
+          [
+            "0x1084",
+            "0x1085"
+          ],
+          [
+            "0x10dd",
+            "0x10ed"
+          ],
+          [
+            "0x1101",
+            "0x1111"
+          ],
+          [
+            "0x1129",
+            "0x1139"
+          ],
+          [
+            "0x124d",
+            "0x125d"
+          ],
+          [
+            "0x128d",
+            "0x128f"
+          ],
+          [
+            "0x1409",
+            "0x1417"
+          ],
+          [
+            "0x143d",
+            "0x143f"
+          ],
+          [
+            "0x1595",
+            "0x159f"
+          ],
+          [
+            "0x16b1",
+            "0x16b3"
+          ],
+          [
+            "0x16e1",
+            "0x16e3"
+          ],
+          [
+            "0x16f5",
+            "0x16f7"
+          ],
+          [
+            "0x176d",
+            "0x176f"
+          ],
+          [
+            "0x1789",
+            "0x178b"
+          ],
+          [
+            "0x17bc",
+            "0x17d5"
+          ],
+          [
+            "0x1811",
+            "0x1813"
+          ],
+          [
+            "0x19e5",
+            "0x19e7"
+          ],
+          [
+            "0x1a29",
+            "0x1a2b"
+          ],
+          [
+            "0x1a55",
+            "0x1a57"
+          ],
+          [
+            "0x1a81",
+            "0x1a83"
+          ],
+          [
+            "0x1a95",
+            "0x1a97"
+          ],
+          [
+            "0x1ab9",
+            "0x1abb"
+          ],
+          [
+            "0x1add",
+            "0x1ae7"
+          ],
+          [
+            "0x1b08",
+            "0x1b09"
+          ],
+          [
+            "0x1b58",
+            "0x1b59"
+          ],
+          [
+            "0x1b8c",
+            "0x1b8d"
+          ],
+          [
+            "0x1bb0",
+            "0x1bb1"
+          ],
+          [
+            "0x1bc4",
+            "0x1bc5"
+          ],
+          [
+            "0x1be0",
+            "0x1be1"
+          ],
+          [
+            "0x1c04",
+            "0x1c05"
+          ],
+          [
+            "0x1c38",
+            "0x1c45"
+          ],
+          [
+            "0x1c58",
+            "0x1c59"
+          ],
+          [
+            "0x1c78",
+            "0x1c79"
+          ]
+        ],
+        "n_ranges": 106
+      }
+    ]
+  },
+  "modules_s216fd_vs_s237": {
+    "only_in_a": [],
+    "only_in_b": [],
+    "leaves": 241,
+    "raw_changed": [
+      {
+        "item": "FV@8000/{fa8e7979-a845-4378-b7f8-ceede175b1e9}/TE@154",
+        "ui": "",
+        "a_len": 57000,
+        "b_len": 57000
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{d6a2cb7f-6a18-4e2f-b43b-9920a733700a}/PE32@0",
+        "ui": "DxeCore",
+        "a_len": 204800,
+        "b_len": 204800
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{80cf7257-87ab-47f9-a3fe-d50b76d89541}/PE32@104",
+        "ui": "PcdDxe",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b8d9777e-d72a-451f-9bdb-bafb52a68415}/PE32@18",
+        "ui": "ArmCpuDxe",
+        "a_len": 57344,
+        "b_len": 57344
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b601f8c4-43b7-4784-95b1-f4226cb40cee}/PE32@18",
+        "ui": "RuntimeDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{f80697e9-7fd6-4665-8646-88e33ef71dfc}/PE32@18",
+        "ui": "SecurityStubDxe",
+        "a_len": 45056,
+        "b_len": 45056
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{42857f0a-13f2-4b21-8a23-53d3f714b840}/PE32@3c",
+        "ui": "CapsuleRuntimeDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{fcabe6a7-7953-4a84-b7ec-d29e89b62e87}/PE32@18",
+        "ui": "EmbeddedMonotonicCounter",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{4b28e4c7-ff36-4e10-93cf-a82159e777c5}/PE32@18",
+        "ui": "ResetSystemRuntimeDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b336f62d-4135-4a55-ae4e-4971bbf0885d}/PE32@28",
+        "ui": "RealTimeClock",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{4c6e0267-c77d-410d-8100-1495911a989d}/PE32@18",
+        "ui": "MetronomeDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{f7b773c7-660a-4da6-b641-75e9ee06bd41}/PE32@18",
+        "ui": "AppleDartIoMmuDxe",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{e04c6800-14de-4b47-8fb7-100160b25752}/PE32@18",
+        "ui": "NwoasHideHighRamDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{cbd2e4d5-7068-4ff5-b462-9822b4ad8d60}/PE32@18",
+        "ui": "VariableRuntimeDxe",
+        "a_len": 65536,
+        "b_len": 65536
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{51ccf399-4fdf-4e55-a45b-e123f84d456a}/PE32@0",
+        "ui": "ConPlatformDxe",
+        "a_len": 32768,
+        "b_len": 32768
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{408edcec-cf6d-477c-a5a8-b4844e3de281}/PE32@0",
+        "ui": "ConSplitterDxe",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{cccb0c28-4b24-11d5-9a5a-0090273fc14d}/PE32@0",
+        "ui": "GraphicsConsoleDxe",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{9e863906-a40f-4875-977f-5b93ff237fc6}/PE32@0",
+        "ui": "TerminalDxe",
+        "a_len": 45056,
+        "b_len": 45056
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{49ea041e-6752-42ca-b0b1-7344fe2546b7}/PE32@28",
+        "ui": "ArmTimerDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{de371f7c-dec4-4d21-adf1-593abcc15882}/PE32@28",
+        "ui": "ArmGicDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{f099d67f-71ae-4c36-b2a3-dceb0eb2b7d8}/PE32@28",
+        "ui": "WatchdogTimer",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{dcfd1e6d-788d-4ffc-8e1b-ca2f75651a92}/PE32@28",
+        "ui": "SimpleFbDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{7e3a1f09-d82b-47c5-bb0e-a6f914253d8c}/PE32@3c",
+        "ui": "FbDumpDxe",
+        "a_len": 185398,
+        "b_len": 185398
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{168d1a6e-f4a5-448a-9e95-795661bb3067}/PE32@18",
+        "ui": "ArmPciCpuIo2Dxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{128fb770-5e79-4176-9e51-9bb268a17dd1}/PE32@4c",
+        "ui": "PciHostBridgeDxe",
+        "a_len": 65536,
+        "b_len": 65536
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{93b80004-9fb3-11d4-9a3a-0090273fc14d}/PE32@0",
+        "ui": "PciBusDxe",
+        "a_len": 81920,
+        "b_len": 81920
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{71fd84cd-353b-464d-b7a4-6ea7b96995cb}/PE32@0",
+        "ui": "NonDiscoverablePciDeviceDxe",
+        "a_len": 32768,
+        "b_len": 32768
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{5be3bdf4-53cf-46a3-a6a9-73c34a6e5ee3}/PE32@0",
+        "ui": "NvmExpressDxe",
+        "a_len": 57344,
+        "b_len": 57344
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{88079b18-b42b-44aa-a6f2-b83911075e89}/PE32@dc",
+        "ui": "VirtualKeyboardDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{907125c0-a5f1-11e3-a3fe-a3198b49350c}/PE32@0",
+        "ui": "FvSimpleFileSystem",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{15d3c0d1-346b-462d-a40c-ecc01f8299fa}/PE32@18",
+        "ui": "AppleEmbeddedGpioControllerDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{1d0fc441-75eb-4464-8f11-beab628581d1}/PE32@18",
+        "ui": "AppleSiliconPciPlatformDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{28ea026e-d47b-4d6e-a992-eae5df6aa638}/PE32@0",
+        "ui": "AppleBootTimeEmbeddedFirmwareHelperDxe",
+        "a_len": 131072,
+        "b_len": 131072
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{a7a8b3f7-b8bb-42ff-a5d1-07ce43734461}/PE32@18",
+        "ui": "AppleUsbTypeCBringupDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{2fb92efa-2ee0-4bae-9eb6-7464125e1ef7}/PE32@0",
+        "ui": "UhciDxe",
+        "a_len": 45056,
+        "b_len": 45056
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{bdfe430e-8f2a-4db0-9991-6f856594777e}/PE32@0",
+        "ui": "EhciDxe",
+        "a_len": 49152,
+        "b_len": 49152
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b7f50e91-a759-412c-ade4-dcd03e7f7c28}/PE32@0",
+        "ui": "XhciDxe",
+        "a_len": 69632,
+        "b_len": 69632
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{2d2e62cf-9ecf-43b7-8219-94e7fc713dfe}/PE32@0",
+        "ui": "UsbKbDxe",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{4ea43463-747c-46eb-97fb-b0e5c5f05306}/PE32@0",
+        "ui": "UsbMouseAbsolutePointerDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{240612b7-a063-11d4-9a3a-0090273fc14d}/PE32@0",
+        "ui": "UsbBusDxe",
+        "a_len": 53248,
+        "b_len": 53248
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{9fb4b4a7-42c0-4bcd-8540-9bcc6711f83e}/PE32@0",
+        "ui": "UsbMassStorageDxe",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{c5d0e6b2-a841-4c67-a0e3-92354de07e51}/PE32@28",
+        "ui": "SerialStatusCodeHandlerDxe",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{8c7db881-da76-4486-8654-8152ee3470a3}/PE32@3c",
+        "ui": "MuVarPolicyFoundationDxe",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{6b38f7b4-ad98-40e9-9093-aca2b5a253c4}/PE32@0",
+        "ui": "DiskIoDxe",
+        "a_len": 32768,
+        "b_len": 32768
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{1fa1f39e-feff-4aae-bd7b-38a070a3b609}/PE32@0",
+        "ui": "PartitionDxe",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{961578fe-b6b7-44c3-af35-6bc705cd2b1f}/PE32@0",
+        "ui": "Fat",
+        "a_len": 53248,
+        "b_len": 53248
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{cd3bafb6-50fb-4fe8-8e4e-ab74d2c1a600}/PE32@0",
+        "ui": "EnglishDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{28a03ff4-12b3-4305-a417-bb1a4f94081e}/PE32@94",
+        "ui": "RamDiskDxe",
+        "a_len": 57344,
+        "b_len": 57344
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{69b5dbd8-92c0-492c-859f-7256d5100d2a}/PE32@60",
+        "ui": "BootRamdiskHelperDxe",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{348c4d62-bfbd-4882-9ece-c80bb1c4783b}/PE32@18",
+        "ui": "HiiDatabase",
+        "a_len": 118784,
+        "b_len": 118784
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{9622e42c-8e38-4a08-9e8f-54f784652f6b}/PE32@18",
+        "ui": "AcpiTableDxe",
+        "a_len": 45056,
+        "b_len": 45056
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{cb933912-df8f-4305-b1f9-7b44fa11395c}/PE32@28",
+        "ui": "AcpiPlatform",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{b8e62775-bb0a-43f0-a843-5be8b14f8ccd}/PE32@0",
+        "ui": "BootGraphicsResourceTableDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{58018fb9-0e53-429a-add1-87fed52c8559}/PE32@28",
+        "ui": "SmBiosTableDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{f9d88642-0737-49bc-81b5-6889cd57d9ea}/PE32@18",
+        "ui": "SmbiosDxe",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{7c04a583-9e3e-4f1c-ad65-e05268d0b4d1}/PE32@2c",
+        "ui": "Shell",
+        "a_len": 966656,
+        "b_len": 966656
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{79e4a61c-ed73-4312-94fe-e3e7563362a9}/PE32@18",
+        "ui": "PrintDxe",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{9b680fce-ad6b-4f3a-b60b-f59899003443}/PE32@8",
+        "ui": "DevicePathDxe",
+        "a_len": 65536,
+        "b_len": 65536
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{e660ea85-058e-4b55-a54b-f02f83a24707}/PE32@7c",
+        "ui": "DisplayEngine",
+        "a_len": 90112,
+        "b_len": 90112
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{ebf342fe-b1d3-4ef8-957c-8048606ff671}/PE32@4c",
+        "ui": "SetupBrowser",
+        "a_len": 106496,
+        "b_len": 106496
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{ebf8ed7c-0dd1-4787-84f1-f48d537dcacf}/PE32@ac",
+        "ui": "DriverHealthManagerDxe",
+        "a_len": 53248,
+        "b_len": 53248
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{6d33944a-ec75-4855-a54d-809c75241f6c}/PE32@60",
+        "ui": "BdsDxe",
+        "a_len": 380928,
+        "b_len": 380928
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{1dd0d079-406a-4b5b-af39-62d8f110f835}/PE32@18",
+        "ui": "NullAuthManager",
+        "a_len": 24576,
+        "b_len": 24576
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{0ccf27cf-e68d-4279-96b0-8a4e1cdff10c}/PE32@70",
+        "ui": "SettingsManagerDxe",
+        "a_len": 122880,
+        "b_len": 122880
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{16a5dd36-4c29-4e85-b0b9-c05883753de7}/PE32@18",
+        "ui": "MsUiThemeProtocol",
+        "a_len": 73760,
+        "b_len": 73760
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{c09e4ce4-ae29-4340-b941-078871bd89d1}/PE32@a0",
+        "ui": "DisplayEngine",
+        "a_len": 73728,
+        "b_len": 73728
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{8d865e53-bd58-4e4c-8eca-ee96b620f40f}/PE32@a4",
+        "ui": "BootMenu",
+        "a_len": 339968,
+        "b_len": 339968
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{4042708a-0f2d-4823-ac60-0d77b3111889}/PE32@4c",
+        "ui": "FrontPage",
+        "a_len": 139264,
+        "b_len": 139264
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{50670071-478f-4be7-ad13-8754f379c62f}/PE32@20",
+        "ui": "MsBootPolicy",
+        "a_len": 352256,
+        "b_len": 352256
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{e622443c-284e-4b47-a984-fd66b482dac0}/PE32@4c",
+        "ui": "BootManagerPolicyDxe",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{3e197e9c-d8dc-42d3-89ce-b04fa9833756}/PE32@0",
+        "ui": "RegularExpressionDxe",
+        "a_len": 413696,
+        "b_len": 413696
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{07f1b357-4270-4122-a32a-7eab3c013bac}/PE32@b8",
+        "ui": "DfciManager",
+        "a_len": 36864,
+        "b_len": 36864
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{8e747032-7d55-4d95-9a84-77f83370b3a4}/PE32@10c",
+        "ui": "SimpleWindowManagerDxe",
+        "a_len": 57344,
+        "b_len": 57344
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{917c56f2-2fe3-498f-affb-87ac0e19fe5e}/PE32@f0",
+        "ui": "OnScreenKeyboardDxe",
+        "a_len": 114688,
+        "b_len": 114688
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{328ac7d1-6d2b-4f6b-8a2d-ea6302a62f60}/PE32@18",
+        "ui": "HwErrorBert",
+        "a_len": 28672,
+        "b_len": 28672
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{995f045b-0265-46a4-8d21-001211a24a4f}/PE32@28",
+        "ui": "MsWheaReportDxe",
+        "a_len": 32768,
+        "b_len": 32768
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{af8f0389-6ba2-47d3-9e55-80b3dd9b8a98}/PE32@80",
+        "ui": "HwhMenu",
+        "a_len": 40960,
+        "b_len": 40960
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{d118a4c4-deb6-4b7a-b3eb-e071148c1c6c}/PE32@18",
+        "ui": "AcpiRgrt",
+        "a_len": 20480,
+        "b_len": 20480
+      },
+      {
+        "item": "FV@8000/{9e21fd93-9c72-4c15-8c4b-e77f1db2d792}/GUID_DEFINED@0[lzma]/FV_IMAGE@c/{c57ad6b7-0515-40a8-9d21-551652854e37}/PE32@0",
+        "ui": "EdkShell",
+        "a_len": 966656,
+        "b_len": 966656
+      }
+    ],
+    "changed_after_rsds_mask": [
+      {
+        "item": "FV@8000/{fa8e7979-a845-4378-b7f8-ceede175b1e9}/TE@154",
+        "ui": "",
+        "a_len": 57000,
+        "b_len": 57000,
+        "ranges_in_image": [
+          [
+            "0x20",
+            "0x22"
+          ],
+          [
+            "0x58",
+            "0x5a"
+          ],
+          [
+            "0xf6c",
+            "0xf6d"
+          ],
+          [
+            "0xfbc",
+            "0xfc9"
+          ],
+          [
+            "0xfe0",
+            "0xfe1"
+          ],
+          [
+            "0x1039",
+            "0x1049"
+          ],
+          [
+            "0x1059",
+            "0x1067"
+          ],
+          [
+            "0x1084",
+            "0x1085"
+          ],
+          [
+            "0x10dd",
+            "0x10ed"
+          ],
+          [
+            "0x1101",
+            "0x1111"
+          ],
+          [
+            "0x1129",
+            "0x1139"
+          ],
+          [
+            "0x124d",
+            "0x125d"
+          ],
+          [
+            "0x128d",
+            "0x128f"
+          ],
+          [
+            "0x1409",
+            "0x1417"
+          ],
+          [
+            "0x143d",
+            "0x143f"
+          ],
+          [
+            "0x1595",
+            "0x159f"
+          ],
+          [
+            "0x16b1",
+            "0x16b3"
+          ],
+          [
+            "0x16e1",
+            "0x16e3"
+          ],
+          [
+            "0x16f5",
+            "0x16f7"
+          ],
+          [
+            "0x176d",
+            "0x176f"
+          ],
+          [
+            "0x1789",
+            "0x178b"
+          ],
+          [
+            "0x17bc",
+            "0x17d5"
+          ],
+          [
+            "0x1811",
+            "0x1813"
+          ],
+          [
+            "0x19e5",
+            "0x19e7"
+          ],
+          [
+            "0x1a29",
+            "0x1a2b"
+          ],
+          [
+            "0x1a55",
+            "0x1a57"
+          ],
+          [
+            "0x1a81",
+            "0x1a83"
+          ],
+          [
+            "0x1a95",
+            "0x1a97"
+          ],
+          [
+            "0x1ab9",
+            "0x1abb"
+          ],
+          [
+            "0x1add",
+            "0x1ae7"
+          ],
+          [
+            "0x1b08",
+            "0x1b09"
+          ],
+          [
+            "0x1b58",
+            "0x1b59"
+          ],
+          [
+            "0x1b8c",
+            "0x1b8d"
+          ],
+          [
+            "0x1bb0",
+            "0x1bb1"
+          ],
+          [
+            "0x1bc4",
+            "0x1bc5"
+          ],
+          [
+            "0x1be0",
+            "0x1be1"
+          ],
+          [
+            "0x1c04",
+            "0x1c05"
+          ],
+          [
+            "0x1c38",
+            "0x1c45"
+          ],
+          [
+            "0x1c58",
+            "0x1c59"
+          ],
+          [
+            "0x1c78",
+            "0x1c79"
+          ]
+        ],
+        "n_ranges": 106
+      }
+    ]
+  }
+}

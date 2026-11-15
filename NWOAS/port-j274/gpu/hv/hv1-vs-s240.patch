@@ -1,0 +1,794 @@
+diff -ruN m1n1-gpu-s240/src/agx_shared/include/j313_agx_g2.generated.h m1n1-gpu-hv1/src/agx_shared/include/j313_agx_g2.generated.h
+--- m1n1-gpu-s240/src/agx_shared/include/j313_agx_g2.generated.h	2026-11-15 20:18:52
++++ m1n1-gpu-hv1/src/agx_shared/include/j313_agx_g2.generated.h	2026-11-15 21:48:35
+@@ -83,18 +83,14 @@
+ 
+ #define J313_AGX_G2_SGX_MMIO_BASE 0x204000000ULL
+ #define J313_AGX_G2_SGX_MMIO_SIZE 0x4000000ULL
+-#define J313_AGX_G2_GPU_BASE 0x9fffb8000ULL
+-#define J313_AGX_G2_GPU_SIZE 0x4000ULL
++/* NWOAS gpu-hv1 (J274) EDIT: J313_AGX_G2_GPU_BASE/_SIZE removed (J313-only
++ * addresses; J274 values come from ADT /arm-io/sgx at runtime, nwoas_agx.c). */
+ #define J313_AGX_G2_ASC_MMIO_BASE 0x206400000ULL
+ #define J313_AGX_G2_ASC_MMIO_SIZE 0x6c000ULL
+ #define J313_AGX_G2_POWER_BROKER_BASE 0x300000000ULL
+ #define J313_AGX_G2_POWER_BROKER_SIZE 0x1000ULL
+-#define J313_AGX_G2_GPU_BASE 0x9fffb8000ULL
+-#define J313_AGX_G2_GPU_SIZE 0x4000ULL
+-#define J313_AGX_G2_SHARED_BASE 0x9fff78000ULL
+-#define J313_AGX_G2_SHARED_SIZE 0x40000ULL
+-#define J313_AGX_G2_HANDOFF_BASE 0x9fff70000ULL
+-#define J313_AGX_G2_HANDOFF_SIZE 0x4000ULL
++/* NWOAS gpu-hv1 (J274) EDIT: J313_AGX_G2_GPU_*, _SHARED_*, _HANDOFF_* removed
++ * (duplicate J313-only addresses; see above). */
+ #define J313_AGX_G2_RTKIT_PRIVATE_BASE 0xffffff8000000000ULL
+ #define J313_AGX_G2_RTKIT_PRIVATE_SIZE 0x2000000000ULL
+ #define J313_AGX_G2_KERNEL_VA_BASE 0xffffffa000000000ULL
+diff -ruN m1n1-gpu-s240/src/hv.c m1n1-gpu-hv1/src/hv.c
+--- m1n1-gpu-s240/src/hv.c	2026-09-10 11:00:38
++++ m1n1-gpu-hv1/src/hv.c	2026-11-15 21:49:00
+@@ -14,6 +14,15 @@
+ #include "adt.h"
+ #include "xnuboot.h"
+ 
++/* NWOAS gpu-hv1: read-only AGX probe, called from hv_init() only when built with
++ * make NWOAS_AGX=1 NWOAS_AGX_PROBE=1 (default: not compiled, not called). */
++#if defined(NWOAS_AGX_PROBE) && NWOAS_AGX_PROBE
++#if !defined(NWOAS_AGX) || !NWOAS_AGX
++#error "NWOAS_AGX_PROBE=1 requires NWOAS_AGX=1 (make NWOAS_AGX=1 NWOAS_AGX_PROBE=1)"
++#endif
++#include "nwoas_agx.h"
++#endif
++
+ #define HV_TICK_RATE      5000
+ #define HV_SLOW_TICK_RATE 1
+ 
+@@ -137,6 +146,10 @@
+     // Set deep WFI back to defaults
+     if (cpu_features->cyc_ovrd)
+         reg_mask(SYS_IMP_APL_CYC_OVRD, CYC_OVRD_WFI_MODE_MASK, CYC_OVRD_WFI_MODE(0));
++
++#if defined(NWOAS_AGX_PROBE) && NWOAS_AGX_PROBE
++    nwoas_agx_probe(); /* ADT reads + printf only; never powers, maps or hooks */
++#endif
+ 
+     sysop("dsb ishst");
+     sysop("tlbi alle1is");
+diff -ruN m1n1-gpu-s240/src/hv_agx_config_snapshot.c m1n1-gpu-hv1/src/hv_agx_config_snapshot.c
+--- m1n1-gpu-s240/src/hv_agx_config_snapshot.c	2026-11-15 20:18:52
++++ m1n1-gpu-hv1/src/hv_agx_config_snapshot.c	2026-11-15 21:48:35
+@@ -10,8 +10,10 @@
+ int adt_getprop_copy(const void *tree, int node, const char *name, void *out, size_t length);
+ #define ADT_GETPROP(tree, node, name, value)                                              \
+     adt_getprop_copy((tree), (node), (name), (value), sizeof(*(value)))
++extern uint64_t nwoas_agx_gpu_base;
+ #else
+ #include "adt.h"
++#include "nwoas_agx.h"
+ #endif
+ 
+ #define J313_PERF_STATE_COUNT 7u
+@@ -19,7 +21,13 @@
+ #define J313_BASE_PSTATE 1u
+ #define J313_MAX_PSTATE 6u
+ #define J313_POWER_SAMPLE_PERIOD_MS 8u
+-#define J313_GPU_REGION_BASE 0x9fffb8000ULL
++/* NWOAS gpu-hv1 (J274) EDIT: the J313 gpu-region base constant (0x9fffb8000,
++ * ordinary DRAM on a 16 GB J274) is removed. The snapshot's gpu-region-base must
++ * equal the value nwoas_agx_probe() read and validated from the live ADT, and is
++ * refused while that is 0 (probe not run or refused).
++ * The J313_* perf constants above are J313 values, NOT verified for J274: on a
++ * J274 whose ADT differs, validation refuses (fail closed). Step 2 must replace
++ * them with checks against the J274 ADT (see port-j274/gpu/hv/README.md). */
+ 
+ static const char *const scalar_property_names[HV_AGX_CONFIG_SCALAR_COUNT] = {
+     "gpu-avg-power-filter-tc-ms", "gpu-avg-power-ki-only",
+@@ -49,7 +57,7 @@
+         snapshot->base_pstate != J313_BASE_PSTATE ||
+         snapshot->max_pstate != J313_MAX_PSTATE ||
+         snapshot->power_sample_period_ms != J313_POWER_SAMPLE_PERIOD_MS ||
+-        snapshot->gpu_region_base != J313_GPU_REGION_BASE ||
++        !nwoas_agx_gpu_base || snapshot->gpu_region_base != nwoas_agx_gpu_base ||
+         snapshot->scalar_count != HV_AGX_CONFIG_SCALAR_COUNT ||
+         snapshot->scalar_reserved != 0 || snapshot->trailing_reserved != 0 ||
+         (snapshot->scalar_presence >> HV_AGX_CONFIG_SCALAR_COUNT) != 0)
+diff -ruN m1n1-gpu-s240/src/hv_agx_g2.generated.h m1n1-gpu-hv1/src/hv_agx_g2.generated.h
+--- m1n1-gpu-s240/src/hv_agx_g2.generated.h	2026-11-15 20:18:52
++++ m1n1-gpu-hv1/src/hv_agx_g2.generated.h	2026-11-15 21:48:35
+@@ -9,10 +9,12 @@
+ #define HV_AGX_G2_CONTRACT_VERSION 3u
+ #define HV_AGX_G2_SGX_MMIO_BASE 0x204000000ULL
+ #define HV_AGX_G2_SGX_MMIO_SIZE 0x4000000ULL
+-#define HV_AGX_G2_GPU_BASE 0x9fffb8000ULL
+-#define HV_AGX_G2_GPU_SIZE 0x4000ULL
+-#define HV_AGX_G2_HANDOFF_BASE 0x9fff70000ULL
+-#define HV_AGX_G2_HANDOFF_SIZE 0x4000ULL
++/* NWOAS gpu-hv1 (J274) EDIT of this generated file: the J313 gpu-region and
++ * gfx-handoff constants (HV_AGX_G2_GPU_BASE/_SIZE, HV_AGX_G2_HANDOFF_BASE/_SIZE)
++ * are removed on purpose. On a 16 GB J274 the J313 gpu-region base is ordinary
++ * DRAM. These ranges come from ADT /arm-io/sgx at runtime: nwoas_agx_gpu_base /
++ * _size, nwoas_agx_handoff_base / _size (nwoas_agx.c), 0 if the probe refused.
++ * Any code still using the old macro names fails to compile. */
+ #define HV_AGX_G2_POWER_BROKER_BASE 0x300000000ULL
+ #define HV_AGX_G2_POWER_BROKER_SIZE 0x1000ULL
+ #define HV_AGX_G2_POWER_MAGIC 0x58504741u
+diff -ruN m1n1-gpu-s240/src/hv_agx_retained_backing.h m1n1-gpu-hv1/src/hv_agx_retained_backing.h
+--- m1n1-gpu-s240/src/hv_agx_retained_backing.h	2026-11-15 20:18:52
++++ m1n1-gpu-hv1/src/hv_agx_retained_backing.h	2026-11-15 21:48:35
+@@ -1,6 +1,6 @@
+ #ifndef HV_AGX_RETAINED_BACKING_H
+ #define HV_AGX_RETAINED_BACKING_H
+-#include "hv_launch_contract.h"
++#include "nwoas_agx_contract.h" /* NWOAS: stand-in for upstream hv_launch_contract.h */
+ /* A 16 KiB GPU backing page is allowed only inside published guest RAM and
+  * outside every other published region except the low-memory alias (M1: a
+  * preloaded ramdisk is denied through its own region, not a fixed window). */
+diff -ruN m1n1-gpu-s240/src/hv_agx_retained_platform.c m1n1-gpu-hv1/src/hv_agx_retained_platform.c
+--- m1n1-gpu-s240/src/hv_agx_retained_platform.c	2026-11-15 20:18:52
++++ m1n1-gpu-hv1/src/hv_agx_retained_platform.c	2026-11-15 21:49:00
+@@ -1,3 +1,18 @@
++/*
++ * NWOAS gpu-hv1 (J274) EDIT: this file is copied from windows-on-m1
++ * m1n1_windows@882985fb (MIT) and is NOT compiled in step 1 (not in the
++ * Makefile AGX objects). It still needs the J313 launch contract
++ * (hv_launch_j313.h, hv_autonomous_layout.generated.h; not ported), gates on
++ * J313 board 0x26 (line 469), and directly reads/writes the gpu-region RAM.
++ * The J313 gpu-region constant was replaced by the ADT-derived runtime value
++ * nwoas_agx_gpu_base / nwoas_agx_gpu_size (0 when the probe refused); every
++ * user of it must check nwoas_agx_probe_ok() first (step 2).
++ * See port-j274/gpu/hv/README.md, step 2.
++ */
++#ifndef NWOAS_AGX_J274_RETAINED_PLATFORM_PORTED
++#error "hv_agx_retained_platform.c is J313-only and not ported to J274 (port-j274/gpu/hv/README.md step 2)"
++#endif
++#include "nwoas_agx.h"
+ #include "hv.h"
+ #include "hv_agx_retained_platform.h"
+ #include "hv_agx_local_reserve.h"
+@@ -99,8 +114,8 @@
+ {
+     (void)context;
+     if (slot >= 64 || !low || !high) return false;
+-    *low = read64(HV_AGX_G2_GPU_BASE + slot * 16u);
+-    *high = read64(HV_AGX_G2_GPU_BASE + slot * 16u + 8u);
++    *low = read64(nwoas_agx_gpu_base + slot * 16u);
++    *high = read64(nwoas_agx_gpu_base + slot * 16u + 8u);
+     return true;
+ }
+ static bool gpuva_write_slot(void *context, unsigned slot, uint64_t low,
+@@ -108,8 +123,8 @@
+ {
+     (void)context;
+     if (!slot || slot >= 64 || high) return false;
+-    write64(HV_AGX_G2_GPU_BASE + slot * 16u, low);
+-    write64(HV_AGX_G2_GPU_BASE + slot * 16u + 8u, 0);
++    write64(nwoas_agx_gpu_base + slot * 16u, low);
++    write64(nwoas_agx_gpu_base + slot * 16u + 8u, 0);
+     return true;
+ }
+ static bool gpuva_sync(void *context)
+@@ -338,8 +353,8 @@
+             q->Va || q->Ipa || q->Length || q->Handle) break;
+         status = hv_agx_retained_activate(&root_owner);
+         if (!status) {
+-            write64(HV_AGX_G2_GPU_BASE, root_owner.Roots.Ttbr0PhysicalAddress | 1ULL);
+-            write64(HV_AGX_G2_GPU_BASE + 8, root_base | 1ULL);
++            write64(nwoas_agx_gpu_base, root_owner.Roots.Ttbr0PhysicalAddress | 1ULL);
++            write64(nwoas_agx_gpu_base + 8, root_base | 1ULL);
+             sync_tables(NULL);
+             printf("HV: retained root ACTIVE root=0x%lx prefix=%llx/%llx epoch=%llu\n",
+                    root_base, root_owner.PrivatePrefix[0], root_owner.PrivatePrefix[1],
+@@ -414,7 +429,7 @@
+             !cpu_stopped() || !gpuva_idle()) break;
+         /* Root1 retains physical identity. Retire owned root0 before freeing. */
+         if (root_owner.Prepared) {
+-            write64(HV_AGX_G2_GPU_BASE, 0);
++            write64(nwoas_agx_gpu_base, 0);
+             sync_tables(NULL);
+         }
+         status = hv_agx_retained_close(&root_owner,q->Epoch,1);
+@@ -426,14 +441,14 @@
+     }
+ done:
+     if (root_owner.Active &&
+-        (read64(HV_AGX_G2_GPU_BASE + 8) != (root_base | 1ULL) ||
+-         read64(HV_AGX_G2_GPU_BASE) != (root_owner.Roots.Ttbr0PhysicalAddress | 1ULL))) {
++        (read64(nwoas_agx_gpu_base + 8) != (root_base | 1ULL) ||
++         read64(nwoas_agx_gpu_base) != (root_owner.Roots.Ttbr0PhysicalAddress | 1ULL))) {
+         root_owner.Tainted = 1;
+         status = HV_AGX_RETAINED_TAINTED;
+     }
+     r->Status = status;
+     r->Epoch = root_owner.Epoch;
+-    r->Root = root_owner.Active ? (read64(HV_AGX_G2_GPU_BASE + 8) & 0xffffffc000ULL)
++    r->Root = root_owner.Active ? (read64(nwoas_agx_gpu_base + 8) & 0xffffffc000ULL)
+                                : root_base;
+     r->Ttbr0 = root_owner.Roots.Ttbr0PhysicalAddress;
+     r->SystemVa = root_owner.SystemVa;
+@@ -503,8 +518,8 @@
+     if (write || width > 3 || (offset & ((1u << width)-1)) ||
+         offset > AGX_FW_IO_BYTES-(1u << width)) return false;
+     if (powered && root_owner.Active &&
+-        read64(HV_AGX_G2_GPU_BASE + 8) == (root_base | 1ULL) &&
+-        read64(HV_AGX_G2_GPU_BASE) == (root_owner.Roots.Ttbr0PhysicalAddress | 1ULL))
++        read64(nwoas_agx_gpu_base + 8) == (root_base | 1ULL) &&
++        read64(nwoas_agx_gpu_base) == (root_owner.Roots.Ttbr0PhysicalAddress | 1ULL))
+         (void)hv_agx_retained_io_manifest(&root_owner,root_owner.Epoch,&manifest);
+     if (!AgxFwIoReadWord(&manifest,offset,&data,0,width)) return false;
+     *value = data;
+@@ -520,8 +535,8 @@
+     if (write || width > 3 || (offset & ((1u << width)-1)) ||
+         offset > AGX_HWDATA_RECEIPT_BYTES-(1u << width)) return false;
+     if (profile_inputs_valid && powered && root_owner.Active &&
+-        read64(HV_AGX_G2_GPU_BASE + 8) == (root_base | 1ULL) &&
+-        read64(HV_AGX_G2_GPU_BASE) == (root_owner.Roots.Ttbr0PhysicalAddress | 1ULL) &&
++        read64(nwoas_agx_gpu_base + 8) == (root_base | 1ULL) &&
++        read64(nwoas_agx_gpu_base) == (root_owner.Roots.Ttbr0PhysicalAddress | 1ULL) &&
+         hv_agx_retained_io_manifest(&root_owner,root_owner.Epoch,&manifest) == 0) {
+         receipt.Magic = AGX_HWDATA_RECEIPT_MAGIC;
+         receipt.Version = 1; receipt.Bytes = sizeof(receipt); receipt.Chip = chip_id;
+@@ -536,12 +551,12 @@
+ bool hv_agx_retained_gpu_region(struct exc_info *ctx, u64 addr, u64 *value,
+                                 bool write, int width)
+ {
+-    u64 offset = addr - HV_AGX_G2_GPU_BASE;
++    u64 offset = addr - nwoas_agx_gpu_base;
+     size_t bytes;
+     (void)ctx;
+     if (width < 0 || width > 3) return false;
+     bytes = 1u << width;
+-    if (offset > HV_AGX_G2_GPU_SIZE - bytes || (offset & (bytes - 1))) return false;
++    if (offset > nwoas_agx_gpu_size - bytes || (offset & (bytes - 1))) return false;
+     if (write && (!AgxRrGpuRegionWritable(offset,bytes) ||
+                   (gpuva_v5.active && gpuva_v5.slots[63].occupied))) return false;
+     if (write) memcpy((void *)addr,value,bytes);
+diff -ruN m1n1-gpu-s240/src/nwoas_agx.c m1n1-gpu-hv1/src/nwoas_agx.c
+--- m1n1-gpu-s240/src/nwoas_agx.c	1970-01-01 09:00:00
++++ m1n1-gpu-hv1/src/nwoas_agx.c	2026-11-15 21:55:47
+@@ -0,0 +1,368 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * NWOAS gpu-hv1 (step 1): read-only AGX probe for J274. See nwoas_agx.h for the
++ * contract (ADT reads + printf only; no power, no map, no MMIO, no RAM access).
++ */
++
++#include "nwoas_agx.h"
++#include "adt.h"
++#include "firmware.h"
++#include "hv_agx_g2.generated.h"
++#include "memory.h"
++#include "soc.h"
++#include "string.h"
++#include "utils.h"
++
++#if !NWOAS_AGX
++#error "nwoas_agx.c is built only with make NWOAS_AGX=1"
++#endif
++
++#define PFX "NWOAS-AGX: "
++
++#define AGX_PAGE      0x4000ULL /* 16 KiB, GPU/UAT page size */
++#define MAX_REGS      8
++
++u64 nwoas_agx_gpu_base, nwoas_agx_gpu_size;
++u64 nwoas_agx_handoff_base, nwoas_agx_handoff_size;
++u64 nwoas_agx_shared_base, nwoas_agx_shared_size;
++u32 nwoas_agx_sgx_irqs[NWOAS_AGX_MAX_IRQS];
++u32 nwoas_agx_sgx_irq_count;
++
++static bool probe_done;
++static bool probe_ok;
++static const char *refusal = "probe not run";
++
++bool nwoas_agx_probe_ok(void)
++{
++    return probe_ok;
++}
++
++const char *nwoas_agx_refusal(void)
++{
++    return probe_ok ? NULL : refusal;
++}
++
++static const char *agx_first_string(int node, const char *prop)
++{
++    u32 len = 0;
++    const char *s = adt_getprop(adt, node, prop, &len);
++
++    if (!s || !len || s[len - 1] != '\0')
++        return "(missing)";
++    return s;
++}
++
++/* Reads a u64 property; false if absent or not exactly 8 bytes. */
++static bool agx_get_u64(int node, const char *prop, u64 *out)
++{
++    u32 len = 0;
++    const void *p = adt_getprop(adt, node, prop, &len);
++
++    if (!p || len != sizeof(u64))
++        return false;
++    memcpy(out, p, sizeof(u64));
++    return true;
++}
++
++static void agx_print_u32_prop(int node, const char *prop)
++{
++    u32 len = 0;
++    const void *p = adt_getprop(adt, node, prop, &len);
++    u32 v;
++
++    if (!p || len != sizeof(u32)) {
++        printf(PFX "  sgx %s: missing (len=%u)\n", prop, p ? len : 0);
++        return;
++    }
++    memcpy(&v, p, sizeof(v));
++    printf(PFX "  sgx %s = %u (0x%x)\n", prop, v, v);
++}
++
++/* Prints every "reg" entry of a node (translated through the parent ranges by
++ * adt_get_reg). Returns the number of entries found. */
++static int agx_print_regs(const char *label, int *path, u64 *first_base, u64 *first_size)
++{
++    int n = 0;
++
++    for (int i = 0; i < MAX_REGS; i++) {
++        u64 base = 0, size = 0;
++
++        if (adt_get_reg(adt, path, "reg", i, &base, &size) < 0)
++            break;
++        printf(PFX "  %s reg[%d] = 0x%lx size 0x%lx\n", label, i, base, size);
++        if (i == 0) {
++            *first_base = base;
++            *first_size = size;
++        }
++        n++;
++    }
++    if (!n)
++        printf(PFX "  %s reg: none\n", label);
++    return n;
++}
++
++/* Reads a u32 array property (e.g. "interrupts") into out[], max cap entries. */
++static int agx_read_u32_list(int node, const char *prop, u32 *out, int cap, u32 *total)
++{
++    u32 len = 0;
++    const u8 *p = adt_getprop(adt, node, prop, &len);
++    int n;
++
++    *total = 0;
++    if (!p || !len || (len % sizeof(u32)))
++        return -1;
++    *total = len / sizeof(u32);
++    n = (int)min(*total, (u32)cap);
++    for (int i = 0; i < n; i++)
++        memcpy(&out[i], p + i * sizeof(u32), sizeof(u32));
++    return n;
++}
++
++static void agx_print_u32_list(const char *label, const u32 *v, int n, u32 total)
++{
++    printf(PFX "  %s interrupts (%u):", label, total);
++    for (int i = 0; i < n; i++)
++        printf(" %u", v[i]);
++    if (total > (u32)n)
++        printf(" ...(+%u not shown)", total - (u32)n);
++    printf("\n");
++}
++
++static bool agx_range_ok(u64 base, u64 size)
++{
++    return base && size && !(base & (AGX_PAGE - 1)) && !(size & (AGX_PAGE - 1)) &&
++           base + size > base;
++}
++
++/* One sgx "<name>-base" / "<name>-size" pair (same names kboot_gpu.c uses). */
++static bool agx_read_region(int sgx, const char *name, u64 *base, u64 *size)
++{
++    char prop[48];
++    bool have_b, have_s;
++
++    snprintf(prop, sizeof(prop), "%s-base", name);
++    have_b = agx_get_u64(sgx, prop, base);
++    snprintf(prop, sizeof(prop), "%s-size", name);
++    have_s = agx_get_u64(sgx, prop, size);
++
++    if (!have_b || !have_s) {
++        printf(PFX "  sgx %s: MISSING (%s%s)\n", name, have_b ? "" : "base ",
++               have_s ? "" : "size");
++        return false;
++    }
++    bool in_dram = *base >= ram_base && *base + *size > *base &&
++                   *base + *size <= ram_base + mem_size_actual;
++    printf(PFX "  sgx %s = 0x%lx size 0x%lx (%s, %s DRAM [0x%lx, 0x%lx))\n", name, *base,
++           *size, agx_range_ok(*base, *size) ? "16K-aligned" : "NOT 16K-aligned/empty",
++           in_dram ? "inside" : "OUTSIDE", ram_base, ram_base + mem_size_actual);
++    return agx_range_ok(*base, *size);
++}
++
++static bool agx_overlaps(u64 a, u64 an, u64 b, u64 bn)
++{
++    return an && bn && a < b + bn && b < a + an;
++}
++
++/* Walks /chosen/carveout-memory-map (same iteration as upstream
++ * local_reserve_carveouts_allow(), nwoas_agx_mmio.c.orig_ref:470-495). Prints the
++ * region-id-* entries that overlap the three GPU ranges and the largest entry
++ * (the normal-DRAM owner candidate; J313 upstream hard-codes region-id-24).
++ * Information for step 2 only; never gates the probe. */
++static void agx_print_carveouts(u64 gb, u64 gs, u64 hb, u64 hs, u64 sb, u64 ss)
++{
++    int node = adt_path_offset(adt, "/chosen/carveout-memory-map");
++    int count, offset, found = 0;
++    const char *big_name = NULL;
++    u64 big[2] = {0, 0};
++
++    if (node < 0) {
++        printf(PFX "  /chosen/carveout-memory-map: not found\n");
++        return;
++    }
++    count = adt_get_property_count(adt, node);
++    offset = adt_first_property_offset(adt, node);
++    for (int i = 0; i < count; i++) {
++        const char *name = NULL;
++        u32 bytes = 0;
++        const void *value = adt_getprop_by_offset(adt, offset, &name, &bytes);
++        u64 r[2];
++
++        if (!value || !name || bytes > 0x100000) {
++            printf(PFX "  carveout walk stopped at property %d (bad entry)\n", i);
++            break;
++        }
++        if (!strncmp(name, "region-id-", 10) && bytes == sizeof(r)) {
++            memcpy(r, value, sizeof(r));
++            found++;
++            if (r[1] > big[1]) {
++                big[0] = r[0];
++                big[1] = r[1];
++                big_name = name;
++            }
++            if (agx_overlaps(r[0], r[1], gb, gs) || agx_overlaps(r[0], r[1], hb, hs) ||
++                agx_overlaps(r[0], r[1], sb, ss))
++                printf(PFX "  carveout %s = 0x%lx size 0x%lx%s%s%s\n", name, r[0], r[1],
++                       agx_overlaps(r[0], r[1], gb, gs) ? " [gpu-region]" : "",
++                       agx_overlaps(r[0], r[1], hb, hs) ? " [gfx-handoff]" : "",
++                       agx_overlaps(r[0], r[1], sb, ss) ? " [gfx-shared-region]" : "");
++        }
++        offset += sizeof(struct adt_property) + ALIGN_UP(bytes, 4);
++    }
++    if (big_name)
++        printf(PFX "  carveout largest: %s = 0x%lx size 0x%lx (normal-DRAM owner candidate)\n",
++               big_name, big[0], big[1]);
++    printf(PFX "  carveout region-id-* entries: %d\n", found);
++}
++
++static bool agx_irq_in_j313_contract(u32 irq)
++{
++    static const struct hv_agx_g2_interrupt_route j313[HV_AGX_G2_INTERRUPT_ROUTE_COUNT] =
++        HV_AGX_G2_INTERRUPT_ROUTE_VALUES;
++
++    for (u32 i = 0; i < HV_AGX_G2_INTERRUPT_ROUTE_COUNT; i++)
++        if (j313[i].physical_intid == irq)
++            return true;
++    return false;
++}
++
++static void agx_refuse(const char *why)
++{
++    refusal = why;
++    printf(PFX "REFUSED: %s (nothing armed; globals stay 0)\n", why);
++}
++
++void nwoas_agx_probe(void)
++{
++    int sgx_path[8] = {0}, asc_path[8] = {0};
++    int sgx, asc;
++    u64 sgx_base = 0, sgx_size = 0, asc_base = 0, asc_size = 0;
++    u64 gb = 0, gs = 0, hb = 0, hs = 0, sb = 0, ss = 0;
++    u32 sgx_irqs[NWOAS_AGX_MAX_IRQS], asc_irqs[NWOAS_AGX_MAX_IRQS];
++    u32 irq_total = 0, asc_irq_total = 0;
++    int nirq, nasc_irq = -1;
++    bool regions_ok = true;
++
++    if (probe_done) {
++        printf(PFX "probe already ran: %s\n", probe_ok ? "OK" : refusal);
++        return;
++    }
++    probe_done = true;
++
++    printf(PFX "probe start (step 1, read-only: ADT reads only; no power, no map, no MMIO)\n");
++    printf(PFX "  chip_id=0x%x board_id=0x%x target-type=%s\n", chip_id, board_id,
++           agx_first_string(0, "target-type"));
++    printf(PFX "  OS firmware %s, system firmware %s\n",
++           os_firmware.string ? os_firmware.string : "(unknown)",
++           system_firmware.string ? system_firmware.string : "(unknown)");
++
++    /* /arm-io/sgx */
++    sgx = adt_path_offset_trace(adt, "/arm-io/sgx", sgx_path);
++    if (sgx < 0) {
++        agx_refuse("ADT /arm-io/sgx not found");
++        return;
++    }
++    printf(PFX "  /arm-io/sgx compatible=%s\n", agx_first_string(sgx, "compatible"));
++    agx_print_regs("sgx", sgx_path, &sgx_base, &sgx_size);
++    if (sgx_base)
++        printf(PFX "  sgx reg[0] %s the J313 contract aperture (0x%llx size 0x%llx)\n",
++               (sgx_base == HV_AGX_G2_SGX_MMIO_BASE && sgx_size == HV_AGX_G2_SGX_MMIO_SIZE)
++                   ? "EQUALS"
++                   : "DIFFERS FROM",
++               HV_AGX_G2_SGX_MMIO_BASE, HV_AGX_G2_SGX_MMIO_SIZE);
++
++    nirq = agx_read_u32_list(sgx, "interrupts", sgx_irqs, NWOAS_AGX_MAX_IRQS, &irq_total);
++    if (nirq < 0) {
++        printf(PFX "  sgx interrupts: missing/malformed\n");
++    } else {
++        int in_j313 = 0;
++
++        agx_print_u32_list("sgx", sgx_irqs, nirq, irq_total);
++        for (int i = 0; i < nirq; i++)
++            in_j313 += agx_irq_in_j313_contract(sgx_irqs[i]);
++        printf(PFX "  sgx interrupts: %d of %d are in the J313 contract set (%u entries); "
++                   "the HV delivers AIC IRQs identity-mapped (vINTID == hwirq)\n",
++               in_j313, nirq, HV_AGX_G2_INTERRUPT_ROUTE_COUNT);
++    }
++
++    agx_print_u32_prop(sgx, "perf-state-count");
++    agx_print_u32_prop(sgx, "perf-state-table-count");
++    agx_print_u32_prop(sgx, "gpu-num-perf-states");
++    agx_print_u32_prop(sgx, "gpu-perf-base-pstate");
++    agx_print_u32_prop(sgx, "gpu-power-sample-period");
++    {
++        u32 len = 0;
++        const void *p = adt_getprop(adt, sgx, "perf-states", &len);
++        printf(PFX "  sgx perf-states: %s (len %u)\n", p ? "present" : "missing", p ? len : 0);
++    }
++
++    regions_ok &= agx_read_region(sgx, "gpu-region", &gb, &gs);
++    regions_ok &= agx_read_region(sgx, "gfx-handoff", &hb, &hs);
++    regions_ok &= agx_read_region(sgx, "gfx-shared-region", &sb, &ss);
++
++    /* /arm-io/gfx-asc */
++    asc = adt_path_offset_trace(adt, "/arm-io/gfx-asc", asc_path);
++    if (asc < 0) {
++        printf(PFX "  /arm-io/gfx-asc: not found\n");
++    } else {
++        printf(PFX "  /arm-io/gfx-asc compatible=%s\n", agx_first_string(asc, "compatible"));
++        agx_print_regs("gfx-asc", asc_path, &asc_base, &asc_size);
++        nasc_irq = agx_read_u32_list(asc, "interrupts", asc_irqs, NWOAS_AGX_MAX_IRQS, &asc_irq_total);
++        if (nasc_irq < 0)
++            printf(PFX "  gfx-asc interrupts: missing/malformed\n");
++        else {
++            int in_j313 = 0;
++
++            agx_print_u32_list("gfx-asc", asc_irqs, nasc_irq, asc_irq_total);
++            for (int i = 0; i < nasc_irq; i++)
++                in_j313 += agx_irq_in_j313_contract(asc_irqs[i]);
++            printf(PFX "  gfx-asc interrupts: %d of %d are in the J313 contract set\n", in_j313,
++                   nasc_irq);
++        }
++    }
++
++    agx_print_carveouts(gb, gs, hb, hs, sb, ss);
++
++    /* Gates. Order = most basic first; the first failure is the refusal. */
++    if (chip_id != T8103) {
++        agx_refuse("chip is not T8103");
++        return;
++    }
++    if (board_id != NWOAS_AGX_BOARD_J274) {
++        agx_refuse("board-id is not J274 (0x22)");
++        return;
++    }
++    if (!sgx_base || !sgx_size) {
++        agx_refuse("sgx reg[0] missing");
++        return;
++    }
++    if (nirq <= 0 || irq_total > NWOAS_AGX_MAX_IRQS) {
++        agx_refuse("sgx interrupts missing or more than NWOAS_AGX_MAX_IRQS");
++        return;
++    }
++    if (asc < 0 || !asc_base || !asc_size) {
++        agx_refuse("gfx-asc node or reg[0] missing");
++        return;
++    }
++    if (!regions_ok) {
++        agx_refuse("gpu-region / gfx-handoff / gfx-shared-region missing or not 16K-aligned");
++        return;
++    }
++    if (agx_overlaps(gb, gs, hb, hs) || agx_overlaps(gb, gs, sb, ss) || agx_overlaps(hb, hs, sb, ss)) {
++        agx_refuse("gpu-region / gfx-handoff / gfx-shared-region overlap each other");
++        return;
++    }
++
++    nwoas_agx_gpu_base = gb;
++    nwoas_agx_gpu_size = gs;
++    nwoas_agx_handoff_base = hb;
++    nwoas_agx_handoff_size = hs;
++    nwoas_agx_shared_base = sb;
++    nwoas_agx_shared_size = ss;
++    memcpy(nwoas_agx_sgx_irqs, sgx_irqs, (size_t)nirq * sizeof(u32));
++    nwoas_agx_sgx_irq_count = (u32)nirq;
++    probe_ok = true;
++    refusal = NULL;
++    printf(PFX "probe OK: gpu-region 0x%lx+0x%lx handoff 0x%lx+0x%lx shared 0x%lx+0x%lx, "
++               "%u sgx irqs. Step 1 is inert: nothing powered, mapped or hooked.\n",
++           gb, gs, hb, hs, sb, ss, nwoas_agx_sgx_irq_count);
++}
+diff -ruN m1n1-gpu-s240/src/nwoas_agx.h m1n1-gpu-hv1/src/nwoas_agx.h
+--- m1n1-gpu-s240/src/nwoas_agx.h	2026-11-15 20:23:34
++++ m1n1-gpu-hv1/src/nwoas_agx.h	2026-11-15 21:47:12
+@@ -1,88 +1,49 @@
+ /* SPDX-License-Identifier: MIT */
+ /*
+- * NWOAS S240: J274 (Mac mini M1, board 0x22, T8103) platform layer for the AGX
+- * (GPU) hypervisor brokers ported from windows-on-m1 (J313). See nwoas_agx.c and
+- * port-j274/gpu/hv/README.md.
++ * NWOAS gpu-hv1 (step 1): J274 (Mac mini M1, T8103) AGX (GPU) hypervisor probe.
++ * Implementation: nwoas_agx.c. Port notes: port-j274/gpu/hv/README.md.
++ * Third-party sources in this tree: THIRD_PARTY_NOTICES.md.
+  *
+- * Inert by construction:
+- *   - nwoas_agx_probe() (called from hv_init) only reads the ADT and prints; it
+- *     allocates broker storage only when every static gate passes (T8103, board
+- *     0x22, OS firmware 13.5, live /arm-io/sgx + /arm-io/gfx-asc apertures equal
+- *     to the T8103 values below, gpu-region / gfx-handoff / gfx-shared-region
+- *     present and sane).
+- *   - No stage-2 hook is installed until the launcher calls P_HV_NWOAS_AGX_ARM
+- *     with a guest RAM description, and only if the probe passed.
++ * Step 1 is READ-ONLY by construction:
++ *   - nwoas_agx_probe() only reads the ADT (/arm-io/sgx, /arm-io/gfx-asc,
++ *     the sgx gpu-region / gfx-handoff / gfx-shared-region properties and
++ *     /chosen/carveout-memory-map) and prints what it finds.
++ *   - It never calls pmgr (no power), never installs a stage-2 hook or map,
++ *     never touches SGX/ASC MMIO and never reads or writes the gpu-region RAM.
++ *   - It is compiled only with `make NWOAS_AGX=1` and called from hv_init()
++ *     only with `make NWOAS_AGX=1 NWOAS_AGX_PROBE=1`. Default: not called.
++ *
++ * No J274 hardware value is a compile-time constant here. Every address, size
++ * and interrupt number comes from the live ADT; if a required property is
++ * missing or malformed the probe REFUSES (probe_ok stays false and all the
++ * nwoas_agx_* globals stay 0).
+  */
+ #ifndef NWOAS_AGX_H
+ #define NWOAS_AGX_H
+ 
+ #include "types.h"
+-#include "nwoas_agx_contract.h"
+ 
+ #ifndef NWOAS_AGX
+ #define NWOAS_AGX 0
+ #endif
+ 
+-#define NWOAS_AGX_CHIP_T8103 0x8103
++/* Identity gate (not a hardware address): ADT /chosen/board-id of J274 is 0x22
++ * (port-j274/j274-board-profile.json ID-2, FACT from the J274 13.5 log). */
+ #define NWOAS_AGX_BOARD_J274 0x22
+ 
+-/* T8103 SoC apertures. Same SoC as J313 (config/j313-agx.json); for J274 they
+- * are a HYPOTHESIS until the live-ADT comparison in nwoas_agx_probe() passes. */
+-#define NWOAS_AGX_SGX_MMIO_BASE 0x204000000ULL
+-#define NWOAS_AGX_SGX_MMIO_SIZE 0x4000000ULL
+-#define NWOAS_AGX_ASC_MMIO_BASE 0x206400000ULL
+-#define NWOAS_AGX_ASC_MMIO_SIZE 0x6c000ULL
++/* Filled from the ADT by nwoas_agx_probe() only when every gate passes;
++ * otherwise 0. Physical addresses (sgx *-base properties). */
++extern u64 nwoas_agx_gpu_base, nwoas_agx_gpu_size;         /* gpu-region-*        */
++extern u64 nwoas_agx_handoff_base, nwoas_agx_handoff_size; /* gfx-handoff-*       */
++extern u64 nwoas_agx_shared_base, nwoas_agx_shared_size;   /* gfx-shared-region-* */
+ 
+-/* Expected SGX AIC interrupts (J313 contract order). Our HV delivers every
+- * physical AIC interrupt identity-mapped (vINTID == AIC hwirq, hv_exc.c), so
+- * the J274 AGX0 ACPI device must use these numbers, not J313's 880..888. */
+-#define NWOAS_AGX_IRQ_COUNT 9u
+-#define NWOAS_AGX_IRQ_VALUES {563u, 564u, 565u, 566u, 579u, 576u, 575u, 578u, 577u}
++#define NWOAS_AGX_MAX_IRQS 32
++/* /arm-io/sgx "interrupts" as read from the ADT (AIC hwirq numbers). */
++extern u32 nwoas_agx_sgx_irqs[NWOAS_AGX_MAX_IRQS];
++extern u32 nwoas_agx_sgx_irq_count;
+ 
+-/* Guest VMID used for UAT TLBI. Only 0 is implemented (S231/S233 guests run with
+- * VTTBR_EL2.VMID == 0, hv_vm.c hv_pt_init). See README "VMID". */
+-#ifndef NWOAS_AGX_GUEST_VMID
+-#define NWOAS_AGX_GUEST_VMID 0
+-#endif
+-
+-/* J274 /chosen/carveout-memory-map "region-id-NN" that owns normal DRAM. J313's
+- * is 24 (hv_agx_power_mmio.c). UNKNOWN for J274: -1 keeps the GPU local reserve
+- * refused (logged) until it is read from a J274 13.5 ADT dump. */
+-#ifndef NWOAS_AGX_J274_NORMAL_RAM_REGION_ID
+-#define NWOAS_AGX_J274_NORMAL_RAM_REGION_ID -1
+-#endif
+-
+-extern u64 nwoas_agx_gpu_base, nwoas_agx_gpu_size;
+-extern u64 nwoas_agx_handoff_base, nwoas_agx_handoff_size;
+-extern u64 nwoas_agx_shared_base, nwoas_agx_shared_size;
+-
+-/* Probe result. probe_ok == every static gate passed. */
++void nwoas_agx_probe(void);
+ bool nwoas_agx_probe_ok(void);
+ const char *nwoas_agx_refusal(void);
+-void nwoas_agx_probe(void);
+-
+-/* Proxy entry points (P_HV_NWOAS_AGX_ARM / P_HV_NWOAS_AGX_POWER / _STATUS). */
+-s64 nwoas_agx_arm(u64 ram_pa, u64 ram_size, u64 local_ipa, u64 local_bytes, u64 deny_pa,
+-                  u64 deny_size);
+-s64 nwoas_agx_power(u64 command, u64 sequence);
+-u64 nwoas_agx_status(void);
+-
+-/* Guest memory description published at ARM time (NULL-safe, false if none). */
+-bool nwoas_agx_layout_snapshot(struct hv_contract_snapshot *out);
+-bool nwoas_agx_guest_ram(u64 *base, u64 *size);
+-
+-/* Stage-2 helpers. ipa_to_pa returns 0 for anything that is not a hardware
+- * (PTE_VALID) stage-2 mapping, i.e. hooks, SW maps and holes. */
+-u64 nwoas_agx_ipa_to_pa(u64 ipa);
+-bool nwoas_agx_ipa_is_guest_ram(u64 ipa);
+-
+-/* UAT invalidation (TLBI ASIDE1OS) executed at EL2, VMID-aware. */
+-void nwoas_agx_uat_tlbi_aside1os(u64 operand);
+-
+-/* Implemented in nwoas_agx_mmio.c. */
+-bool nwoas_agx_resources_map(void);
+-bool nwoas_agx_broker_storage_init(void);
+-s64 nwoas_agx_power_command(u32 command, u64 sequence);
+-u32 nwoas_agx_power_state(void);
+ 
+ #endif
+diff -ruN m1n1-gpu-s240/src/nwoas_agx_contract.h m1n1-gpu-hv1/src/nwoas_agx_contract.h
+--- m1n1-gpu-s240/src/nwoas_agx_contract.h	2026-11-15 20:23:04
++++ m1n1-gpu-hv1/src/nwoas_agx_contract.h	2026-11-15 21:48:35
+@@ -1,16 +1,18 @@
+ /* SPDX-License-Identifier: MIT */
+ /*
+- * NWOAS S240 (J274 Mac mini): minimal stand-in for windows-on-m1's
++ * NWOAS S240 / gpu-hv1 (J274 Mac mini): minimal stand-in for windows-on-m1's
+  * hv_launch_contract.h (MIT, Copyright (c) 2026 paulsmir), reduced to the
+  * fields hv_agx_retained_backing.c reads. The J313 launch-contract machinery
+- * (schemas, CPU/IRQ snapshots, ADT digests) is NOT ported: on J274 the guest
+- * RAM description comes from the launcher through P_HV_NWOAS_AGX_ARM
+- * (nwoas_agx.c). Region kinds keep the upstream numbering so the copied
+- * backing check is unchanged. See THIRD_PARTY_NOTICES.md.
++ * (schemas, CPU/IRQ snapshots, ADT digests) is NOT ported. On J274 the guest
++ * RAM description is planned to come from the launcher through a new proxy
++ * command (step 2, not implemented; see port-j274/gpu/hv/README.md). Region
++ * kinds keep the upstream numbering so the copied backing check is unchanged.
++ * See THIRD_PARTY_NOTICES.md at the tree root.
+  */
+ #ifndef NWOAS_AGX_CONTRACT_H
+ #define NWOAS_AGX_CONTRACT_H
+ 
++#include <stdbool.h>
+ #include <stdint.h>
+ 
+ #define HV_CONTRACT_MAX_REGIONS 16
+--- m1n1-usb-s233/Makefile	2026-09-10 11:00:38
++++ m1n1-gpu-hv1/Makefile	2026-11-15 21:49:00
+@@ -175,6 +175,28 @@
+ 	math/exp2f_data.o \
+ 	math/powf.o \
+ 	math/powf_data.o
++
++# NWOAS gpu-hv1: AGX (GPU) HV port, step 1. Off unless `make NWOAS_AGX=1`.
++# Objects are pure logic plus the read-only ADT probe (nwoas_agx.o). NOT built:
++# hv_agx_power_platform.c (pmgr power calls) and hv_agx_retained_platform.c
++# (J313 launch contract, gpu-region RAM writes); see port-j274/gpu/hv/README.md.
++# With --gc-sections, unreferenced AGX code is dropped from the image.
++# NWOAS_AGX_PROBE=1 additionally calls nwoas_agx_probe() at the end of hv_init().
++AGX_OBJECTS := nwoas_agx.o hv_agx_config_snapshot.o hv_agx_firmware_prefix.o \
++	hv_agx_gpuva_v5.o hv_agx_gpuva_v5_mmio.o hv_agx_local_reserve.o \
++	hv_agx_power_broker.o hv_agx_retained_backing.o hv_agx_retained_mmio.o \
++	hv_agx_retained_root.o hv_agx_retained_tables.o
++ifeq ($(NWOAS_AGX),1)
++OBJECTS += $(AGX_OBJECTS)
++CFLAGS += -DNWOAS_AGX=1 -Isrc/agx_shared/include
++ifeq ($(NWOAS_AGX_PROBE),1)
++CFLAGS += -DNWOAS_AGX_PROBE=1
++endif
++else
++ifeq ($(NWOAS_AGX_PROBE),1)
++$(error NWOAS_AGX_PROBE=1 requires NWOAS_AGX=1)
++endif
++endif
+ 
+ BUILD_OBJS := $(patsubst %,build/%,$(OBJECTS))
+ BUILD_FP_OBJS := $(patsubst %,build/%,$(FP_OBJECTS))

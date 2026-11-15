@@ -29,10 +29,12 @@ draft for step 1 of `N/nwoas_scripts/plan-20261115/port/boot.md` §4.
 | xhci_base | 0x502280000 | 0x502280000 | FACT ADT usb-drd1 |
 | cpu_count | 8 | 8 | FACT |
 
-Offline check (`python3 -I tools/check_j274_layout.py`): every pinned address
+Offline check (`python3 -I -B tools/check_j274_layout.py`): every pinned address
 re-derives exactly from the J274 sizes; one reference rule fails on purpose
-(`low_mem_ipa < 0x1000`); one extra finding (`low_mem_size` > UINT32). These
-two are the S231 low-window design and are listed as GAP G-6.
+(`low_mem_ipa < 0x1000`, L-1); one extra finding (`low_mem_size` > UINT32, L-2).
+These two are the S231 low-window design and are listed as GAP G-6. The carveout
+check reports L-8 (section 3). The checker exits 1 until each of L-1, L-2 and L-8 is
+either fixed or accepted explicitly with `--allow`.
 
 ## 2. phys_base: ours moves every boot; how the reference handles it
 
@@ -89,3 +91,4 @@ Consequences for J274:
 | L-5 | RAM-LOW `[0x800000000,0x801504000)` mapped by S231 | not mapped by ref | HYPOTHESIS: probably unused by Mu/Windows; verify |
 | L-6 | ECAM `0x690000000` in ref is the real J274 apcie ECAM | hooking it would hide FL1100 USB-A, Ethernet, Wi-Fi | keep `0x700000000` (done in draft) |
 | L-7 | `nvme_vintid` is also hard-coded as 64 in `E/.../hv_irq_routes.h:24` | the layout value alone does not change it | J274 header constant 900 |
+| **L-8 (blocker)** | iBoot carveouts inside guest RAM `[0x850000000, 0xbe1000000)`. FACT (`config/j274-adt-facts.json`, Sep-06 dump `d6-adt.bin` sha256 cb773d76…5f7f): region-id-48 `[0x840500000,0x860500000)` overlaps ADT, firmware, boot args, virtual framebuffer and the RAM disk start; 19 ids in `[0x864000000,0x86fe38000)` lie inside the RAM disk (MEM-14 said 20; the extracted table has 19). region-id-46/47 end at 0x840400000/0x840500000, below `phys_base`, so they are not inside this draft window. region-id-24 `[0x801504000,0xbe1000000)` is the whole RAM region (= boot_args phys_base + mem_size) and is not counted. Owners UNKNOWN | the guest can read/write memory that iBoot reserved for a coprocessor. HYPOTHESIS: may be harmless (the natural S231 base already includes the same span); but if one of them belongs to the NVMe/ANS coprocessor, this is the one path here that could reach macOS storage | read the current boot's table and owners (`p.mcc_get_carveouts()`, ADT); then stage-2 unmap them, move `phys_base`/RAM disk, or accept with `--allow L-8`. `tools/check_j274_layout.py` reports each one as `CONFLICT L-8` |

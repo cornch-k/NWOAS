@@ -1,0 +1,489 @@
+{
+ "source_dump": "experiments/tahoe-afk-20260906/d6-adt.bin",
+ "source_sha256": "cb773d76e9cbeef596cc06621a2f8fbd7dc3546ee5e2b87428de77e5890d5f7f",
+ "parser": "m1n1_windows/proxyclient/m1n1/adt.py (load_adt)",
+ "interpreter": "m1n1_windows/.venv-hv/bin/python3 -I -B",
+ "command": "m1n1_windows/.venv-hv/bin/python3 -I -B port-j274/tools/extract_adt_facts.py experiments/tahoe-afk-20260906/d6-adt.bin port-j274/config/j274-adt-facts.json",
+ "python_version": "3.14.7",
+ "note": "offline extraction from a saved dump; the carveout table of the CURRENT boot may differ",
+ "compatible": [
+  "J274AP",
+  "Macmini9,1",
+  "AppleARM"
+ ],
+ "apcie_reg0": {
+  "base": "0x690000000",
+  "size": "0x10000000"
+ },
+ "disp0_external": 1,
+ "carveouts": [
+  {
+   "id": 164,
+   "base": "0x1fc000000",
+   "size": "0x30000",
+   "end": "0x1fc030000"
+  },
+  {
+   "id": 153,
+   "base": "0x1fc030000",
+   "size": "0x4000",
+   "end": "0x1fc034000"
+  },
+  {
+   "id": 154,
+   "base": "0x1fc034000",
+   "size": "0x4000",
+   "end": "0x1fc038000"
+  },
+  {
+   "id": 155,
+   "base": "0x1fc038000",
+   "size": "0x4000",
+   "end": "0x1fc03c000"
+  },
+  {
+   "id": 166,
+   "base": "0x1fc03c000",
+   "size": "0x10000",
+   "end": "0x1fc04c000"
+  },
+  {
+   "id": 168,
+   "base": "0x1fc04c000",
+   "size": "0x374000",
+   "end": "0x1fc3c0000"
+  },
+  {
+   "id": 258,
+   "base": "0x1fc1b4000",
+   "size": "0x4000",
+   "end": "0x1fc1b8000"
+  },
+  {
+   "id": 205,
+   "base": "0x1fc1b8000",
+   "size": "0x4000",
+   "end": "0x1fc1bc000"
+  },
+  {
+   "id": 203,
+   "base": "0x1fc1bc000",
+   "size": "0x4000",
+   "end": "0x1fc1c0000"
+  },
+  {
+   "id": 32,
+   "base": "0x23b500000",
+   "size": "0x80000",
+   "end": "0x23b580000"
+  },
+  {
+   "id": 36,
+   "base": "0x23df00000",
+   "size": "0x80000",
+   "end": "0x23df80000"
+  },
+  {
+   "id": 29,
+   "base": "0x23df00000",
+   "size": "0x20000",
+   "end": "0x23df20000"
+  },
+  {
+   "id": 31,
+   "base": "0x24ac00000",
+   "size": "0x250000",
+   "end": "0x24ae50000"
+  },
+  {
+   "id": 1,
+   "base": "0x800000000",
+   "size": "0x4000",
+   "end": "0x800004000"
+  },
+  {
+   "id": 11,
+   "base": "0x800004000",
+   "size": "0x30000",
+   "end": "0x800034000"
+  },
+  {
+   "id": 28,
+   "base": "0x800034000",
+   "size": "0x1a0000",
+   "end": "0x8001d4000"
+  },
+  {
+   "id": 26,
+   "base": "0x800034000",
+   "size": "0xb90000",
+   "end": "0x800bc4000"
+  },
+  {
+   "id": 61,
+   "base": "0x8001d4000",
+   "size": "0x28000",
+   "end": "0x8001fc000"
+  },
+  {
+   "id": 62,
+   "base": "0x8001fc000",
+   "size": "0x1c000",
+   "end": "0x800218000"
+  },
+  {
+   "id": 63,
+   "base": "0x800218000",
+   "size": "0x4000",
+   "end": "0x80021c000"
+  },
+  {
+   "id": 64,
+   "base": "0x80021c000",
+   "size": "0x4000",
+   "end": "0x800220000"
+  },
+  {
+   "id": 49,
+   "base": "0x800220000",
+   "size": "0x704000",
+   "end": "0x800924000"
+  },
+  {
+   "id": 25,
+   "base": "0x800bc4000",
+   "size": "0x940000",
+   "end": "0x801504000"
+  },
+  {
+   "id": 24,
+   "base": "0x801504000",
+   "size": "0x3dfafc000",
+   "end": "0xbe1000000"
+  },
+  {
+   "id": 45,
+   "base": "0x802400000",
+   "size": "0x20000000",
+   "end": "0x822400000"
+  },
+  {
+   "id": 46,
+   "base": "0x822400000",
+   "size": "0x1e000000",
+   "end": "0x840400000"
+  },
+  {
+   "id": 47,
+   "base": "0x840400000",
+   "size": "0x100000",
+   "end": "0x840500000"
+  },
+  {
+   "id": 48,
+   "base": "0x840500000",
+   "size": "0x20000000",
+   "end": "0x860500000"
+  },
+  {
+   "id": 23,
+   "base": "0x864000000",
+   "size": "0x4000",
+   "end": "0x864004000"
+  },
+  {
+   "id": 167,
+   "base": "0x864004000",
+   "size": "0x7c00000",
+   "end": "0x86bc04000"
+  },
+  {
+   "id": 163,
+   "base": "0x86bc08000",
+   "size": "0x40000",
+   "end": "0x86bc48000"
+  },
+  {
+   "id": 165,
+   "base": "0x86bc4c000",
+   "size": "0x440000",
+   "end": "0x86c08c000"
+  },
+  {
+   "id": 159,
+   "base": "0x86c090000",
+   "size": "0x1000000",
+   "end": "0x86d090000"
+  },
+  {
+   "id": 181,
+   "base": "0x86d094000",
+   "size": "0x10000",
+   "end": "0x86d0a4000"
+  },
+  {
+   "id": 190,
+   "base": "0x86d0a4000",
+   "size": "0x20000",
+   "end": "0x86d0c4000"
+  },
+  {
+   "id": 264,
+   "base": "0x86d0c4000",
+   "size": "0xa0000",
+   "end": "0x86d164000"
+  },
+  {
+   "id": 182,
+   "base": "0x86d164000",
+   "size": "0x68000",
+   "end": "0x86d1cc000"
+  },
+  {
+   "id": 266,
+   "base": "0x86d1cc000",
+   "size": "0x4000",
+   "end": "0x86d1d0000"
+  },
+  {
+   "id": 265,
+   "base": "0x86d1d0000",
+   "size": "0x40000",
+   "end": "0x86d210000"
+  },
+  {
+   "id": 193,
+   "base": "0x86d210000",
+   "size": "0x400000",
+   "end": "0x86d610000"
+  },
+  {
+   "id": 194,
+   "base": "0x86d610000",
+   "size": "0x400000",
+   "end": "0x86da10000"
+  },
+  {
+   "id": 176,
+   "base": "0x86da10000",
+   "size": "0x400000",
+   "end": "0x86de10000"
+  },
+  {
+   "id": 269,
+   "base": "0x86de10000",
+   "size": "0x4000",
+   "end": "0x86de14000"
+  },
+  {
+   "id": 267,
+   "base": "0x86de14000",
+   "size": "0x4000",
+   "end": "0x86de18000"
+  },
+  {
+   "id": 259,
+   "base": "0x86de18000",
+   "size": "0x4000",
+   "end": "0x86de1c000"
+  },
+  {
+   "id": 180,
+   "base": "0x86de1c000",
+   "size": "0x2000000",
+   "end": "0x86fe1c000"
+  },
+  {
+   "id": 179,
+   "base": "0x86fe1c000",
+   "size": "0x1c000",
+   "end": "0x86fe38000"
+  },
+  {
+   "id": 5,
+   "base": "0xbe1000000",
+   "size": "0x8000",
+   "end": "0xbe1008000"
+  },
+  {
+   "id": 4,
+   "base": "0xbe1008000",
+   "size": "0x1c58000",
+   "end": "0xbe2c60000"
+  },
+  {
+   "id": 74,
+   "base": "0xbe2c60000",
+   "size": "0x1000000",
+   "end": "0xbe3c60000"
+  },
+  {
+   "id": 73,
+   "base": "0xbe3c60000",
+   "size": "0x300000",
+   "end": "0xbe3f60000"
+  },
+  {
+   "id": 14,
+   "base": "0xbe3f60000",
+   "size": "0x1500000",
+   "end": "0xbe5460000"
+  },
+  {
+   "id": 95,
+   "base": "0xbe5460000",
+   "size": "0xc0000",
+   "end": "0xbe5520000"
+  },
+  {
+   "id": 94,
+   "base": "0xbe5520000",
+   "size": "0x4000",
+   "end": "0xbe5524000"
+  },
+  {
+   "id": 57,
+   "base": "0xbe5524000",
+   "size": "0x1000000",
+   "end": "0xbe6524000"
+  },
+  {
+   "id": 50,
+   "base": "0xbe6524000",
+   "size": "0x300000",
+   "end": "0xbe6824000"
+  },
+  {
+   "id": 98,
+   "base": "0xbe6824000",
+   "size": "0x188000",
+   "end": "0xbe69ac000"
+  },
+  {
+   "id": 79,
+   "base": "0xbe69ac000",
+   "size": "0x48000",
+   "end": "0xbe69f4000"
+  },
+  {
+   "id": 77,
+   "base": "0xbe69f4000",
+   "size": "0x42c000",
+   "end": "0xbe6e20000"
+  },
+  {
+   "id": 2,
+   "base": "0xbe6e20000",
+   "size": "0x19000000",
+   "end": "0xbffe20000"
+  },
+  {
+   "id": 97,
+   "base": "0xbffe20000",
+   "size": "0x34000",
+   "end": "0xbffe54000"
+  },
+  {
+   "id": 96,
+   "base": "0xbffe54000",
+   "size": "0x40000",
+   "end": "0xbffe94000"
+  },
+  {
+   "id": 80,
+   "base": "0xbffe94000",
+   "size": "0x18000",
+   "end": "0xbffeac000"
+  },
+  {
+   "id": 69,
+   "base": "0xbffeac000",
+   "size": "0x8000",
+   "end": "0xbffeb4000"
+  },
+  {
+   "id": 70,
+   "base": "0xbffeb4000",
+   "size": "0x28000",
+   "end": "0xbffedc000"
+  },
+  {
+   "id": 68,
+   "base": "0xbffedc000",
+   "size": "0x28000",
+   "end": "0xbfff04000"
+  },
+  {
+   "id": 17,
+   "base": "0xbfff04000",
+   "size": "0x8000",
+   "end": "0xbfff0c000"
+  },
+  {
+   "id": 18,
+   "base": "0xbfff0c000",
+   "size": "0x28000",
+   "end": "0xbfff34000"
+  },
+  {
+   "id": 16,
+   "base": "0xbfff34000",
+   "size": "0x28000",
+   "end": "0xbfff5c000"
+  },
+  {
+   "id": 90,
+   "base": "0xbfff5c000",
+   "size": "0x4000",
+   "end": "0xbfff60000"
+  },
+  {
+   "id": 76,
+   "base": "0xbfff60000",
+   "size": "0xc000",
+   "end": "0xbfff6c000"
+  },
+  {
+   "id": 55,
+   "base": "0xbfff6c000",
+   "size": "0x4000",
+   "end": "0xbfff70000"
+  },
+  {
+   "id": 56,
+   "base": "0xbfff70000",
+   "size": "0x4000",
+   "end": "0xbfff74000"
+  },
+  {
+   "id": 217,
+   "base": "0xbfff74000",
+   "size": "0x4000",
+   "end": "0xbfff78000"
+  },
+  {
+   "id": 52,
+   "base": "0xbfff78000",
+   "size": "0x40000",
+   "end": "0xbfffb8000"
+  },
+  {
+   "id": 8,
+   "base": "0xbfffb8000",
+   "size": "0x4000",
+   "end": "0xbfffbc000"
+  },
+  {
+   "id": 7,
+   "base": "0xbfffbc000",
+   "size": "0x4000",
+   "end": "0xbfffc0000"
+  },
+  {
+   "id": 81,
+   "base": "0xbfffc0000",
+   "size": "0x40000",
+   "end": "0xc00000000"
+  }
+ ]
+}

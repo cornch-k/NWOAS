@@ -7,12 +7,18 @@ the serial port).  Default mode prints the plan and touches nothing; `--run` exe
   1. guards: serial port free (lsof), ADT compatible contains j274, ADT addresses equal the
      J274 values recorded offline (refuse on any mismatch)
   2. p.pcie_init()            (same proxy call as usb-s174/guest_map.py:7)
-  3. SMC key gP0d <- 0x800001 (same mechanism as proxyclient/experiments/pcie_enable_devices.py
-                               and m1n1 C dcp.c smc_write_u32(..., 0x800001))
-  4. port-0 only PERST#/REFCLK/LTSSM bring-up, copied step for step from the UEFI
-     AppleSiliconPciPlatformDxe.c port setup (itself a port of Linux pcie-apple.c)
+  3. SMC key gP0d <- 0x800001 (the gP0d write of proxyclient/experiments/pcie_enable_devices.py:13-18
+                               and m1n1 C dcp.c smc_write_u32(..., 0x800001)).  That script ALSO
+                               writes gP1a <- 1 (line 16); this probe deliberately does NOT
+                               (open hypothesis, README section 6)
+  4. port-0 only PERST#/REFCLK/LTSSM bring-up in the UEFI AppleSiliconPciPlatformDxe.c order
+     (itself a port of Linux pcie-apple.c), plus an explicit controller-side reset (PORT_PERST
+     bit 0 cleared) while the PERST# GPIO is asserted, because m1n1 pcie_init already set that
+     bit (m1n1 src/pcie.c:592)
   5. read bus 1 dev 0 fn 0/1 config space: IDs, class, BAR sizes, PCIe DevCtl/LnkSta
-  6. ALWAYS (finally): restore root-port bus numbers, assert PERST#, gP0d <- 0x800000, SMC quiesce
+  6. ALWAYS (finally), each step independently with its own time limit and error record:
+     restore root-port bus numbers, assert PERST#, clear PORT_PERST_OFF, gP0d <- 0x800000,
+     SMC quiesce, check link down, compare the port-1 (FL1100) snapshot
 
 Never touches storage (no NVMe/ANS calls).  Never writes FL1100 (port 1) registers: every MMIO
 write goes through an exact-address allowlist.  This is a hardware observation tool; a PASS here
@@ -26,6 +32,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -53,6 +60,9 @@ EXPECT = {
 SMC_WIFI_KEY = 'gP0d'           # 'gP' + 2 hex digits of SMC GPIO 13 (experiments/smc.py:20-25)
 SMC_GPIO_ON = 0x800001          # pcie_enable_devices.py:14, m1n1 dcp.c smc_write_u32(.., 0x800001)
 SMC_GPIO_OFF = 0x800000         # experiments/smc.py:28 (commented 0x800000 | 0x0)
+# get_key_info() returns (length, 4-char type, flags) (proxyclient m1n1/fw/smc.py:134-139).
+# Only plain 32-bit integer-like types are accepted; anything else refuses before the write.
+SMC_KEY_TYPES = ('ui32', 'hex_')
 
 # Port registers (UEFI Include AppleSiliconPciPlatformDxe.h; same names as Linux pcie-apple.c)
 PORT_LTSSMCTL, LTSSMCTL_START = 0x080, 0x1
@@ -75,6 +85,26 @@ BT_ID = 0x5F6914E4              # 14e4:5f69 (recovered-j274.dts bluetooth@0,1)
 APPLE_VENDOR = 0x106B
 
 PORT1_SNAPSHOT_OFFS = (PORT_LINKSTS, PORT_APPCLK, PORT_STATUS, PORT_REFCLK, PORT_PERST)
+
+# Per-step time limits (s) of the power-down sequence. Each step has its own alarm, so a stall in
+# one step cannot use up the time of the next one.
+POWER_DOWN_STEP_SECONDS = {'root_bus_restore': 5, 'perst_gpio_assert': 5, 'perst_off_clear': 5,
+                           'smc_off': 10, 'smc_stop': 10, 'link_check': 5, 'port1_snapshot': 10}
+
+# --- Wi-Fi bridge-window prediction (HYPOTHESIS; pure arithmetic, no hardware access) ---
+# FACT: our Mu T8103 build has the 32-bit PCI aperture at bus 0xC0000000, CPU = bus + 0x600000000
+#   (apple_silicon_platforms_mu/Silicon/Apple/T810XFamilyPkg/T810XFamilyPkg.dsc.inc:85-87).
+# FACT: the host bridge allocates bottom-up from the aperture base
+#   (MU_BASECORE/MdeModulePkg/Bus/Pci/PciHostBridgeDxe/PciHostBridge.c:779-827, AllocateResource).
+# FACT: children are ordered by descending alignment (PciBusDxe/PciResourceSupport.c:93-127) and a
+#   64-bit non-prefetchable BAR behind a P2P bridge is degraded to MEM32 (same file :1164-1172).
+# FACT: today root port 1 (FL1100) owns bus 0xC0000000..0xC00FFFFF (usb-s232 HANDOFF section 9).
+# HYPOTHESIS: the real window is whatever UEFI assigns once Wi-Fi is powered before UEFI; it has to
+#   be read back from config space (S235W-style ECAM dump). This only predicts it from BAR sizes.
+LOW_MMIO_BUS_BASE = 0xC0000000
+LOW_MMIO_CPU_OFFSET = 0x600000000
+BRIDGE_MEM_GRANULARITY = 0x100000
+FL1100_WINDOW_LEN = 0x100000
 
 
 class Refusal(Exception):
@@ -187,6 +217,71 @@ def build_allowlist(f):
     for fn in (0, 1):                                            # endpoint BARs (sizing+restore)
         allowed |= {ecam_addr(ecam, 1, 0, fn, 0x10 + 4 * i) for i in range(6)}
     return allowed
+
+
+def _align_up(v, a):
+    return (v + a - 1) // a * a
+
+
+def predict_wifi_window(functions):
+    """HYPOTHESIS: where UEFI would put the root-port-0 (Wi-Fi) memory window once Wi-Fi is
+    powered before UEFI, from the BAR sizes measured here.  See the constants above for the
+    rules used.  Guest RAM in the low window has guest-physical == bus address, so this window
+    must be kept out of guest RAM exactly like the FL1100 one (usb-s236 badmemorylist)."""
+    mem, pmem64, io = [], [], []
+    for fn in sorted(functions):
+        info = functions[fn]
+        if not info.get('present', True):
+            continue
+        bars = info.get('bars')
+        if not isinstance(bars, list):
+            return {'available': False, 'hypothesis': True,
+                    'reason': f'fn{fn} BAR sizes not measured ({bars})'}
+        for b in bars:
+            size = int(b['size'], 16)
+            if not size:
+                continue
+            if b['type'] == 'io':
+                io.append(size)
+            elif b['type'] == 'mem64' and b.get('prefetch'):
+                pmem64.append(size)
+            else:
+                mem.append(size)
+    out = {'available': True, 'hypothesis': True,
+           'note': 'prediction from EDK2 allocation rules; the real window must be read from config '
+                   'space after UEFI enumerates with Wi-Fi powered',
+           'mem32_bar_sizes': [hex(s) for s in sorted(mem, reverse=True)],
+           'pmem64_bar_sizes': [hex(s) for s in pmem64], 'io_bar_sizes': [hex(s) for s in io]}
+    if pmem64:
+        out['pmem64_note'] = ('64-bit prefetchable BARs go to the 64-bit aperture at 0x400000000 '
+                              '(T810XFamilyPkg.dsc.inc:92), which is not in the low guest-RAM window')
+    if io:
+        out['io_note'] = 'I/O BARs cannot be assigned (no I/O aperture, AppleSiliconPciHostBridgeLib.c)'
+    if not mem:
+        out['wifi_window_bus'] = None
+        return out
+    off = 0
+    for s in sorted(mem, reverse=True):
+        off = _align_up(off, s) + s
+    length = _align_up(off, BRIDGE_MEM_GRANULARITY)
+    align = max(max(mem), BRIDGE_MEM_GRANULARITY)
+    if align > FL1100_WINDOW_LEN:
+        wifi = LOW_MMIO_BUS_BASE
+        fl = _align_up(wifi + length, FL1100_WINDOW_LEN)
+        order = 'Wi-Fi window first (larger alignment)'
+    else:
+        fl = LOW_MMIO_BUS_BASE
+        wifi = fl + FL1100_WINDOW_LEN
+        order = 'equal 1 MiB alignment: order follows enumeration/insertion (extra hypothesis)'
+    out.update({
+        'window_alignment': hex(align), 'window_length': hex(length), 'order': order,
+        'wifi_window_bus': [hex(wifi), hex(wifi + length - 1)],
+        'wifi_window_cpu': [hex(wifi + LOW_MMIO_CPU_OFFSET), hex(wifi + length - 1 + LOW_MMIO_CPU_OFFSET)],
+        'wifi_badmemorylist_pfns': [hex(wifi >> 12), hex((wifi + length - 1) >> 12)],
+        'fl1100_window_bus': [hex(fl), hex(fl + FL1100_WINDOW_LEN - 1)],
+        'fl1100_moves': fl != LOW_MMIO_BUS_BASE,
+    })
+    return out
 
 
 # ----------------------------------------------------------------------------- probe
@@ -302,8 +397,10 @@ class WifiProbe:
             self.smc.start()
             info = self.smc.key_info(SMC_WIFI_KEY)
             self.step('smc key info', key=SMC_WIFI_KEY, info=str(info))
-            if not info or info[0] != 4:
-                raise Refusal(f'SMC key {SMC_WIFI_KEY} info {info!r} is not a 4-byte key')
+            if (not isinstance(info, (tuple, list)) or len(info) < 2 or info[0] != 4
+                    or info[1] not in SMC_KEY_TYPES):
+                raise Refusal(f'SMC key {SMC_WIFI_KEY} info {info!r} is not a 4-byte '
+                              f'{"/".join(SMC_KEY_TYPES)} key')
             self.smc_on_attempted = True
             self.smc.write32(SMC_WIFI_KEY, SMC_GPIO_ON)
         self.step('smc write', key=SMC_WIFI_KEY, value=SMC_GPIO_ON)
@@ -334,6 +431,13 @@ class WifiProbe:
         orig_gpio = m.r32(gpio_reg)
         self.res['perst_gpio_original'] = hex(orig_gpio)
         self._perst(assert_=True)
+        # m1n1 pcie_init already set PORT_PERST bit 0 (= RESET_DIS, m1n1 src/pcie.c:592), so the
+        # later PERST_OFF set alone would be a no-op. Clear it here so the controller-side reset
+        # really is asserted around REFCLK setup, as in a cold UEFI/Linux bring-up.
+        # HYPOTHESIS: whether this matters for link training is not known.
+        before, after = m.rmw(port + PORT_PERST, PERST_OFF, 0)
+        self.res['port0_perst_reg'] = {'before': hex(before), 'after_clear': hex(after)}
+        self.step('port 0 controller reset asserted', before=before, after=after)
         m.rmw(phy + PHY_LANE_CTL, 0, CFGACC)
         m.rmw(phy + PHY_LANE_CFG, 0, REFCLK0REQ)
         ok, v = self.poll(phy + PHY_LANE_CFG, REFCLK0ACK, REFCLK0ACK, 50)
@@ -396,6 +500,7 @@ class WifiProbe:
         for fn in (0, 1):
             fns[fn] = self._read_function(fn)
         self.res['functions'] = fns
+        self.res['bridge_window_prediction'] = predict_wifi_window(fns)
         ok = fns[0]['id'] == hex(WIFI_ID) and fns[1]['id'] == hex(BT_ID)
         self.res['verdict'] = 'PASS_IDS' if ok else 'ID_MISMATCH'
 
@@ -482,41 +587,67 @@ class WifiProbe:
             ptr = (v >> 8) & 0xFC
         return None
 
-    def _power_down(self):
-        pd = {'perst_asserted': False, 'smc_off_written': False, 'smc_stopped': False}
+    def _pd_step(self, pd, name, fn):
+        """Run one power-down step on its own: own time limit, own error record. A failure here
+        never prevents the following steps from being attempted."""
         try:
-            with self.phase('power-down', 20):
-                if self.root_bus_saved is not None:
-                    try:
-                        with self.guarded():
-                            self.m.w32(ecam_addr(self.f['ecam'], 0, 0, 0, 0x18), self.root_bus_saved)
-                        pd['root_bus_restored'] = True
-                    except Exception as e:
-                        pd['root_bus_restore_error'] = f'{type(e).__name__}: {e}'
-                if self.port0_touched or self.smc_on_attempted:
-                    self._perst(assert_=True)
-                    self.m.rmw(self.f['port0'] + PORT_PERST, PERST_OFF, 0)
-                    pd['perst_asserted'] = True
-                if self.smc is not None:
-                    if self.smc_on_attempted:
-                        self.smc.write32(SMC_WIFI_KEY, SMC_GPIO_OFF)
-                        pd['smc_off_written'] = True
-                    self.smc.stop()
-                    pd['smc_stopped'] = True
-                if self.port0_touched or self.smc_on_attempted:
-                    down, ls = self.poll(self.f['port0'] + PORT_LINKSTS, LINKSTS_UP, 0, 200)
-                    pd['link_down_after'] = down
-                if 'port1_before' in self.res:
-                    after = self.port1_snapshot()
-                    self.res['port1_after'] = after
-                    pd['port1_unchanged'] = after == self.res['port1_before']
+            with self.phase(f'power-down:{name}', POWER_DOWN_STEP_SECONDS[name]):
+                value = fn()
         except Exception as e:
-            pd['error'] = f'{type(e).__name__}: {e}'
-        needed = self.smc_on_attempted
-        pd['confirmed'] = (not needed) or (pd['smc_off_written'] and pd['perst_asserted']
-                                          and pd['smc_stopped'] and 'error' not in pd)
+            pd['steps'][name] = 'error'
+            pd['errors'][name] = f'{type(e).__name__}: {e}'
+            return False, None
+        pd['steps'][name] = 'ok'
+        return True, value
+
+    def _restore_root_bus(self):
+        with self.guarded():
+            self.m.w32(ecam_addr(self.f['ecam'], 0, 0, 0, 0x18), self.root_bus_saved)
+
+    def _power_down(self):
+        f = self.f
+        pd = {'steps': {}, 'errors': {}, 'perst_asserted': False, 'controller_reset_asserted': False,
+              'smc_off_written': False, 'smc_stopped': False}
+        powered = self.port0_touched or self.smc_on_attempted
+        required = []
+        if self.root_bus_saved is not None:
+            required.append('root_bus_restore')
+            pd['root_bus_restored'], _ = self._pd_step(pd, 'root_bus_restore', self._restore_root_bus)
+        if powered:
+            required += ['perst_gpio_assert', 'perst_off_clear']
+            pd['perst_asserted'], _ = self._pd_step(pd, 'perst_gpio_assert',
+                                                    lambda: self._perst(assert_=True))
+            pd['controller_reset_asserted'], _ = self._pd_step(
+                pd, 'perst_off_clear', lambda: self.m.rmw(f['port0'] + PORT_PERST, PERST_OFF, 0))
+        if self.smc is not None:
+            if self.smc_on_attempted:
+                required.append('smc_off')
+                pd['smc_off_written'], _ = self._pd_step(
+                    pd, 'smc_off', lambda: self.smc.write32(SMC_WIFI_KEY, SMC_GPIO_OFF))
+            required.append('smc_stop')
+            pd['smc_stopped'], _ = self._pd_step(pd, 'smc_stop', self.smc.stop)
+        if powered:
+            required.append('link_check')
+            ok, r = self._pd_step(pd, 'link_check',
+                                  lambda: self.poll(f['port0'] + PORT_LINKSTS, LINKSTS_UP, 0, 200))
+            pd['link_down_after'] = r[0] if ok else None
+            if ok:
+                pd['linksts_after'] = hex(r[1])
+        if 'port1_before' in self.res:
+            ok, after = self._pd_step(pd, 'port1_snapshot', self.port1_snapshot)
+            if ok:
+                self.res['port1_after'] = after
+                pd['port1_unchanged'] = after == self.res['port1_before']
+            else:
+                pd['port1_unchanged'] = None        # unknown: snapshot could not be taken
+        pd['required_steps'] = required
+        # Confirmed only if every required step succeeded AND (when anything was powered) the
+        # link was actually seen down afterwards. A link that stays up is NOT a power-down.
+        pd['confirmed'] = (all(pd['steps'].get(s) == 'ok' for s in required)
+                           and (not powered or pd.get('link_down_after') is True))
         self.res['power_down'] = pd
-        self.step('power down', confirmed=pd['confirmed'])
+        self.step('power down', confirmed=pd['confirmed'], errors=sorted(pd['errors']) or 'none',
+                  port1_unchanged=pd.get('port1_unchanged', 'n/a'))
 
 
 # ----------------------------------------------------------------------------- real proxy glue
@@ -576,7 +707,8 @@ PLAN = """S240 plan (nothing executed; add --run on a fresh idle m1n1 proxy):
   guards : lsof on {ports}; ADT j274 + recorded addresses; FL1100 port 1 never written
   1 pcie_init (proxy)            2 SMC {key} <- {on:#x}  (settle {settle} ms)
   3 port 0 PERST#/REFCLK/LTSSM   4 read 1:0.0 and 1:0.1 config, size BARs (restore)
-  5 finally: restore root bus regs, PERST# low, SMC {key} <- {off:#x}, SMC quiesce
+  5 finally (each step on its own, own time limit): restore root bus regs, PERST# low,
+    PORT_PERST_OFF clear, SMC {key} <- {off:#x}, SMC quiesce, link-down check, port-1 compare
   then power-cycle the Mac mini before any launcher."""
 
 
@@ -603,6 +735,28 @@ def parse_args(argv):
 
 
 EXIT = {'PASS_IDS': 0, 'LINK_DOWN': 1, 'ID_MISMATCH': 1, 'NO_CONFIG_RESPONSE': 1}
+EXIT_ERROR, EXIT_REFUSED, EXIT_POWER_UNCONFIRMED, EXIT_PORT1, EXIT_CONNECT = 2, 3, 4, 5, 6
+
+
+def make_run_dir(out_dir, now=None):
+    """Unique run directory, created BEFORE any proxy access (a same-second second run gets its
+    own directory; an unwritable out-dir refuses before anything is touched)."""
+    stamp = (now or datetime.datetime.now()).strftime('%Y%m%d-%H%M%S')
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f'run-{stamp}-', dir=str(out_dir)))
+
+
+def write_result(out, res, log):
+    """Write result.json; if that fails, print the whole result so the log still has it."""
+    try:
+        (out / 'result.json').write_text(json.dumps(res, indent=2) + '\n')
+    except OSError as e:
+        log(f'WARNING: could not write {out / "result.json"} ({type(e).__name__}: {e}); '
+            'full result follows on the RESULT_JSON line')
+        log('RESULT_JSON ' + json.dumps(res))
+        return False
+    log(f'OUTPUT {out / "result.json"}')
+    return True
 
 
 def main(argv=None, runner=subprocess.run, connect=None, phase=alarm_phase, log=print):
@@ -616,36 +770,52 @@ def main(argv=None, runner=subprocess.run, connect=None, phase=alarm_phase, log=
         check_serial_free(ports, runner)
     except Refusal as e:
         log(f'STOP: {e}')
-        return 3
+        return EXIT_REFUSED
+    try:
+        out = make_run_dir(a.out_dir)
+    except OSError as e:
+        log(f'STOP: cannot create a run directory under {a.out_dir} ({type(e).__name__}: {e}); '
+            'nothing was touched')
+        return EXIT_REFUSED
     connect = connect or connect_real
     close = None
+    base_res = {'experiment': 'S240-wifi-m1', 'writes_to_storage': False, 'hardware_success_claim': False}
     try:
         try:
             p, facts, smc_factory, close = connect(a)
         except Refusal as e:
             log(f'STOP: {e}')
-            return 3
-        except Exception as e:  # nothing has been written yet
-            log(f'STOP: proxy connect failed: {type(e).__name__}: {e}')
-            return 2
+            write_result(out, dict(base_res, verdict=f'REFUSED: {e}',
+                                   power_down={'confirmed': True, 'nothing_was_done': True}), log)
+            return EXIT_REFUSED
+        except Exception as e:  # no power-on step was attempted
+            log(f'STOP: proxy connect failed: {type(e).__name__}: {e}. No power-on step was attempted.')
+            write_result(out, dict(base_res, verdict=f'CONNECT_FAILED: {type(e).__name__}: {e}',
+                                   power_down={'confirmed': True, 'nothing_was_done': True}), log)
+            return EXIT_CONNECT
         probe = WifiProbe(p, facts, smc_factory, a, phase=phase, log=log)
         res = probe.run()
     finally:
         if close:
             close()
     res['facts'] = {k: (hex(v) if isinstance(v, int) else v) for k, v in facts.items()}
-    out = a.out_dir / ('run-' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
-    out.mkdir(parents=True, exist_ok=False)
-    (out / 'result.json').write_text(json.dumps(res, indent=2) + '\n')
-    log(json.dumps({k: res.get(k) for k in ('verdict', 'functions', 'link_up', 'power_down')}, indent=2))
-    log(f'OUTPUT {out / "result.json"}')
+    log(json.dumps({k: res.get(k) for k in ('verdict', 'functions', 'link_up', 'power_down',
+                                            'bridge_window_prediction')}, indent=2))
+    write_result(out, res, log)
     v = res.get('verdict', 'ERROR')
-    if not res['power_down']['confirmed']:
-        log('STOP: power-down NOT confirmed. Power-cycle the Mac mini before anything else.')
-        return 4
+    pd = res['power_down']
+    if not pd['confirmed']:
+        log(f'STOP: power-down NOT confirmed (errors={sorted(pd.get("errors", {}))}, '
+            f'link_down_after={pd.get("link_down_after")}). Power-cycle the Mac mini before anything '
+            'else; if the power button does not respond, pull mains power.')
+        return EXIT_POWER_UNCONFIRMED
+    if 'port1_before' in res and pd.get('port1_unchanged') is not True:
+        log(f'STOP: FL1100 port-1 state changed or could not be re-read '
+            f'(port1_unchanged={pd.get("port1_unchanged")}). Power-cycle the Mac mini before any launcher.')
+        return EXIT_PORT1
     if v.startswith('REFUSED'):
-        return 3
-    code = EXIT.get(v.split(' ')[0], 2)
+        return EXIT_REFUSED
+    code = EXIT.get(v.split(' ')[0], EXIT_ERROR)
     log(f'S240 verdict {v}. This is a config-space observation only, not a driver or boot result.')
     return code
 

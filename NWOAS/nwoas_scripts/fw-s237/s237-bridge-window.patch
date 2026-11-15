@@ -1,0 +1,47 @@
+--- a/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
++++ b/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
+@@ -393,6 +393,37 @@
+     NWOAS_DMA_WIN_SIZE
+     );
+   //
++  // NWOAS S237: withhold the PCIe root-port memory window from the low window.
++  // Guest-physical == PCI bus address inside [NWOAS_DMA_WIN_BASE, +NWOAS_DMA_WIN_SIZE)
++  // (DSDT SCB0 _DMA, _TRA = 0; DART flat window). PciBusDxe assigns 32-bit BARs from
++  // the bottom of the PcdPciMmio32Base aperture, so the FL1100 BAR is bus 0xC0000000
++  // and root port 1 decodes [0xC0000000, 0xC00FFFFF] (S235W ECAM read). A device
++  // read/write whose bus address falls inside its own upstream bridge window is not
++  // forwarded to the DART/RAM (S235V: bulk-IN data for TRB buffers 0xC0010000..
++  // 0xC00EFFFF never arrived). That 1 MiB must not be RAM for UEFI or any OS.
++  //
++  // Not read from the live bridge: this runs in PEI, before PciBusDxe programs the
++  // windows, and later reservation cannot guarantee the pages are still free. The
++  // base therefore follows the aperture PCD; the size is the PCI-PCI bridge memory
++  // window granularity (1 MiB), which covers every BAR currently behind root port 1
++  // (one 64 KiB BAR). If another non-prefetchable BAR or bridge is ever assigned
++  // above it, this size must grow with it (check the S235W "S235 ECAM" lines).
++  //
++  {
++    EFI_PHYSICAL_ADDRESS  BridgeWindowBase = (EFI_PHYSICAL_ADDRESS)FixedPcdGet32 (PcdPciMmio32Base);
++    UINT32                BridgeWindowSize = SIZE_1MB;
++
++    if ((BridgeWindowBase >= NWOAS_DMA_WIN_BASE) &&
++        (BridgeWindowBase + BridgeWindowSize <= NWOAS_DMA_WIN_BASE + NWOAS_DMA_WIN_SIZE) &&
++        ReserveMemoryRegion (BridgeWindowBase, BridgeWindowSize)) {
++      DEBUG ((DEBUG_ERROR, "HVLOG: S237 reserved PCIe bridge window base=%llx bytes=%x\n",
++              (UINT64)BridgeWindowBase, BridgeWindowSize));
++    } else {
++      DEBUG ((DEBUG_ERROR, "HVLOG: S237 could NOT reserve PCIe bridge window base=%llx bytes=%x -- USB-A DMA into it is unsafe\n",
++              (UINT64)BridgeWindowBase, BridgeWindowSize));
++    }
++  }
++  //
+   // NWOAS EXP-5 5c Method A (design §4.4 recommends REMOVAL): the window's
+   // BuildMemoryAllocationHob(..., EfiBootServicesData) is REMOVED so the window is a PURE Conventional
+   // pool (free from before ExitBootServices, both usable AND reclaimable by Windows). The prior 5b
+--- a/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.inf
++++ b/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.inf
+@@ -70,3 +70,4 @@
+ [FixedPcd]
+   gAppleSiliconPkgTokenSpaceGuid.PcdBootArgsPointer
+   gAppleSiliconPkgTokenSpaceGuid.PcdAdtPointer
++  gArmTokenSpaceGuid.PcdPciMmio32Base

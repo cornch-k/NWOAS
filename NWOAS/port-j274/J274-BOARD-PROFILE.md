@@ -60,7 +60,7 @@ Status: **FACT** = read from a saved J274 log/dump or our source at the cited pl
 | MEM-11 | advertised RAM shrink (S102) | none (`hv_autonomous_runtime.c:265-266`) | `0x3a45dc000 → 0x2a45dc000` | FACT | LOG:350; `guest_module.py:44-55`; `NwoasHideHighRamDxe.c:374-377` |
 | MEM-12 | RAM-LOW identity map | not mapped | `[0x800000000,0x801504000)` HW | FACT | LOG:407 |
 | MEM-13 | RAM above platform end | not mapped (spec 2026-11-06) | two HW ranges; HDMI scanout at `0xbe3f60000` lives there | FACT | LOG:408-412, :279 |
-| MEM-14 | iBoot carveouts in window | 13 ids in `0x860500000..0x86f518000` | ids 46/47/48 (`0x822400000..0x860500000`) + 20 ids in `0x864000000..0x86fe38000` | FACT (Sep dump) | ADT `/chosen/carveout-memory-map` |
+| MEM-14 | iBoot carveouts in window | 13 ids in `0x860500000..0x86f518000` | ids 46/47/48 (`0x822400000..0x860500000`; only 48 reaches into the draft window, 46/47 end below `0x850000000`) + 19 ids in `0x864000000..0x86fe38000` (count corrected 2026-11-15 from `config/j274-adt-facts.json`; was 20). Blocker L-8 | FACT (Sep dump) | ADT `/chosen/carveout-memory-map` |
 | FB-1 | framebuffer | `0x85f000000` 2560x1600 s=10240 | scanout 1280x720 s=5120 at vram `0xbe3f60000` | FACT | LOG:278-279 |
 | FB-2 | default display flag | physical | must be none (0x0) | FACT | ID-3/ID-4 |
 | IO-1 | emulated NVMe ECAM | `0x690000000` | `0x700000000` | FACT | `guest_module.py:22`; LOG:404; our `MCFG.aslc:46-47` |

@@ -1,0 +1,2 @@
+22:09:49 START launcher=fw-s237-guest-test.sh tag=s237 cur=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-s236final-20261115-213628-c0.out
+22:09:59 pre B2-revert-badmemory.cmd: DELRC=0 S236 B2 COMPLETE 
