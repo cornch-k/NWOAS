@@ -128,3 +128,25 @@ python3 -I nwoas_scripts/fw-s237/diff_report.py
 - If Wi-Fi/Ethernet drivers ever get BARs in the 32-bit aperture, their bridge windows land above 0xC0100000
   and are NOT covered (handoff section 10). The constant comment in the source says so.
 - Byte identity with S223 is not achieved (section 2); code/data identity is.
+
+## 7. Hardware validation result (2026-11-15, Mac mini M1, installed Windows 11 25H2)
+
+Run with `validate-s237b.sh fw-s237-guest-test.sh s237` (= validate-s237.sh without the M1 memory-map job:
+`M1-memmap.cmd` is 4771 bytes, above the 4032-byte mailbox limit, so it was never queued). BCD badmemorylist
+was removed before the run, so only the firmware reservation was active.
+
+| Cycle | Time | Files with correct SHA256 | Result |
+|---|---|---|---|
+| normal 1 | 22:13:03 | 3/3 | FAIL=0 |
+| normal 2 | 22:15:05 | 3/3 | FAIL=0 |
+| normal 3 | 22:17:07 | 3/3 | FAIL=0 |
+| truncatememory 4 GiB 1 | 22:19:16 | 3/3 | FAIL=0 |
+| truncatememory 4 GiB 2 | 22:21:18 | 3/3 | FAIL=0 |
+| truncatememory 4 GiB 3 | 22:23:22 | 3/3 | FAIL=0 |
+
+Before the fix the same test failed 9/9 (normal) and 3/3 (truncatememory). truncatememory was reverted
+(T2) and the final B0 state job completed. Full log: `results-s237.txt`, `validate-s237b.log`.
+
+Not checked: the M1 memory-map job (does Windows list 0xC0000000-0xC00FFFFF as excluded?) - needs to be split
+into jobs of at most 4032 bytes. Belt-and-braces: `../usb-s236/B1-set-badmemory.cmd` was re-applied afterwards
+(SETRC=0) so an older payload (S223) stays safe too.
