@@ -1,0 +1,24 @@
+22:38:58 START cur=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-s237-20261115-222346-trunc4g-c3.out
+22:39:04 restart: S231 W4 RESTART WINDOWS FOR S232 TEST RESTART SCHEDULED 
+22:40:08 D1: S242 D1 COMPLETE 
+22:40:08 log=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[DCP] ifiedPipeline.cpp:10414 set_digital_out_mode: Modeset requested for colorID: 66, timingID: 20
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[DCP] nifiedPipeline.cpp:4626 hard_power_state 0 fTimingsUpdatePowerState 0 fControllerPowerState 1 fSoftPower
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[DCP] PPipeDCP_H13P.cpp:14606 set_run_mode_safe: no need to defer: 2 -> 1
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[DCP] PPipeDCP_H13P.cpp:14606 set_run_mode_safe: no need to defer: 1 -> 0
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[DCP] ifiedPipeline.cpp:10761 set_mode: timingID: 20 colorID: 66
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[DCP] eoInterfaceIOAV.cpp:869 plug gated: modeset received.
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[DCP] ifiedPipeline.cpp:10310 IOMFBStatus UnifiedPipeline::mode_set_gated(uint32_t, uint32_t): 1920x1080@60 Hz
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[DCP] nifiedPipeline.cpp:4626 hard_power_state 1 fTimingsUpdatePowerState 1 fControllerPowerState 0 fSoftPower
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[DCP] PPipeDCP_H13P.cpp:14606 set_run_mode_safe: no need to defer: 1 -> 2
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[FACT] initial mode/swap ACK swap_id=1
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[DCP] PIbootInterface.cpp:430 setModeRequest
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[DCP] ifiedPipeline.cpp:10414 set_digital_out_mode: Modeset requested for colorID: 66, timingID: 20
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[DCP] ifiedPipeline.cpp:10713 Already set to timingID: 20 colorID: 66. 1920x1080 link: 1
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[FACT] stable-HPD reapply mode/swap ACK swap_id=2
+/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/display-s242-20261115-223918.edceYn:[FACT] pre-guest settled mode/swap ACK; entering guest without DCP shutdown {'boot_base': 34421981184, 'shared
+22:40:08 S242 DONE
+22:50 USER (eyes on monitor): Windows showed 1280x720 at first (resolution remembered from earlier 720p sessions);
+      user changed Windows display settings to 1920x1080 and the monitor shows it. DCP log: mode_set_gated 1920x1080@60 Hz,
+      initial + stable-HPD swap ACK, guest entered without DCP shutdown.
+      Windows-side query via worker: PowerShell output does not come back (D1-D3 empty, PSRC=0) - unresolved, not needed for this result.
