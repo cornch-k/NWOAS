@@ -137,7 +137,7 @@ def check_system(args):
         stop(f'this is {model}, not the Mac mini {MODEL}')
     d0 = plist('diskutil', 'info', '-plist', DISK)
     if not (d0.get('Internal') and d0.get('WholeDisk') and d0.get('DeviceBlockSize') == gptlib.BLOCK
-            and d0.get('Size') == gptlib.DISK_BYTES and d0.get('VirtualOrPhysical') == 'Physical'):
+            and d0.get('Size') == gptlib.DISK_BYTES and d0.get('VirtualOrPhysical') in ('Physical', 'Unknown')):  # Tahoe reports 'Unknown' for the internal SSD (seen 2026-11-16)
         stop(f'{DISK} is not the internal 4K-block {gptlib.DISK_BYTES}-byte SSD: '
              f'{ {k: d0.get(k) for k in ("Internal", "WholeDisk", "DeviceBlockSize", "Size", "VirtualOrPhysical")} }')
     say('CHECK', f'{model}, {DISK} internal, 4096-byte blocks, {gptlib.DISK_BLOCKS} blocks')
