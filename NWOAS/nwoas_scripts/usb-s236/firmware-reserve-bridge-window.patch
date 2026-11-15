@@ -1,0 +1,18 @@
+PROPOSAL ONLY -- NOT BUILT, NOT BOOTED. Platform-level form of the S236 fix (covers WinPE / any OS,
+not only the installed Windows BCD). Apply to the UEFI source of record
+(nwoas_scripts/firmware-s216/source-candidate == apple_silicon_platforms_mu after the S216 patch set)
+and rebuild the payload with the documented S216 -> S223 pipeline, then re-run the S236 validation.
+
+--- a/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
++++ b/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c
+@@ (directly after the low DMA window BuildResourceDescriptorHob (EFI_RESOURCE_SYSTEM_MEMORY, ...,
+@@  NWOAS_DMA_WIN_BASE, NWOAS_DMA_WIN_SIZE) call)
++  //
++  // NWOAS S236: guest-physical == PCI bus address for the low window (DSDT _DMA, _TRA = 0). The
++  // FL1100 BAR sits at bus address 0xC0000000, so the root port above it decodes a memory window
++  // [0xC0000000, 0xC00FFFFF] (1 MiB granularity). A bus-master write/read of the FL1100 whose
++  // address falls inside that window is not forwarded upstream, i.e. never reaches RAM (S235/S236
++  // hardware evidence: bulk-IN data for TRB buffers 0xC0010000..0xC00FFFFF never arrived).
++  // That 1 MiB must not be RAM for any OS: withhold it from the memory map.
++  //
++  BuildMemoryAllocationHob (0xC0000000ULL, 0x00100000ULL, EfiReservedMemoryType);

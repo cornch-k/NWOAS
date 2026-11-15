@@ -1,0 +1,277 @@
+diff -ruN m1n1-usb-s233/src/hv.c m1n1-usb-s234/src/hv.c
+--- m1n1-usb-s233/src/hv.c	2026-09-10 11:00:38
++++ m1n1-usb-s234/src/hv.c	2026-11-15 20:17:53
+@@ -89,6 +89,9 @@
+                  HCR_AMO | // Trap SError exceptions
+                  HCR_IMO | // Trap IRQ exceptions (for now)
+                  HCR_FMO | // Trap FIQ exceptions (effectively required for now)
++#if NWOAS_DC_TRAP
++                 HCR_TPCP | // S234: trap EL0/EL1 DC IVAC/CVAC/CVAU/CIVAC + IC IVAU (emulated at EL2)
++#endif
+                  HCR_VM);  // Enable stage 2 translation
+ 
+     // No guest vectors initially
+diff -ruN m1n1-usb-s233/src/hv.h m1n1-usb-s234/src/hv.h
+--- m1n1-usb-s233/src/hv.h	2026-09-10 11:00:38
++++ m1n1-usb-s234/src/hv.h	2026-11-15 20:17:53
+@@ -83,6 +83,23 @@
+ int hv_map_sw(u64 from, u64 to, u64 size);
+ int hv_map_hook(u64 from, hv_hook_t *hook, u64 size);
+ u64 hv_translate(u64 addr, bool s1only, bool w, u64 *par_out);
++
++/* S234 USB-A read-corruption experiment (hypothesis until hardware-validated):
++ * with HCR_EL2.VM=1 the architecture turns an EL1 "DC IVAC" (invalidate) into
++ * clean+invalidate, so a guest that invalidates a DMA-read buffer AFTER a
++ * non-coherent device wrote it gets its own stale dirty lines written back
++ * over the device data. NWOAS_DC_TRAP sets HCR_EL2.TPCP and emulates the
++ * trapped EL0/EL1 cache-maintenance-by-VA instructions at EL2 on the PA.
++ * NWOAS_DC_IVAC_TRUE=1: DC IVAC is a real invalidate (bare-metal semantics);
++ * 0: DC IVAC is emulated as clean+invalidate (control = untrapped behaviour). */
++#ifndef NWOAS_DC_TRAP
++#define NWOAS_DC_TRAP 1
++#endif
++#ifndef NWOAS_DC_IVAC_TRUE
++#define NWOAS_DC_IVAC_TRUE 0
++#endif
++struct exc_info;
++bool nwoas_dc_emulate(struct exc_info *ctx, u32 op1, u32 crm, u32 op2, u64 va);
+ u64 hv_pt_walk(u64 addr);
+ bool hv_handle_dabort(struct exc_info *ctx);
+ bool hv_pa_write(struct exc_info *ctx, u64 addr, u64 *val, int width);
+diff -ruN m1n1-usb-s233/src/hv_exc.c m1n1-usb-s234/src/hv_exc.c
+--- m1n1-usb-s233/src/hv_exc.c	2026-09-10 11:00:38
++++ m1n1-usb-s234/src/hv_exc.c	2026-11-15 20:17:53
+@@ -1874,6 +1874,28 @@
+     bool handled = false;
+     u32 ec = FIELD_GET(ESR_EC, ctx->esr);
+ 
++#if NWOAS_DC_TRAP
++    /* S234: HCR_EL2.TPCP traps of cache maintenance by VA (op0=1, CRn=7). Handled first, before
++     * the trajectory ring and without bhl/serial: this is hit once per 64-byte line. */
++    if (ec == ESR_EC_MSR ||
++        (ec == ESR_EC_IMPDEF && FIELD_GET(ESR_ISS, ctx->esr) == ESR_ISS_IMPDEF_MSR)) {
++        u64 dc_iss = ec == ESR_EC_MSR ? FIELD_GET(ESR_ISS, ctx->esr) : ctx->afsr1;
++        if (!(dc_iss & ESR_ISS_MSR_DIR) && FIELD_GET(ESR_ISS_MSR_OP0, dc_iss) == 1 &&
++            FIELD_GET(ESR_ISS_MSR_CRn, dc_iss) == 7) {
++            u64 dc_rt = FIELD_GET(ESR_ISS_MSR_Rt, dc_iss);
++            if (nwoas_dc_emulate(ctx, FIELD_GET(ESR_ISS_MSR_OP1, dc_iss),
++                                 FIELD_GET(ESR_ISS_MSR_CRm, dc_iss),
++                                 FIELD_GET(ESR_ISS_MSR_OP2, dc_iss),
++                                 dc_rt == 31 ? 0 : ctx->regs[dc_rt])) {
++                ctx->elr += 4;
++                hv_set_elr(ctx->elr);
++                hv_update_fiq();
++                return;
++            }
++        }
++    }
++#endif
++
+     /* NWOAS D45: common bugcheck one-shot probe. HVC is a call-like exception,
+      * so ELR normally already names the following instruction.  The helper
+      * verifies both ELR and ELR-4 before restoring/emulating the displaced
+diff -ruN m1n1-usb-s233/src/hv_vm.c m1n1-usb-s234/src/hv_vm.c
+--- m1n1-usb-s233/src/hv_vm.c	2026-11-15 19:57:17
++++ m1n1-usb-s234/src/hv_vm.c	2026-11-15 20:17:53
+@@ -3065,6 +3065,173 @@
+     u64 keepring;    // keep-fresh calls that also cleaned the 0x1000 event-ring page
+ } nwoas_fl_mc;
+ 
++/* S234: emulation + accounting of trapped guest cache maintenance by VA (see hv.h). */
++enum { DCS_IVAC, DCS_CIVAC, DCS_CVAC, DCS_CVAU, DCS_IVAU, DCS_OTHER, DCS_FAULT, DCS_NODRAM, DCS_BIG, DCS_N };
++static u64 nwoas_dc_cnt[MAX_CPUS][DCS_N];
++struct nwoas_dc_ev {
++    u8 type; // 'I' guest DC IVAC run, 'D' FL1100 doorbell, 'E' FL1100 EINT sweep
++    u8 cpu;
++    u16 win;
++    u32 len; // I: bytes; D: (slot << 8) | dci
++    u64 va, pa, elr, t0, t1;
++};
++#define NWOAS_DCLOG_N 512
++static struct nwoas_dc_ev nwoas_dc_log[NWOAS_DCLOG_N];
++static u32 nwoas_dc_head, nwoas_dc_tail;
++static int nwoas_dc_cap_left; // > 0 while a capture window is open
++static u32 nwoas_dc_windows;
++static u64 nwoas_dc_win_t;
++static DECLARE_SPINLOCK(nwoas_dc_lock);
++static struct {
++    u64 va, pa, len, elr, t0, t1;
++} nwoas_dc_run[MAX_CPUS];
++
++static void nwoas_dc_push(u8 type, u32 cpu, u32 len, u64 va, u64 pa, u64 elr, u64 t0, u64 t1)
++{
++    spin_lock(&nwoas_dc_lock);
++    if (nwoas_dc_cap_left <= 0 && type == 'I' && len >= 0x8000 && nwoas_dc_windows < 12 &&
++        (!nwoas_dc_windows || t1 - nwoas_dc_win_t > 20 * mrs(CNTFRQ_EL0))) {
++        nwoas_dc_windows++;
++        nwoas_dc_win_t = t1;
++        nwoas_dc_cap_left = 120;
++    }
++    if (nwoas_dc_cap_left > 0 && nwoas_dc_head - nwoas_dc_tail < NWOAS_DCLOG_N) {
++        struct nwoas_dc_ev *e = &nwoas_dc_log[nwoas_dc_head % NWOAS_DCLOG_N];
++        e->type = type;
++        e->cpu = cpu;
++        e->win = nwoas_dc_windows;
++        e->len = len;
++        e->va = va;
++        e->pa = pa;
++        e->elr = elr;
++        e->t0 = t0;
++        e->t1 = t1;
++        nwoas_dc_head++;
++        nwoas_dc_cap_left--;
++    }
++    spin_unlock(&nwoas_dc_lock);
++}
++
++// Called under bhl from the FL1100 doorbell / EINT paths: mark the event and drain a few lines.
++static void nwoas_dc_mark(u8 type, u32 arg)
++{
++    if (nwoas_dc_cap_left > 0) {
++        u64 now = mrs(CNTPCT_EL0);
++        nwoas_dc_push(type, smp_id(), arg, 0, 0, 0, now, now);
++        return;
++    }
++    u64 us = mrs(CNTFRQ_EL0) / 1000000;
++    if (!us)
++        us = 24;
++    for (int n = 0; n < 6 && nwoas_dc_tail != nwoas_dc_head; n++) {
++        struct nwoas_dc_ev e = nwoas_dc_log[nwoas_dc_tail % NWOAS_DCLOG_N];
++        nwoas_dc_tail++;
++        if (e.type == 'I')
++            printf("HVLOG: S234 EV w=%u I cpu=%u t=%lu..%lu va=0x%lx pa=0x%lx len=0x%x elr=0x%lx\n",
++                   e.win, e.cpu, e.t0 / us, e.t1 / us, e.va, e.pa, e.len, e.elr);
++        else
++            printf("HVLOG: S234 EV w=%u %c cpu=%u t=%lu arg=0x%x\n", e.win, e.type, e.cpu,
++                   e.t0 / us, e.len);
++    }
++}
++
++bool nwoas_dc_emulate(struct exc_info *ctx, u32 op1, u32 crm, u32 op2, u64 va)
++{
++    u32 cpu = smp_id();
++    u64 *cnt = nwoas_dc_cnt[cpu < MAX_CPUS ? cpu : 0];
++    int kind;
++    if (op2 != 1)
++        kind = DCS_OTHER;
++    else if (op1 == 0 && crm == 6)
++        kind = DCS_IVAC;
++    else if (op1 == 3 && crm == 14)
++        kind = DCS_CIVAC;
++    else if (op1 == 3 && (crm == 10 || crm == 12 || crm == 13))
++        kind = DCS_CVAC; // CVAC / CVAP / CVADP
++    else if (op1 == 3 && crm == 11)
++        kind = DCS_CVAU;
++    else if (op1 == 3 && crm == 5)
++        kind = DCS_IVAU;
++    else
++        kind = DCS_OTHER;
++    if (kind == DCS_OTHER) {
++        // Not an instruction this build knows how to emulate: leave it to the existing paths.
++        cnt[DCS_OTHER]++;
++        return false;
++    }
++    u64 pa;
++    if (!(mrs(SCTLR_EL12) & SCTLR_M))
++        pa = nwoas_ipa_to_pa(va); // stage 1 off: va is an IPA (hv_translate would return it as-is)
++    else
++        pa = hv_translate(va, false, false, NULL);
++    if (!pa) {
++        cnt[DCS_FAULT]++; // unmapped at stage 1 or 2: nothing cached to maintain; skip
++        return true;
++    }
++    pa &= ~63UL;
++    if (!nwoas_in_dram(pa, 64)) {
++        cnt[DCS_NODRAM]++; // MMIO or outside the EL2 DRAM map: skip
++        return true;
++    }
++    cnt[kind]++;
++    switch (kind) {
++        case DCS_IVAC:
++#if NWOAS_DC_IVAC_TRUE
++            dc_ivac((void *)pa); // executed at EL2: a real invalidate, dirty line discarded
++#else
++            dc_civac((void *)pa); // what an untrapped EL1 DC IVAC does under HCR_EL2.VM=1
++#endif
++            break;
++        case DCS_CIVAC:
++            dc_civac((void *)pa);
++            break;
++        case DCS_CVAC:
++            dc_cvac((void *)pa);
++            break;
++        case DCS_CVAU:
++            dc_cvau((void *)pa);
++            break;
++        case DCS_IVAU:
++            cacheop("ic ivau", (void *)pa);
++            break;
++    }
++    if (kind == DCS_IVAC && cpu < MAX_CPUS) {
++        u64 now = mrs(CNTPCT_EL0);
++        u64 lva = va & ~63UL;
++        if (nwoas_dc_run[cpu].len && lva == nwoas_dc_run[cpu].va + nwoas_dc_run[cpu].len) {
++            nwoas_dc_run[cpu].len += 64;
++            nwoas_dc_run[cpu].t1 = now;
++        } else {
++            if (nwoas_dc_run[cpu].len) {
++                if (nwoas_dc_run[cpu].len >= 0x8000)
++                    cnt[DCS_BIG]++;
++                if (nwoas_dc_cap_left > 0 || nwoas_dc_run[cpu].len >= 0x8000)
++                    nwoas_dc_push('I', cpu, (u32)nwoas_dc_run[cpu].len, nwoas_dc_run[cpu].va,
++                                  nwoas_dc_run[cpu].pa, nwoas_dc_run[cpu].elr,
++                                  nwoas_dc_run[cpu].t0, nwoas_dc_run[cpu].t1);
++            }
++            nwoas_dc_run[cpu].va = lva;
++            nwoas_dc_run[cpu].pa = pa;
++            nwoas_dc_run[cpu].len = 64;
++            nwoas_dc_run[cpu].elr = ctx->elr;
++            nwoas_dc_run[cpu].t0 = nwoas_dc_run[cpu].t1 = now;
++        }
++    }
++    return true;
++}
++
++static void nwoas_dc_report(void)
++{
++    u64 t[DCS_N] = {0};
++    for (int c = 0; c < MAX_CPUS; c++)
++        for (int k = 0; k < DCS_N; k++)
++            t[k] += nwoas_dc_cnt[c][k];
++    printf("HVLOG: S234 DC trap=%d ivac_true=%d ivac=%lu civac=%lu cvac=%lu cvau=%lu ivau=%lu "
++           "other=%lu fault=%lu nodram=%lu bigruns=%lu win=%u\n",
++           NWOAS_DC_TRAP, NWOAS_DC_IVAC_TRUE, t[DCS_IVAC], t[DCS_CIVAC], t[DCS_CVAC], t[DCS_CVAU],
++           t[DCS_IVAU], t[DCS_OTHER], t[DCS_FAULT], t[DCS_NODRAM], t[DCS_BIG], nwoas_dc_windows);
++}
++
+ static void nwoas_fl_mc_tick(void)
+ {
+     static u64 last = 0;
+@@ -3090,6 +3257,7 @@
+            nwoas_fl_mc.xcap, nwoas_fl_mc.xout, nwoas_fl_mc.xstrm, nwoas_fl_mc.evt,
+            NWOAS_FL_EVT_NO_INVALIDATE ? "civac" : "ivac", nwoas_fl_mc.erst, nwoas_fl_mc.keep,
+            nwoas_fl_mc.keepring);
++    nwoas_dc_report();
+ }
+ 
+ #if NWOAS_FL_RING_FULL_CLEAN
+@@ -3228,6 +3396,11 @@
+ {
+     static u32 transfer_log = 0;
+     nwoas_fl_mc.db++;
++#if NWOAS_FL_RING_FULL_CLEAN
++    nwoas_dc_mark('D', (db_slot << 8) | (db_target & 0xff));
++#else
++    nwoas_dc_mark('D', 0);
++#endif
+     nwoas_fl_mc_tick();
+     if (nwoas_fl_crcr) {
+         nwoas_coh_clean(nwoas_fl_crcr, 0x8000); // command ring: 2 pages
+@@ -3334,6 +3507,7 @@
+ #endif
+         nwoas_fl_mc.evt++;
+     }
++    nwoas_dc_mark('E', 0);
+     nwoas_fl_mc_tick();
+ }
+ 
