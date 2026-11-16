@@ -398,7 +398,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/arm
 +        ret
 diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/display.c port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/display.c
 --- external/windows-on-m1/drivers/apple-agx/render-admission/src/display.c	2026-11-15 19:39:30
-+++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/display.c	2026-11-16 13:11:33
++++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/display.c	2026-11-16 19:33:22
 @@ -8,6 +8,19 @@
  static VOID AdmissionFillPanelSignalInfo(D3DKMDT_VIDEO_SIGNAL_INFO *Signal) {
    RtlZeroMemory(Signal, sizeof(*Signal));
@@ -427,9 +427,32 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/dis
  }
  
  _Use_decl_annotations_ NTSTATUS AdmissionDdiUpdateMonitorLinkInfo(
+@@ -254,11 +268,22 @@
+     return;
+   Signal->ActiveSize.cx = Width;
+   Signal->ActiveSize.cy = Height;
++#if defined(APPLE_AGX_BOARD_J274)
++  /* NWOAS-J274 P21: the native signal is CEA-861 1080p60 (148.5 MHz,
++   * 2200x1125, blanking 280x45).  A scaled size keeps that blanking and the
++   * exact 148500000 / (2200 * 1125) = 60 Hz VSyncFreq set above, so
++   * HSyncFreq = 60 * TotalSize.cy and VSyncFreq stay consistent. */
++  Signal->TotalSize.cx = Width + 280u;
++  Signal->TotalSize.cy = Height + 45u;
++  hsync = (148500000ULL * (ULONGLONG)Signal->TotalSize.cy) /
++          (2200ULL * 1125ULL);
++#else
+   Signal->TotalSize.cx = Width + 82u;
+   Signal->TotalSize.cy = Height + 82u;
+   /* VSyncFreq stays the panel's exact 266630000 / (2642 * 1682) Hz. */
+   hsync = (266630000ULL * (ULONGLONG)Signal->TotalSize.cy) /
+           (2642ULL * 1682ULL);
++#endif
+   Signal->HSyncFreq.Numerator = (UINT)hsync;
+   Signal->HSyncFreq.Denominator = 1u;
+   Signal->PixelRate = hsync * (ULONGLONG)Signal->TotalSize.cx;
 diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/scanout_windows.c port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/scanout_windows.c
 --- external/windows-on-m1/drivers/apple-agx/render-admission/src/scanout_windows.c	2026-11-15 19:39:30
-+++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/scanout_windows.c	2026-11-16 18:11:13
++++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/scanout_windows.c	2026-11-16 19:33:13
 @@ -9,6 +9,18 @@
  static KSYNCHRONIZE_ROUTINE AdmissionScanoutVsyncControl;
  static ULONGLONG AdmissionScanoutTime100ns(void);
@@ -1346,7 +1369,36 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
    return STATUS_SUCCESS;
  }
-@@ -1015,11 +1831,75 @@
+@@ -924,6 +1740,13 @@
+   if (Context == NULL || Context->ScanoutRuntime == NULL)
+     return FALSE;
+   runtime = (ADMISSION_SCANOUT_RUNTIME *)Context->ScanoutRuntime;
++#if defined(APPLE_AGX_BOARD_J274)
++  /* NWOAS-J274 P21: the software broker (P15) copies only the native POST
++   * geometry and never advertises CAP_SCALED_SOURCE; keep its single mode
++   * even if the capability word were ever to carry the bit. */
++  if (runtime->SoftActive)
++    return FALSE;
++#endif
+   return runtime->Adapter == Context &&
+                  runtime->Panel.Scanout.AbiVersion ==
+                      APPLE_AGX_SCANOUT_ABI_VERSION_V2 &&
+@@ -1003,6 +1826,14 @@
+       Height != APPLE_AGX_SCANOUT_J313_HEIGHT)
+     return STATUS_GRAPHICS_INVALID_VIDEO_PRESENT_SOURCE_MODE;
+ #endif
++#if defined(APPLE_AGX_BOARD_J274)
++  /* NWOAS-J274 P21: the software broker scans out only the native source. */
++  if (runtime->SoftActive &&
++      (Width != APPLE_AGX_SCANOUT_J313_WIDTH ||
++       Height != APPLE_AGX_SCANOUT_J313_HEIGHT ||
++       Stride != APPLE_AGX_SCANOUT_J313_STRIDE))
++    return STATUS_GRAPHICS_INVALID_VIDEO_PRESENT_SOURCE_MODE;
++#endif
+   return AppleAgxFixedPanelCommitMode(
+              &runtime->Panel, 0u, 0u, Width, Height, Stride,
+              Format == D3DDDIFMT_A8R8G8B8
+@@ -1015,11 +1846,75 @@
               : STATUS_GRAPHICS_INVALID_VIDEO_PRESENT_SOURCE_MODE;
  }
  
@@ -1422,7 +1474,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    return AppleAgxFixedPanelSetVisible(
               &runtime->Panel, 0u,
               Visible ? APPLE_AGX_SCANOUT_TRUE
-@@ -1104,6 +1984,9 @@
+@@ -1104,6 +1999,9 @@
                          InterlockedExchange64(&runtime->NextMpoPresentId, 0));
    InterlockedExchange(&runtime->PendingMpo,
                        InterlockedExchange(&runtime->NextMpo, 0));
@@ -1432,7 +1484,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    return STATUS_SUCCESS;
  }
  
-@@ -1250,6 +2133,13 @@
+@@ -1250,6 +2148,13 @@
      InterlockedExchange64(&runtime->DeferredPrimaryAddress,
                            Args->PrimaryAddress.QuadPart);
      InterlockedIncrement(&Context->DisplayModes.DeferredFlips);
@@ -1446,7 +1498,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
      return STATUS_SUCCESS;
    }
    if (InterlockedCompareExchange(&runtime->PresentGate, 1, 0) != 0) {
-@@ -1294,6 +2184,9 @@
+@@ -1294,6 +2199,9 @@
                          InterlockedExchange64(&runtime->NextMpoPresentId, 0));
    InterlockedExchange(&runtime->PendingMpo,
                        InterlockedExchange(&runtime->NextMpo, 0));
@@ -1456,7 +1508,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
  #if defined(APPLE_AGX_VISIBLE_AGX_QUALIFICATION)
    if (fallbackCandidateValid) {
      BOOLEAN retained;
-@@ -1434,6 +2327,15 @@
+@@ -1434,6 +2342,15 @@
    }
    if (matched && runtime->Timeline.Enabled)
      notify_vsync = TRUE;
@@ -1472,7 +1524,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    if (!mpo_flip && notify_vsync &&
        InterlockedCompareExchange(&runtime->PlaneOffPending, 0, 0) != 0) {
      /* A plane-0 disable completes on the next vertical sync. */
-@@ -1478,6 +2380,36 @@
+@@ -1478,6 +2395,36 @@
      ADMISSION_CONTEXT *Context) {
    return AdmissionScanoutProcessInterrupt(Context, FALSE);
  }
@@ -1632,6 +1684,123 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/umd/App
    <Import Project="..\package-version.props" />
    <PropertyGroup>
      <EnableInf2cat>false</EnableInf2cat>
+diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/umd/tests/direct_flip_contract_test.c port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/umd/tests/direct_flip_contract_test.c
+--- external/windows-on-m1/drivers/apple-agx/render-admission/umd/tests/direct_flip_contract_test.c	2026-11-15 19:39:30
++++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/umd/tests/direct_flip_contract_test.c	2026-11-16 19:35:31
+@@ -5,6 +5,34 @@
+ 
+ #define TEST_FORMAT_BGRA8888 21u
+ 
++/* NWOAS-J274 P21: the native primary and a smaller offered mode per board
++ * (J274: native 1920x1080 POST framebuffer, 8 modes; J313: 2560x1600, 11). */
++#if defined(APPLE_AGX_BOARD_J274)
++#define TEST_NATIVE_W 1920u
++#define TEST_NATIVE_H 1080u
++#define TEST_NATIVE_SIZE 0x7e9000ULL
++#define TEST_MODE_COUNT 8u
++#define TEST_OTHER_W 1680u
++#define TEST_SCALED_W 1280u
++#define TEST_SCALED_H 720u
++#define TEST_SCALED_SIZE 0x384000ULL
++#define TEST_OVERSIZE_W 2560u
++#define TEST_OVERSIZE_H 1600u
++#else
++#define TEST_NATIVE_W 2560u
++#define TEST_NATIVE_H 1600u
++#define TEST_NATIVE_SIZE 0xfa0000ULL
++#define TEST_MODE_COUNT 11u
++#define TEST_OTHER_W 1920u
++#define TEST_SCALED_W 1920u
++#define TEST_SCALED_H 1080u
++#define TEST_SCALED_SIZE 0x7e9000ULL
++#define TEST_OVERSIZE_W 2560u
++#define TEST_OVERSIZE_H 1608u
++#endif
++#define TEST_NATIVE_PITCH (TEST_NATIVE_W * 4u)
++#define TEST_SCALED_PITCH (TEST_SCALED_W * 4u)
++
+ static ADMISSION_UMD_DIRECT_FLIP_RESOURCE exact_resource(void) {
+   ADMISSION_UMD_DIRECT_FLIP_RESOURCE resource;
+   memset(&resource, 0, sizeof(resource));
+@@ -14,11 +42,11 @@
+   resource.Allocation.Version = ADMISSION_ALLOCATION_VERSION;
+   resource.Allocation.Type = 1u;
+   resource.Allocation.Format = TEST_FORMAT_BGRA8888;
+-  resource.Allocation.Width = 2560u;
+-  resource.Allocation.Height = 1600u;
+-  resource.Allocation.Pitch = 10240u;
++  resource.Allocation.Width = TEST_NATIVE_W;
++  resource.Allocation.Height = TEST_NATIVE_H;
++  resource.Allocation.Pitch = TEST_NATIVE_PITCH;
+   resource.Allocation.BytesPerPixel = 4u;
+-  resource.Allocation.Size = 0xfa0000ULL;
++  resource.Allocation.Size = TEST_NATIVE_SIZE;
+   resource.SegmentId = 2u;
+   resource.Linear = 1u;
+   resource.Displayable = 1u;
+@@ -35,11 +63,11 @@
+       &current, &candidate, ADMISSION_UMD_DIRECT_FLIP_IMMEDIATE,
+       TEST_FORMAT_BGRA8888));
+ 
+-  candidate.Allocation.Width = 1920u;
++  candidate.Allocation.Width = TEST_OTHER_W;
+   assert(!AdmissionUmdDirectFlipCompatible(
+       &current, &candidate, 0u, TEST_FORMAT_BGRA8888));
+   candidate = exact_resource();
+-  candidate.Allocation.Pitch = 9984u;
++  candidate.Allocation.Pitch = TEST_NATIVE_PITCH - 256u;
+   assert(!AdmissionUmdDirectFlipCompatible(
+       &current, &candidate, 0u, TEST_FORMAT_BGRA8888));
+   candidate = exact_resource();
+@@ -94,8 +122,8 @@
+   ADMISSION_UMD_DIRECT_FLIP_RESOURCE candidate;
+   unsigned int index;
+ 
+-  assert(APPLE_AGX_FIXED_PANEL_MODE_COUNT == 11u);
+-  assert(AppleAgxFixedPanelModeIndex(2560u, 1600u) == 0u);
++  assert(APPLE_AGX_FIXED_PANEL_MODE_COUNT == TEST_MODE_COUNT);
++  assert(AppleAgxFixedPanelModeIndex(TEST_NATIVE_W, TEST_NATIVE_H) == 0u);
+   for (index = 0u; index < APPLE_AGX_FIXED_PANEL_MODE_COUNT; ++index) {
+     current = mode_resource(AppleAgxFixedPanelModeSizes[index][0],
+                             AppleAgxFixedPanelModeSizes[index][1]);
+@@ -111,18 +139,19 @@
+           &current, &native, 0u, TEST_FORMAT_BGRA8888));
+     }
+   }
+-  current = mode_resource(1920u, 1080u);
++  current = mode_resource(TEST_SCALED_W, TEST_SCALED_H);
+   candidate = current;
+-  assert(current.Allocation.Pitch == 7680u);
+-  assert(current.Allocation.Size == 0x7e9000ULL);
++  assert(current.Allocation.Pitch == TEST_SCALED_PITCH);
++  assert(current.Allocation.Size == TEST_SCALED_SIZE);
+   assert(AdmissionUmdDirectFlipCompatible(
+       &current, &candidate, 0u, TEST_FORMAT_BGRA8888));
+-  candidate.Allocation.Pitch = 7744u;
+-  candidate.Allocation.Size = 7744ULL * 1080u;
++  candidate.Allocation.Pitch = TEST_SCALED_PITCH + 64u;
++  candidate.Allocation.Size =
++      (unsigned long long)(TEST_SCALED_PITCH + 64u) * TEST_SCALED_H;
+   assert(!AdmissionUmdDirectFlipCompatible(
+       &current, &candidate, 0u, TEST_FORMAT_BGRA8888));
+   candidate = current;
+-  candidate.Allocation.Size = 0xfa0000ULL;
++  candidate.Allocation.Size = TEST_NATIVE_SIZE;
+   assert(!AdmissionUmdDirectFlipCompatible(
+       &current, &candidate, 0u, TEST_FORMAT_BGRA8888));
+   current = mode_resource(1366u, 768u);
+@@ -132,6 +161,11 @@
+   assert(!AdmissionUmdDirectFlipCompatible(
+       &current, &candidate, 0u, TEST_FORMAT_BGRA8888));
+   current = mode_resource(1920u, 1088u);
++  candidate = current;
++  assert(!AdmissionUmdDirectFlipCompatible(
++      &current, &candidate, 0u, TEST_FORMAT_BGRA8888));
++  /* NWOAS-J274 P21: a size larger than the native source is never offered. */
++  current = mode_resource(TEST_OVERSIZE_W, TEST_OVERSIZE_H);
+   candidate = current;
+   assert(!AdmissionUmdDirectFlipCompatible(
+       &current, &candidate, 0u, TEST_FORMAT_BGRA8888));
 diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_board.h port-j274/gpu/driver-p15/drivers/apple-agx/shared/include/apple_agx_board.h
 --- external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_board.h	1970-01-01 09:00:00
 +++ port-j274/gpu/driver-p15/drivers/apple-agx/shared/include/apple_agx_board.h	2026-11-16 12:50:15
@@ -1725,25 +1894,31 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx
 +#endif /* APPLE_AGX_BOARD_H */
 diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_fixed_panel_modes.h port-j274/gpu/driver-p15/drivers/apple-agx/shared/include/apple_agx_fixed_panel_modes.h
 --- external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_fixed_panel_modes.h	2026-11-15 19:39:30
-+++ port-j274/gpu/driver-p15/drivers/apple-agx/shared/include/apple_agx_fixed_panel_modes.h	2026-11-16 13:05:38
-@@ -15,6 +15,16 @@
++++ port-j274/gpu/driver-p15/drivers/apple-agx/shared/include/apple_agx_fixed_panel_modes.h	2026-11-16 19:33:00
+@@ -15,6 +15,22 @@
   * dcp_iomfb_present_build_v13_5: stride & 63 must be zero); 1366x768 is
   * therefore not offered.  Every height is even, so Stride * Height is a
   * multiple of 128 and the cache-line padded UMD allocation size equals it. */
 +#if defined(APPLE_AGX_BOARD_J274)
-+/* NWOAS-J274 PATCH P15: one source mode, the POST HDMI framebuffer.  The
-+ * software scanout broker never advertises CAP_SCALED_SOURCE. */
-+#define APPLE_AGX_FIXED_PANEL_MODE_COUNT 1u
++/* NWOAS-J274 PATCH P15/P21: index 0 is the native source, the POST HDMI
++ * framebuffer (1920x1080).  P21: the smaller sources below are offered only
++ * when the hypervisor's DCP scanout service advertises CAP_SCALED_SOURCE
++ * (the same rc106 rule as J313).  The KMD's software scanout broker (P15,
++ * SoftActive) never advertises it, so that path keeps exactly index 0.
++ * Every entry is no larger than native and obeys the width/height rules
++ * above (apple_agx_fixed_panel_j274_test.c checks every gate). */
++#define APPLE_AGX_FIXED_PANEL_MODE_COUNT 8u
 +
 +static const unsigned int
 +    AppleAgxFixedPanelModeSizes[APPLE_AGX_FIXED_PANEL_MODE_COUNT][2] = {
-+        {1920u, 1080u},
++        {1920u, 1080u}, {1680u, 1050u}, {1600u, 900u}, {1440u, 900u},
++        {1280u, 800u},  {1280u, 720u},  {1024u, 768u}, {800u, 600u},
 +};
 +#else
  #define APPLE_AGX_FIXED_PANEL_MODE_COUNT 11u
  
  static const unsigned int
-@@ -23,6 +33,7 @@
+@@ -23,6 +39,7 @@
          {1680u, 1050u}, {1600u, 900u},  {1440u, 900u},  {1280u, 800u},
          {1280u, 720u},  {1024u, 768u},  {800u, 600u},
  };
@@ -3502,7 +3677,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx
 +#endif
 diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_scanout.h port-j274/gpu/driver-p15/drivers/apple-agx/shared/include/apple_agx_scanout.h
 --- external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_scanout.h	2026-11-15 19:39:30
-+++ port-j274/gpu/driver-p15/drivers/apple-agx/shared/include/apple_agx_scanout.h	2026-11-16 18:10:43
++++ port-j274/gpu/driver-p15/drivers/apple-agx/shared/include/apple_agx_scanout.h	2026-11-16 19:33:01
 @@ -32,6 +32,8 @@
   * DEST_ORIGIN/DEST_SIZE and a non-native WIDTH/HEIGHT/STRIDE/SURFACE_SIZE
   * only when this bit is set. */
@@ -3512,7 +3687,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx
  #define APPLE_AGX_SCANOUT_REQUIRED_CAPABILITIES                              \
    (APPLE_AGX_SCANOUT_CAP_FIXED_J313 | APPLE_AGX_SCANOUT_CAP_BGRA8888 |       \
     APPLE_AGX_SCANOUT_CAP_REGISTERED_POOL |                                   \
-@@ -41,10 +43,21 @@
+@@ -41,10 +43,23 @@
     APPLE_AGX_SCANOUT_CAP_REPEATED_PRESENT |                                  \
     APPLE_AGX_SCANOUT_CAP_LATCHED_RECEIPT | APPLE_AGX_SCANOUT_CAP_LATCHED_IRQ)
  
@@ -3520,7 +3695,9 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx
 +/* NWOAS-J274 PATCH P15: the Mac mini has no fixed panel.  The native source
 + * is the HDMI linear framebuffer m1n1 hands over at POST (1920x1080, 32 bpp,
 + * stride 7680; S244 probe on the 13.5 stub).  Any other POST geometry is
-+ * refused by the post-display route exactly like a non-J313 panel. */
++ * refused by the post-display route exactly like a non-J313 panel.
++ * P21: these stay the native source/destination; scaled sources (only with
++ * CAP_SCALED_SOURCE) are fitted into this 1920x1080 rectangle. */
 +#define APPLE_AGX_SCANOUT_J313_WIDTH 1920u
 +#define APPLE_AGX_SCANOUT_J313_HEIGHT 1080u
 +#define APPLE_AGX_SCANOUT_J313_STRIDE 7680u
@@ -3534,7 +3711,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx
  /* M2-f2c: the pool is segment 2 of the receipt-sized reserve; this is its
   * J313 maximum (a 1 GiB reserve less the private span and backend arena). */
  #define APPLE_AGX_SCANOUT_J313_POOL_MAX_SIZE 0x3b800000ULL
-@@ -82,6 +95,9 @@
+@@ -82,6 +97,9 @@
    APPLE_AGX_SCANOUT_REG_FORMAT = 0x8cu,
    APPLE_AGX_SCANOUT_REG_REQUEST_SEQUENCE = 0x90u,
    APPLE_AGX_SCANOUT_REG_COMMAND = 0x98u,
@@ -3544,7 +3721,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx
    /* CAP_SCALED_SOURCE only: X | Y << 16 and Width | Height << 16 of the
     * panel rectangle the source is scaled into (MMIO size 0xa8). */
    APPLE_AGX_SCANOUT_REG_DEST_ORIGIN = 0xa0u,
-@@ -93,6 +109,9 @@
+@@ -93,6 +111,9 @@
    APPLE_AGX_SCANOUT_CMD_REGISTER_POOL = 1u,
    APPLE_AGX_SCANOUT_CMD_PRESENT = 2u,
    APPLE_AGX_SCANOUT_CMD_RELEASE = 3u,
@@ -3554,7 +3731,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx
  } APPLE_AGX_SCANOUT_COMMAND;
  
  typedef enum _APPLE_AGX_SCANOUT_STATE {
-@@ -198,6 +217,11 @@
+@@ -198,6 +219,11 @@
  APPLE_AGX_SCANOUT_RESULT AppleAgxScanoutConsumeInterrupt(
      APPLE_AGX_SCANOUT_CLIENT *Client, APPLE_AGX_SCANOUT_U32 *IrqStatus,
      APPLE_AGX_SCANOUT_U64 *LatchedSequence);
@@ -3732,6 +3909,444 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/src/apple_agx_sca
 +      return AppleAgxScanoutTransportFailed;
 +  }
 +  return AppleAgxScanoutTimeout;
++}
+diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/tests/apple_agx_fixed_panel_j274_test.c port-j274/gpu/driver-p15/drivers/apple-agx/shared/tests/apple_agx_fixed_panel_j274_test.c
+--- external/windows-on-m1/drivers/apple-agx/shared/tests/apple_agx_fixed_panel_j274_test.c	1970-01-01 09:00:00
++++ port-j274/gpu/driver-p15/drivers/apple-agx/shared/tests/apple_agx_fixed_panel_j274_test.c	2026-11-16 19:36:32
+@@ -0,0 +1,434 @@
++/* NWOAS-J274 P21: host test of the J274 source-mode table and the scaled
++ * source contract against a fake ABI v2 broker.  Build only with the J274
++ * switch (the J313 table is covered by apple_agx_fixed_panel_test.c):
++ *   clang -std=c11 -Wall -Wextra -DAPPLE_AGX_BOARD_J274=1 \
++ *     -Ishared/include -Irender-admission/include \
++ *     shared/tests/apple_agx_fixed_panel_j274_test.c \
++ *     shared/src/apple_agx_fixed_panel.c shared/src/apple_agx_scanout.c \
++ *     render-admission/src/render_allocation.c
++ * Nothing here runs on, or proves anything about, the Mac mini. */
++#if !defined(APPLE_AGX_BOARD_J274)
++#error "apple_agx_fixed_panel_j274_test.c needs -DAPPLE_AGX_BOARD_J274=1"
++#endif
++
++#include "apple_agx_fixed_panel.h"
++#include "apple_agx_fixed_panel_modes.h"
++#include "render_allocation.h"
++
++#include <assert.h>
++#include <string.h>
++
++#define NATIVE_W 1920u
++#define NATIVE_H 1080u
++#define POOL_IPA 0x80000000ULL
++#define POOL_BYTES 0x3b800000ULL
++
++/* The capability word the KMD's software broker (P15) answers
++ * (scanout_windows.c AdmissionScanoutSoftRead32) and the one the gpu-hv2
++ * DCP scanout service with scaled sources is expected to report. */
++#define SOFT_BROKER_CAPS APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES
++#define HV_SCALED_CAPS 0x37fu
++
++typedef struct _FAKE_BROKER {
++  APPLE_AGX_SCANOUT_U32 Capabilities;
++  APPLE_AGX_SCANOUT_U32 State;
++  APPLE_AGX_SCANOUT_U64 Receipt;
++  APPLE_AGX_SCANOUT_U64 Request;
++  APPLE_AGX_SCANOUT_U64 PoolIpa;
++  APPLE_AGX_SCANOUT_U64 PoolSize;
++  APPLE_AGX_SCANOUT_U64 SurfaceOffset;
++  APPLE_AGX_SCANOUT_U64 SurfaceSize;
++  APPLE_AGX_SCANOUT_U64 NowMs;
++  APPLE_AGX_SCANOUT_U32 Width, Height, Stride, Format;
++  APPLE_AGX_SCANOUT_U32 DestOrigin, DestSize, DestWrites;
++} FAKE_BROKER;
++
++static APPLE_AGX_SCANOUT_U32 reg(APPLE_AGX_SCANOUT_U32 Offset) {
++  assert(Offset >= APPLE_AGX_SCANOUT_MMIO_OFFSET);
++  assert(Offset - APPLE_AGX_SCANOUT_MMIO_OFFSET < APPLE_AGX_SCANOUT_MMIO_SIZE);
++  return Offset - APPLE_AGX_SCANOUT_MMIO_OFFSET;
++}
++
++static APPLE_AGX_SCANOUT_BOOL read32(void *Context,
++                                      APPLE_AGX_SCANOUT_U32 Offset,
++                                      APPLE_AGX_SCANOUT_U32 *Value) {
++  FAKE_BROKER *fake = Context;
++  switch (reg(Offset)) {
++  case APPLE_AGX_SCANOUT_REG_MAGIC: *Value = APPLE_AGX_SCANOUT_MAGIC; break;
++  case APPLE_AGX_SCANOUT_REG_ABI_VERSION:
++    *Value = APPLE_AGX_SCANOUT_ABI_VERSION_V2;
++    break;
++  case APPLE_AGX_SCANOUT_REG_CAPABILITIES: *Value = fake->Capabilities; break;
++  case APPLE_AGX_SCANOUT_REG_STATE: *Value = fake->State; break;
++  case APPLE_AGX_SCANOUT_REG_RESULT: *Value = APPLE_AGX_SCANOUT_BROKER_OK; break;
++  default: return APPLE_AGX_SCANOUT_FALSE;
++  }
++  return APPLE_AGX_SCANOUT_TRUE;
++}
++
++static APPLE_AGX_SCANOUT_BOOL read64(void *Context,
++                                      APPLE_AGX_SCANOUT_U32 Offset,
++                                      APPLE_AGX_SCANOUT_U64 *Value) {
++  FAKE_BROKER *fake = Context;
++  switch (reg(Offset)) {
++  case APPLE_AGX_SCANOUT_REG_RECEIPT_SEQUENCE:
++  case APPLE_AGX_SCANOUT_REG_APPLIED_SEQUENCE:
++    *Value = fake->Receipt;
++    break;
++  default: return APPLE_AGX_SCANOUT_FALSE;
++  }
++  return APPLE_AGX_SCANOUT_TRUE;
++}
++
++static APPLE_AGX_SCANOUT_BOOL write32(void *Context,
++                                       APPLE_AGX_SCANOUT_U32 Offset,
++                                       APPLE_AGX_SCANOUT_U32 Value) {
++  FAKE_BROKER *fake = Context;
++  switch (reg(Offset)) {
++  case APPLE_AGX_SCANOUT_REG_COMMAND:
++    fake->State = APPLE_AGX_SCANOUT_STATE_PENDING;
++    return APPLE_AGX_SCANOUT_TRUE;
++  case APPLE_AGX_SCANOUT_REG_WIDTH: fake->Width = Value; break;
++  case APPLE_AGX_SCANOUT_REG_HEIGHT: fake->Height = Value; break;
++  case APPLE_AGX_SCANOUT_REG_STRIDE: fake->Stride = Value; break;
++  case APPLE_AGX_SCANOUT_REG_FORMAT: fake->Format = Value; break;
++  case APPLE_AGX_SCANOUT_REG_DEST_ORIGIN:
++  case APPLE_AGX_SCANOUT_REG_DEST_SIZE:
++    /* The software broker has no destination rectangle; a write here
++     * without CAP_SCALED_SOURCE is a contract violation. */
++    if ((fake->Capabilities & APPLE_AGX_SCANOUT_CAP_SCALED_SOURCE) == 0u)
++      return APPLE_AGX_SCANOUT_FALSE;
++    ++fake->DestWrites;
++    if (reg(Offset) == APPLE_AGX_SCANOUT_REG_DEST_ORIGIN)
++      fake->DestOrigin = Value;
++    else
++      fake->DestSize = Value;
++    break;
++  default: return APPLE_AGX_SCANOUT_FALSE;
++  }
++  return APPLE_AGX_SCANOUT_TRUE;
++}
++
++static APPLE_AGX_SCANOUT_BOOL write64(void *Context,
++                                       APPLE_AGX_SCANOUT_U32 Offset,
++                                       APPLE_AGX_SCANOUT_U64 Value) {
++  FAKE_BROKER *fake = Context;
++  switch (reg(Offset)) {
++  case APPLE_AGX_SCANOUT_REG_REQUEST_SEQUENCE: fake->Request = Value; break;
++  case APPLE_AGX_SCANOUT_REG_POOL_IPA: fake->PoolIpa = Value; break;
++  case APPLE_AGX_SCANOUT_REG_POOL_SIZE: fake->PoolSize = Value; break;
++  case APPLE_AGX_SCANOUT_REG_SURFACE_OFFSET: fake->SurfaceOffset = Value; break;
++  case APPLE_AGX_SCANOUT_REG_SURFACE_SIZE: fake->SurfaceSize = Value; break;
++  default: return APPLE_AGX_SCANOUT_FALSE;
++  }
++  return APPLE_AGX_SCANOUT_TRUE;
++}
++
++static APPLE_AGX_SCANOUT_U64 now_ms(void *Context) {
++  return ((FAKE_BROKER *)Context)->NowMs;
++}
++
++static APPLE_AGX_SCANOUT_BOOL pause_broker(void *Context) {
++  FAKE_BROKER *fake = Context;
++  ++fake->NowMs;
++  fake->Receipt = fake->Request;
++  fake->State = APPLE_AGX_SCANOUT_STATE_READY;
++  return APPLE_AGX_SCANOUT_TRUE;
++}
++
++static APPLE_AGX_FIXED_PANEL make_panel(FAKE_BROKER *Fake,
++                                        APPLE_AGX_SCANOUT_U32 Caps) {
++  APPLE_AGX_SCANOUT_IO io;
++  APPLE_AGX_FIXED_PANEL panel;
++  memset(Fake, 0, sizeof(*Fake));
++  memset(&io, 0, sizeof(io));
++  memset(&panel, 0, sizeof(panel));
++  Fake->Capabilities = Caps;
++  io.Context = Fake;
++  io.NowMs = now_ms;
++  io.Read32 = read32;
++  io.Read64 = read64;
++  io.Write32 = write32;
++  io.Write64 = write64;
++  io.Pause = pause_broker;
++  assert(AppleAgxFixedPanelInitialize(&panel, &io, POOL_IPA, POOL_BYTES, 1ULL,
++                                      8u) == AppleAgxFixedPanelOk);
++  assert(AppleAgxFixedPanelStart(&panel, 20ULL) == AppleAgxFixedPanelOk);
++  return panel;
++}
++
++/* One PRESENT, then stand in for the LATCHED interrupt path
++ * (AppleAgxScanoutConsumeInterrupt) so the next one may be queued. */
++static APPLE_AGX_FIXED_PANEL_RESULT queue_latched(APPLE_AGX_FIXED_PANEL *Panel,
++                                                  APPLE_AGX_SCANOUT_U64 Offset) {
++  APPLE_AGX_SCANOUT_U64 sequence = 0ULL;
++  APPLE_AGX_FIXED_PANEL_RESULT result =
++      AppleAgxFixedPanelQueuePresent(Panel, 2u, Offset, &sequence);
++  if (result == AppleAgxFixedPanelOk) {
++    assert(sequence != 0ULL);
++    Panel->Scanout.PresentPending = APPLE_AGX_SCANOUT_FALSE;
++  }
++  return result;
++}
++
++/* The P20 start probe (scanout_windows.c AdmissionScanoutStart): the HV
++ * service is used when ABI v2 caps contain both of these. */
++static int p20_selects_hv(APPLE_AGX_SCANOUT_U32 Caps) {
++  const APPLE_AGX_SCANOUT_U32 want = APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES |
++                                     APPLE_AGX_SCANOUT_CAP_DISPLAY_POWER;
++  return (Caps & want) == want;
++}
++
++typedef struct _EXPECTED_MODE {
++  APPLE_AGX_SCANOUT_U32 W, H;
++  /* AspectRatioCenteredMax rectangle inside 1920x1080 */
++  APPLE_AGX_SCANOUT_U32 X, Y, RW, RH;
++} EXPECTED_MODE;
++
++static const EXPECTED_MODE expected[] = {
++    {1920u, 1080u, 0u, 0u, 1920u, 1080u},
++    {1680u, 1050u, 96u, 0u, 1728u, 1080u}, /* 16:10 pillarbox */
++    {1600u, 900u, 0u, 0u, 1920u, 1080u},   /* 16:9 fills */
++    {1440u, 900u, 96u, 0u, 1728u, 1080u},
++    {1280u, 800u, 96u, 0u, 1728u, 1080u},
++    {1280u, 720u, 0u, 0u, 1920u, 1080u},
++    {1024u, 768u, 240u, 0u, 1440u, 1080u}, /* 4:3 pillarbox */
++    {800u, 600u, 240u, 0u, 1440u, 1080u},
++};
++
++/* WHAT REAL BUG OR INVARIANT WILL THIS TEST CATCH?  Every J274 source mode
++ * must pass every gate a flip goes through: the header rules (width % 16,
++ * even height), DCP's stride & 63 == 0, the UMD primary size (128-byte
++ * padded size == Stride * Height, else the KMD flip gate refuses it), the
++ * 64 KiB span the flip translates (EXP2055 0xc0000141), and the 1920x1080
++ * native rectangle. */
++static void test_j274_table_passes_every_gate(void) {
++  APPLE_AGX_SCANOUT_U32 i, j;
++  assert(APPLE_AGX_FIXED_PANEL_MODE_COUNT == 8u);
++  assert(sizeof(expected) / sizeof(expected[0]) ==
++         APPLE_AGX_FIXED_PANEL_MODE_COUNT);
++  assert(APPLE_AGX_SCANOUT_J313_WIDTH == NATIVE_W &&
++         APPLE_AGX_SCANOUT_J313_HEIGHT == NATIVE_H &&
++         APPLE_AGX_SCANOUT_J313_STRIDE == NATIVE_W * 4u &&
++         APPLE_AGX_SCANOUT_J313_SURFACE_SIZE == 7680ULL * 1080u);
++  for (i = 0u; i < APPLE_AGX_FIXED_PANEL_MODE_COUNT; ++i) {
++    const APPLE_AGX_SCANOUT_U32 w = AppleAgxFixedPanelModeSizes[i][0];
++    const APPLE_AGX_SCANOUT_U32 h = AppleAgxFixedPanelModeSizes[i][1];
++    APPLE_AGX_FIXED_PANEL_SOURCE_MODE mode;
++    APPLE_AGX_FIXED_PANEL_RECT rect;
++    ADMISSION_ALLOCATION_DESCRIPTION alloc;
++    unsigned long long kmd_bytes = 0ULL;
++    unsigned long long span;
++
++    assert(w == expected[i].W && h == expected[i].H);
++    assert(w <= NATIVE_W && h <= NATIVE_H);
++    assert(w % 16u == 0u && h % 2u == 0u);
++    assert(AppleAgxFixedPanelModeIndex(w, h) == i);
++    for (j = 0u; j < i; ++j)
++      assert(AppleAgxFixedPanelModeSizes[j][0] != w ||
++             AppleAgxFixedPanelModeSizes[j][1] != h);
++
++    assert(AppleAgxFixedPanelSourceModeAt(i, APPLE_AGX_SCANOUT_TRUE, &mode));
++    assert(mode.Width == w && mode.Height == h && mode.Stride == w * 4u);
++    assert((mode.Stride & 63u) == 0u);
++    assert(mode.SurfaceBytes == (APPLE_AGX_SCANOUT_U64)mode.Stride * h);
++
++    /* UMD primary (umd.c): AdmissionAllocationDescribe + 128-byte pad. */
++    assert(AdmissionAllocationDescribe(w, h, 4u, 1u, 21u, 0u, &alloc));
++    assert(alloc.Pitch == mode.Stride);
++    alloc.Size = (alloc.Size + 127ULL) & ~127ULL;
++    assert(alloc.Size == mode.SurfaceBytes);
++    assert(AdmissionAllocationDescriptionValid(&alloc));
++    assert(AppleAgxFixedPanelPrimaryGeometryOffered(w, h, alloc.Pitch,
++                                                    alloc.Size));
++    /* KMD allocation is 64 KiB-rounded; the flip translates the rounded
++     * span (scanout_windows.c, EXP2055), which must fit in it. */
++    assert(AdmissionAllocationAlign64K(alloc.Size, &kmd_bytes));
++    span = (mode.SurfaceBytes + (APPLE_AGX_SCANOUT_ALIGNMENT - 1ULL)) &
++           ~(APPLE_AGX_SCANOUT_ALIGNMENT - 1ULL);
++    assert(span % APPLE_AGX_SCANOUT_ALIGNMENT == 0ULL);
++    assert(span >= mode.SurfaceBytes && span <= kmd_bytes);
++
++    /* Scaling rules: identity only at native size. */
++    if (i == 0u) {
++      assert(AppleAgxFixedPanelScalingSupport(w, h, APPLE_AGX_SCANOUT_TRUE) ==
++             APPLE_AGX_FIXED_PANEL_SCALING_BIT(
++                 AppleAgxFixedPanelScalingIdentity));
++    } else {
++      assert(AppleAgxFixedPanelScalingSupport(w, h, APPLE_AGX_SCANOUT_TRUE) ==
++             (APPLE_AGX_FIXED_PANEL_SCALING_BIT(
++                  AppleAgxFixedPanelScalingCentered) |
++              APPLE_AGX_FIXED_PANEL_SCALING_BIT(
++                  AppleAgxFixedPanelScalingStretched) |
++              APPLE_AGX_FIXED_PANEL_SCALING_BIT(
++                  AppleAgxFixedPanelScalingAspectRatioCenteredMax)));
++      assert(AppleAgxFixedPanelScalingSupport(w, h, APPLE_AGX_SCANOUT_FALSE) ==
++             0u);
++    }
++    assert(AppleAgxFixedPanelDestination(
++        w, h,
++        i == 0u ? AppleAgxFixedPanelScalingIdentity
++                : AppleAgxFixedPanelScalingAspectRatioCenteredMax,
++        &rect));
++    assert(rect.X == expected[i].X && rect.Y == expected[i].Y &&
++           rect.Width == expected[i].RW && rect.Height == expected[i].RH);
++    assert(rect.X + rect.Width <= NATIVE_W && rect.Y + rect.Height <= NATIVE_H);
++  }
++  /* Not offered on J274: larger than native, or a stride DCP refuses. */
++  assert(AppleAgxFixedPanelModeIndex(2560u, 1600u) ==
++         APPLE_AGX_FIXED_PANEL_MODE_COUNT);
++  assert(AppleAgxFixedPanelModeIndex(1920u, 1200u) ==
++         APPLE_AGX_FIXED_PANEL_MODE_COUNT);
++  assert(AppleAgxFixedPanelModeIndex(2048u, 1280u) ==
++         APPLE_AGX_FIXED_PANEL_MODE_COUNT);
++  assert(AppleAgxFixedPanelModeIndex(1366u, 768u) ==
++         APPLE_AGX_FIXED_PANEL_MODE_COUNT);
++}
++
++/* WHAT REAL BUG OR INVARIANT WILL THIS TEST CATCH?  The software broker
++ * (P15, no DCP service) copies only the native POST geometry.  With its
++ * capability word the guest must offer one mode, refuse every scaled
++ * commit and never touch DEST_ORIGIN/DEST_SIZE. */
++static void test_soft_broker_keeps_exactly_one_mode(void) {
++  FAKE_BROKER fake;
++  APPLE_AGX_FIXED_PANEL panel = make_panel(&fake, SOFT_BROKER_CAPS);
++  APPLE_AGX_FIXED_PANEL_SOURCE_MODE mode;
++  APPLE_AGX_SCANOUT_U32 i;
++
++  assert((SOFT_BROKER_CAPS & APPLE_AGX_SCANOUT_CAP_SCALED_SOURCE) == 0u);
++  assert(!p20_selects_hv(SOFT_BROKER_CAPS));
++  assert(!AppleAgxFixedPanelScaledSourceSupported(&panel));
++  assert(AppleAgxFixedPanelSourceModeCount(APPLE_AGX_SCANOUT_FALSE) == 1u);
++  assert(AppleAgxFixedPanelSourceModeAt(0u, APPLE_AGX_SCANOUT_FALSE, &mode));
++  assert(mode.Width == NATIVE_W && mode.Height == NATIVE_H &&
++         mode.Stride == 7680u && mode.SurfaceBytes == 0x7e9000ULL);
++  assert(!AppleAgxFixedPanelSourceModeAt(1u, APPLE_AGX_SCANOUT_FALSE, &mode));
++  for (i = 1u; i < APPLE_AGX_FIXED_PANEL_MODE_COUNT; ++i) {
++    const APPLE_AGX_SCANOUT_U32 w = AppleAgxFixedPanelModeSizes[i][0];
++    const APPLE_AGX_SCANOUT_U32 h = AppleAgxFixedPanelModeSizes[i][1];
++    assert(!AppleAgxFixedPanelSourceModeFind(w, h, w * 4u,
++                                             APPLE_AGX_SCANOUT_FALSE, 0));
++    assert(AppleAgxFixedPanelCommitMode(
++               &panel, 0u, 0u, w, h, w * 4u,
++               APPLE_AGX_SCANOUT_FORMAT_BGRA8888,
++               AppleAgxFixedPanelScalingAspectRatioCenteredMax) ==
++           AppleAgxFixedPanelInvalidMode);
++    assert(AppleAgxFixedPanelCommitMode(
++               &panel, 0u, 0u, w, h, w * 4u,
++               APPLE_AGX_SCANOUT_FORMAT_BGRA8888,
++               AppleAgxFixedPanelScalingCentered) ==
++           AppleAgxFixedPanelInvalidMode);
++  }
++  assert(AppleAgxFixedPanelCommit(&panel, 0u, 0u, NATIVE_W, NATIVE_H, 7680u,
++                                  APPLE_AGX_SCANOUT_FORMAT_BGRA8888) ==
++         AppleAgxFixedPanelOk);
++  assert(queue_latched(&panel, 0x1000000ULL) == AppleAgxFixedPanelOk);
++  assert(fake.Width == NATIVE_W && fake.Height == NATIVE_H &&
++         fake.Stride == 7680u && fake.SurfaceSize == 0x7e9000ULL);
++  assert(fake.DestWrites == 0u);
++}
++
++/* WHAT REAL BUG OR INVARIANT WILL THIS TEST CATCH?  The new HV (0x37f) must
++ * still be picked by the P20 probe, and with CAP_SCALED_SOURCE every scaled
++ * commit must reach the broker with its own geometry plus the centred
++ * rectangle inside 1920x1080; the native commit writes the full rectangle. */
++static void test_hv_scaled_service_carries_geometry_and_rectangle(void) {
++  FAKE_BROKER fake;
++  APPLE_AGX_FIXED_PANEL panel = make_panel(&fake, HV_SCALED_CAPS);
++  APPLE_AGX_SCANOUT_U32 i;
++  const APPLE_AGX_SCANOUT_U64 tail = POOL_BYTES - 0x200000ULL;
++
++  assert(p20_selects_hv(HV_SCALED_CAPS));
++  assert((HV_SCALED_CAPS & APPLE_AGX_SCANOUT_CAP_SCALED_SOURCE) != 0u);
++  assert(AppleAgxFixedPanelScaledSourceSupported(&panel));
++  assert(AppleAgxFixedPanelSourceModeCount(APPLE_AGX_SCANOUT_TRUE) ==
++         APPLE_AGX_FIXED_PANEL_MODE_COUNT);
++  for (i = 1u; i < APPLE_AGX_FIXED_PANEL_MODE_COUNT; ++i) {
++    const APPLE_AGX_SCANOUT_U32 w = expected[i].W, h = expected[i].H;
++    fake.DestWrites = 0u;
++    /* identity is native-only */
++    assert(AppleAgxFixedPanelCommitMode(
++               &panel, 0u, 0u, w, h, w * 4u,
++               APPLE_AGX_SCANOUT_FORMAT_BGRA8888,
++               AppleAgxFixedPanelScalingIdentity) ==
++           AppleAgxFixedPanelInvalidMode);
++    /* a padded stride is not an offered geometry */
++    assert(AppleAgxFixedPanelCommitMode(
++               &panel, 0u, 0u, w, h, w * 4u + 64u,
++               APPLE_AGX_SCANOUT_FORMAT_BGRA8888,
++               AppleAgxFixedPanelScalingAspectRatioCenteredMax) ==
++           AppleAgxFixedPanelInvalidMode);
++    assert(AppleAgxFixedPanelCommitMode(
++               &panel, 0u, 0u, w, h, w * 4u,
++               APPLE_AGX_SCANOUT_FORMAT_BGRA8888,
++               AppleAgxFixedPanelScalingAspectRatioCenteredMax) ==
++           AppleAgxFixedPanelOk);
++    assert(queue_latched(&panel, 0x1000000ULL) == AppleAgxFixedPanelOk);
++    assert(fake.Width == w && fake.Height == h && fake.Stride == w * 4u &&
++           fake.SurfaceSize == (APPLE_AGX_SCANOUT_U64)w * 4u * h);
++    assert(fake.Format == APPLE_AGX_SCANOUT_FORMAT_BGRA8888);
++    assert(fake.DestWrites == 2u);
++    assert(fake.DestOrigin == (expected[i].X | (expected[i].Y << 16u)));
++    assert(fake.DestSize == (expected[i].RW | (expected[i].RH << 16u)));
++    /* stretched fills the native rectangle */
++    assert(AppleAgxFixedPanelCommitMode(
++               &panel, 0u, 0u, w, h, w * 4u,
++               APPLE_AGX_SCANOUT_FORMAT_BGRA8888,
++               AppleAgxFixedPanelScalingStretched) == AppleAgxFixedPanelOk);
++    assert(panel.Scanout.PresentDestOrigin == 0u &&
++           panel.Scanout.PresentDestSize == (NATIVE_W | (NATIVE_H << 16u)));
++  }
++  /* 1280x720 centered (no scale): 640x360 offset, 1:1 size. */
++  assert(AppleAgxFixedPanelCommitMode(
++             &panel, 0u, 0u, 1280u, 720u, 5120u,
++             APPLE_AGX_SCANOUT_FORMAT_BGRA8888,
++             AppleAgxFixedPanelScalingCentered) == AppleAgxFixedPanelOk);
++  assert(panel.Scanout.PresentDestOrigin == (320u | (180u << 16u)) &&
++         panel.Scanout.PresentDestSize == (1280u | (720u << 16u)));
++  /* The surface bound follows the committed mode: 800x600 fits in the
++   * last 2 MiB of the pool, the native primary does not. */
++  assert(AppleAgxFixedPanelCommitMode(
++             &panel, 0u, 0u, 800u, 600u, 3200u,
++             APPLE_AGX_SCANOUT_FORMAT_BGRA8888,
++             AppleAgxFixedPanelScalingAspectRatioCenteredMax) ==
++         AppleAgxFixedPanelOk);
++  assert(queue_latched(&panel, tail) ==
++         AppleAgxFixedPanelOk);
++  /* Native on the scaled service: identity, full rectangle. */
++  assert(AppleAgxFixedPanelCommit(&panel, 0u, 0u, NATIVE_W, NATIVE_H, 7680u,
++                                  APPLE_AGX_SCANOUT_FORMAT_BGRA8888) ==
++         AppleAgxFixedPanelOk);
++  assert(queue_latched(&panel, tail) ==
++         AppleAgxFixedPanelInvalidSurface);
++  fake.DestWrites = 0u;
++  assert(queue_latched(&panel, 0x1000000ULL) == AppleAgxFixedPanelOk);
++  assert(fake.Width == NATIVE_W && fake.Height == NATIVE_H &&
++         fake.Stride == 7680u && fake.SurfaceSize == 0x7e9000ULL);
++  assert(fake.DestWrites == 2u && fake.DestOrigin == 0u &&
++         fake.DestSize == (NATIVE_W | (NATIVE_H << 16u)));
++  /* 0x37f has no CAP_RGBA8888 (bit 7): an RGBA commit is refused. */
++  assert((HV_SCALED_CAPS & APPLE_AGX_SCANOUT_CAP_RGBA8888) == 0u);
++  assert(AppleAgxFixedPanelCommit(&panel, 0u, 0u, NATIVE_W, NATIVE_H, 7680u,
++                                  APPLE_AGX_SCANOUT_FORMAT_RGBA8888) ==
++         AppleAgxFixedPanelInvalidMode);
++}
++
++/* WHAT REAL BUG OR INVARIANT WILL THIS TEST CATCH?  The P20 probe must keep
++ * the older HV (no scaled sources, 0x27f) on the service path, and must not
++ * pick a broker without display power (0x17f) or the soft caps. */
++static void test_p20_probe_selection(void) {
++  assert(p20_selects_hv(0x27fu));
++  assert(p20_selects_hv(0x37fu));
++  assert(p20_selects_hv(0x3ffu));
++  assert(!p20_selects_hv(0x17fu));
++  assert(!p20_selects_hv(0x07fu));
++  assert(!p20_selects_hv(0x33fu)); /* no LATCHED_IRQ */
++}
++
++int main(void) {
++  test_j274_table_passes_every_gate();
++  test_soft_broker_keeps_exactly_one_mode();
++  test_hv_scaled_service_carries_geometry_and_rectangle();
++  test_p20_probe_selection();
++  return 0;
 +}
 diff -ruN -x * external/windows-on-m1/drivers/apple-agx/windows/AppleAgx.vcxproj port-j274/gpu/driver-p15/drivers/apple-agx/windows/AppleAgx.vcxproj
 --- external/windows-on-m1/drivers/apple-agx/windows/AppleAgx.vcxproj	2026-11-15 19:39:30

@@ -1,0 +1,44 @@
+19:43:16 START old=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261116-184315.sP365c.link
+19:43:33 old launcher exited
+19:43:43 launched /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-agxdcp253-2757-20261116-194343.out
+19:43:48 ABORT: launcher exited before worker
+Log: /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261116-194343.J1TN5V
+LAUNCHER EXIT 1
+19:44:43 START old=
+19:44:43 no restart: mini already at proxy
+19:44:47 launched /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-agxdcp253-2757-20261116-194447.out
+19:45:17 worker connected link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261116-194447.76JAne.link
+19:45:32 deliver: S243 READBACK MATCH AppleAgxRenderAdmission.sys 647880 008e80bc9e59db0935ecaff6db9c37e93d37697c18b193ca55f6394787736643 S243 READBACK MATCH AppleAgxRenderAdmissionUmd.dll 13502976 769850783a2aa8adabe47e2da29cef1ba501bac12142b50a3d4b4be464e47c4d S243 READBACK MATCH AppleAgxRenderAdmission.arm64only.inf 3613 7cf1b95ca477c065c3c7f84a26d9a5d1162e55de166833d86a350e28da54f7d9 S243 READBACK MATCH appleagxrenderadmission.cat 3254 37ace93f0ce1d884fd7095f9a814fa3dba42ebc0fd6ac59dbed9856149b80b0a 
+S248 I19 INSTALL 2757 (arm before install)
+작업을 완료했습니다.
+작업을 완료했습니다.
+작업을 완료했습니다.
+Microsoft PnP 유틸리티
+
+드라이버 패키지를 추가하는 중:  AppleAgxRenderAdmission.arm64only.inf
+드라이버 패키지를 추가했습니다.
+게시된 이름:         oem16.inf
+드라이버 패키지가 장치에 설치됨: ACPI\APPL0002\0
+
+총 드라이버 패키지:  1
+추가된 드라이버 패키지:  1
+S248 I19 PNPUTIL EXIT 0
+DEV1 OK CM_PROB_NONE
+
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\APPL0002\0\Device Parameters
+    Wom1StartStage    REG_DWORD    0xc
+
+
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\APPL0002\0\Device Parameters
+    Wom1StartStatus    REG_DWORD    0x0
+
+
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\APPL0002\0\Device Parameters
+    NwScanoutPath    REG_DWORD    0x1
+
+
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\APPL0002\0\Device Parameters
+    NwScanoutHwCaps    REG_DWORD    0x37f
+
+S248 I19 DONE
+19:45:57 I19 DONE link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261116-194447.76JAne.link

@@ -120,3 +120,66 @@ DWM 설정(드라이버 밖): `HKLM\SOFTWARE\Microsoft\Windows\Dwm` `DisableDDis
 | g252J(서비스, 인터럽트 우선순위 버그 수정) | 하이퍼바이저 서비스 | 31분 넘게 멈춤 없음, Windows가 쉬는 동안 화면 끄기 요청·완료 기록됨 |
 
 0x124 원인과 수정은 하이퍼바이저 쪽 `port-j274/gpu/hv/README-dcp-s251.md` §10에 있습니다.
+
+## P21 (NWOAS-J274, 2026-11-16) — 하이퍼바이저 화면 서비스가 확대 표시를 지원하면 해상도 여러 개 제공
+
+J274 빌드에서만 적용. J313 빌드는 바뀐 파일 모두 `unifdef -UAPPLE_AGX_BOARD_J274` + 주석 제거 비교로 원본과 같은 코드임을 확인(`scanout_windows.c`·`apple_agx_scanout.h`의 차이는 P17~P20 것 그대로).
+
+원본 rc106(J313 노트북 화면)과 같은 규칙입니다. 브로커 CAPS에 `CAP_SCALED_SOURCE`(1<<8)가 있으면 아래 표 전체를, 없으면 0번(1920x1080) 하나만 Windows에 알립니다. 0번이 아닌 모드는 하이퍼바이저가 DCP로 1920x1080 화면 안 가운데 사각형(가로세로 비율 유지, 기본값)에 맞춰 키워 보여 주는 방식입니다.
+
+| 파일 | 변경 |
+|---|---|
+| `shared/include/apple_agx_fixed_panel_modes.h` | J274 표를 8개로: 1920x1080(기본), 1680x1050, 1600x900, 1440x900, 1280x800, 1280x720, 1024x768, 800x600 |
+| `render-admission/src/scanout_windows.c` | `AdmissionScanoutScaledModes`: `SoftActive`(복사 방식)이면 무조건 FALSE. `AdmissionScanoutCommit`: 복사 방식에서 1920x1080/7680이 아닌 모드는 `STATUS_GRAPHICS_INVALID_VIDEO_PRESENT_SOURCE_MODE`로 거절 |
+| `render-admission/src/display.c` | 확대 모드의 신호 정보를 J274 1080p60 기준으로: 블랭킹 +280/+45, HSync = 148500000×세로총합/(2200×1125) = 60×세로총합, VSync는 정확히 60 Hz 그대로. 원본 식은 J313 패널 주파수(266.63 MHz, 2642×1682)를 써서 J274의 60 Hz VSync와 맞지 않았음 |
+| `shared/include/apple_agx_scanout.h` | 주석만(1920x1080은 기본 화면이자 확대 목적지) |
+| `shared/tests/apple_agx_fixed_panel_j274_test.c` (새 파일) | J274 전용 호스트 시험(아래) |
+| `render-admission/umd/tests/direct_flip_contract_test.c` | 기본 화면 크기·모드 수를 보드별 값으로(J313 값은 그대로) |
+
+모드 표 (각 모드가 통과해야 하는 검사):
+
+| 모드 | 줄 간격 (B) | 표면 크기 (B) | 64 KiB로 올림 (B) | 가로세로 유지 목적지 (x,y 너비x높이) |
+|---|---|---|---|---|
+| 1920x1080 | 7680 | 0x7e9000 | 0x7f0000 | 0,0 1920x1080 (그대로) |
+| 1680x1050 | 6720 | 0x6baa80 | 0x6c0000 | 96,0 1728x1080 |
+| 1600x900 | 6400 | 0x57e400 | 0x580000 | 0,0 1920x1080 |
+| 1440x900 | 5760 | 0x4f1a00 | 0x500000 | 96,0 1728x1080 |
+| 1280x800 | 5120 | 0x3e8000 | 0x3f0000 | 96,0 1728x1080 |
+| 1280x720 | 5120 | 0x384000 | 0x390000 | 0,0 1920x1080 |
+| 1024x768 | 4096 | 0x300000 | 0x300000 | 240,0 1440x1080 |
+| 800x600 | 3200 | 0x1d4c00 | 0x1e0000 | 240,0 1440x1080 |
+
+- 가로는 모두 16의 배수 → 줄 간격이 64의 배수(DCP 규칙), 세로는 모두 짝수 → 표면 크기가 128의 배수라 UMD의 128바이트 올림 크기와 KMD 화면 전환 검사(`Size == Stride × Height`)가 맞음.
+- 1920x1080 자체가 64 KiB 배수가 아니라서(원본 EXP2055의 0xc0000141 원인), 화면 전환 주소 변환은 이미 64 KiB로 올린 길이를 씀(원본 d099a808이 이 트리에 있음). KMD 할당도 64 KiB로 올려 잡으므로 올린 길이가 할당 안에 들어감 — 시험으로 확인.
+- 1366x768(줄 간격 5464, 64의 배수 아님)과 1920x1080보다 큰 모드는 넣지 않음.
+
+복사 방식(P15~P19)은 모드 하나 그대로:
+
+- [사실, 코드] 복사 방식 브로커가 돌려주는 CAPS는 `APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES`(0x7f) 고정이고 1<<8이 없음 → `Panel.Scanout.Capabilities`에도 없음 → `AdmissionScanoutScaledModes` FALSE → 모드 1개. P21에서 `SoftActive`면 CAPS와 상관없이 FALSE가 되도록 한 겹 더 막음.
+- 복사 방식에서 다른 모드가 들어오면 세 곳에서 거절: `AdmissionScanoutCommit`(P21 새 검사), `AppleAgxFixedPanelCommitMode`(모드 1개 표), `AdmissionScanoutSoftPresent`(1920x1080/7680/BGRA가 아니면 INVALID_SURFACE).
+- 복사 방식은 DEST_ORIGIN/DEST_SIZE(0xa0/0xa4)를 쓰지 않음(CAPS에 1<<8이 없으면 공용 코드가 쓰지 않음, 시험으로 확인).
+
+P20 경로 선택: 새 하이퍼바이저 CAPS 0x37f에서 `(caps & want) == want`(want = 0x7f|0x200 = 0x27f)가 참 → 하이퍼바이저 서비스 선택. 0x37f에는 RGBA8888(1<<7)이 없으므로 RGBA 형식 전환은 지금처럼 거절됨.
+
+호스트 시험(이 맥북 clang, `-std=c11 -Wall -Wextra -Werror`):
+
+| 시험 | 보드 정의 | 결과 |
+|---|---|---|
+| `shared/tests/apple_agx_fixed_panel_test.c` | 없음(J313) | 통과 |
+| `shared/tests/apple_agx_scanout_test.c` | 없음(J313) | 통과 |
+| `render-admission/umd/tests/direct_flip_contract_test.c` | 없음(J313) | 통과 |
+| `shared/tests/apple_agx_fixed_panel_j274_test.c` | `APPLE_AGX_BOARD_J274=1` | 통과 (정의 없이 빌드하면 `#error`로 거절) |
+| `render-admission/umd/tests/direct_flip_contract_test.c` | `APPLE_AGX_BOARD_J274=1` | 통과 |
+
+J274 시험 내용: 표 8개가 모든 검사(16 배수·짝수·64 배수·128 올림 = 표면 크기·64 KiB 올림이 할당 안·목적지 사각형) 통과 / 복사 방식 CAPS(0x7f)로는 모드 1개, 확대 모드 7개 모두 거절, DEST 레지스터 안 씀 / CAPS 0x37f로는 7개 모두 자기 크기와 가운데 사각형을 브로커에 씀, 기본 모드는 0,0 1920x1080을 씀 / 풀 끝 2 MiB에 800x600은 들어가고 1920x1080은 거절 / P20 경로 선택 식(0x27f·0x37f 선택, 0x17f·0x7f 안 함).
+`apple_agx_fixed_panel_test.c`·`apple_agx_scanout_test.c`는 J313 값(2560x1600)을 직접 쓰는 원본 시험이라 J274 정의로는 빌드하지 않습니다(P15 이전부터 그랬음).
+
+하드웨어에서만 알 수 있는 것:
+
+- [가설] dxgkrnl이 하이퍼바이저 서비스 경로에서 8개 모드를 실제로 보여 주는지(원본은 EXP2053~2056에서 시작 전 모드 질의 문제를 고친 뒤에 됨, 그 수정은 이 트리에 있음).
+- [가설] 하이퍼바이저가 DEST_ORIGIN/DEST_SIZE를 받아 DCP가 HDMI 1080p 출력 안에 검은 띠와 함께 맞춰 보여 주는지(하이퍼바이저 쪽 작업, 이 패치 밖).
+- [가설] 확대 모드의 가상 신호 정보(1080p60 블랭킹을 그대로 붙인 값)를 Windows가 받아들이는지. HDMI 신호 자체는 하이퍼바이저가 1080p로 유지한다는 전제.
+- [가설] 저장된 화면 설정이 확대 모드인 채로 복사 방식(서비스 없는 하이퍼바이저나 `NwSoftForce`=1)으로 부팅하면, 확대 모드 커밋이 거절되고 Windows가 1920x1080으로 되돌아갈 것으로 예상. 원본에서 CAP 없는 브로커와 같은 상황.
+- 절전·화면 끄기(P19·P20)와 모드 변경이 겹칠 때의 동작은 시험하지 않음.
+
+P21 실기기(2026-11-16, g253K): Windows 디스플레이 설정에 8개 해상도가 보였고, 1280x720(화면 가득)·1024x768(양옆 필러박스) 모두 정상 표시(콘치님 확인).

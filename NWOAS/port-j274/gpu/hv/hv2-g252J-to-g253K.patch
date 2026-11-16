@@ -1,0 +1,448 @@
+File /private/tmp/claude-501/-Users-angigyeom--claude-spares-spare-fyK5X7/190663ff-131b-41ce-b986-875c996ae717/scratchpad/hvJ/data/bootlogo_128.png is a unknown type while file /Users/angigyeom/Desktop/DEV/NWOAS/m1n1-gpu-hv2/data/bootlogo_128.png is a unknown type
+File /private/tmp/claude-501/-Users-angigyeom--claude-spares-spare-fyK5X7/190663ff-131b-41ce-b986-875c996ae717/scratchpad/hvJ/data/bootlogo_256.png is a unknown type while file /Users/angigyeom/Desktop/DEV/NWOAS/m1n1-gpu-hv2/data/bootlogo_256.png is a unknown type
+File /private/tmp/claude-501/-Users-angigyeom--claude-spares-spare-fyK5X7/190663ff-131b-41ce-b986-875c996ae717/scratchpad/hvJ/data/bootlogo_48.png is a unknown type while file /Users/angigyeom/Desktop/DEV/NWOAS/m1n1-gpu-hv2/data/bootlogo_48.png is a unknown type
+diff -ruN -x build -x *.o -x target -x *.log -x __pycache__ /private/tmp/claude-501/-Users-angigyeom--claude-spares-spare-fyK5X7/190663ff-131b-41ce-b986-875c996ae717/scratchpad/hvJ/src/display.c /Users/angigyeom/Desktop/DEV/NWOAS/m1n1-gpu-hv2/src/display.c
+--- /private/tmp/claude-501/-Users-angigyeom--claude-spares-spare-fyK5X7/190663ff-131b-41ce-b986-875c996ae717/scratchpad/hvJ/src/display.c	2026-11-16 18:18:37
++++ /Users/angigyeom/Desktop/DEV/NWOAS/m1n1-gpu-hv2/src/display.c	2026-11-16 19:35:27
+@@ -1103,8 +1103,17 @@
+     u64 iova, pa, bytes;
+     u32 width, height, stride;
+     bool rgba;
++    /* NWOAS S253: panel rectangle the source is scaled into; dst_w == 0 means
++     * the source 1:1 at 0,0 (every surface before S253, the POST fb). */
++    u32 dst_x, dst_y, dst_w, dst_h;
+ };
+ 
++/* NWOAS S253: monitor mode list at takeover, at most this many log lines. */
++#define NWSVC_MODES_PER_LINE    4u
++#define NWSVC_TIMING_LOG_LINES  48u
++#define NWSVC_COLOR_LOG_LINES   16u
++#define NWSVC_GEOMETRY_LOG_MAX  64u
++
+ static struct {
+     enum nwsvc_seq seq;
+     u64 wait_until;
+@@ -1136,6 +1145,11 @@
+     u64 takeover_us, seq_us, seq_start;
+     u64 presents, present_failures, apply_us_sum, apply_us_max;
+     u32 log_budget;
++    /* NWOAS S253 (log only) */
++    bool modes_logged;
++    bool geometry_logged;
++    struct nwsvc_surface logged; /* geometry of the last S253 scanout line */
++    u32 geometry_logs;
+ } nwsvc;
+ 
+ static int nwsvc_fail(const char *what, int ret)
+@@ -1165,6 +1179,10 @@
+            nwsvc.seq != NWSVC_SEQ_FAILED;
+ }
+ 
++/* NWOAS S253: src stays the whole source (0,0,w,h); dst is the panel
++ * rectangle (scaled by DCP). One layer only: the iBoot SWAP_SET_LAYER has no
++ * background colour field, the area outside dst is left to DCP's blender
++ * (see README-dcp-s251.md section 11). */
+ static bool nwsvc_build_layer(const struct nwsvc_surface *sf, dcp_layer_t *layer, dcp_rect_t *src,
+                               dcp_rect_t *dst)
+ {
+@@ -1172,9 +1190,90 @@
+         return false;
+     if (sf->rgba)
+         layer->surface_fmt = FMT_RGBA;
++    if (sf->dst_w && sf->dst_h)
++        *dst = (dcp_rect_t){.w = sf->dst_w, .h = sf->dst_h, .x = sf->dst_x, .y = sf->dst_y};
+     return true;
+ }
+ 
++/* NWOAS S253: one line per geometry change of what is scanned out. */
++static void nwsvc_log_geometry(const struct nwsvc_surface *sf, bool synthetic)
++{
++    u32 dw = sf->dst_w ? sf->dst_w : sf->width, dh = sf->dst_w ? sf->dst_h : sf->height;
++    u32 dx = sf->dst_w ? sf->dst_x : 0, dy = sf->dst_w ? sf->dst_y : 0;
++    const struct nwsvc_surface *l = &nwsvc.logged;
++
++    if (nwsvc.geometry_logged && l->width == sf->width && l->height == sf->height &&
++        l->stride == sf->stride && l->dst_x == dx && l->dst_y == dy && l->dst_w == dw &&
++        l->dst_h == dh)
++        return;
++    nwsvc.logged = *sf;
++    nwsvc.logged.dst_x = dx;
++    nwsvc.logged.dst_y = dy;
++    nwsvc.logged.dst_w = dw;
++    nwsvc.logged.dst_h = dh;
++    nwsvc.geometry_logged = true;
++    if (nwsvc.geometry_logs >= NWSVC_GEOMETRY_LOG_MAX)
++        return;
++    nwsvc.geometry_logs++;
++    printf("display: NWOAS-DCP-S253 scanout source %ux%u stride %u -> panel %ux%u at %u,%u%s\n",
++           sf->width, sf->height, sf->stride, dw, dh, dx, dy,
++           synthetic ? " (display off)" : "");
++}
++
++/* NWOAS S253: the monitor's whole DCP mode lists, once (takeover). */
++static void nwsvc_log_timing_modes(const dcp_timing_mode_t *modes, int cnt)
++{
++    char line[192];
++    u32 lines = 0;
++    int i = 0;
++
++    printf("display: NWOAS-DCP-S253 monitor timing modes: %d\n", cnt);
++    while (i < cnt && lines < NWSVC_TIMING_LOG_LINES) {
++        size_t pos = 0;
++        int first = i;
++        line[0] = 0;
++        for (u32 n = 0; n < NWSVC_MODES_PER_LINE && i < cnt; n++, i++) {
++            const dcp_timing_mode_t *t = &modes[i];
++            int w = snprintf(line + pos, sizeof(line) - pos, " %ux%u@%u.%02u%s", t->width,
++                             t->height, t->fps >> 16, ((t->fps & 0xffff) * 100 + 0x7fff) >> 16,
++                             t->valid ? "" : "(invalid)");
++            if (w > 0)
++                pos += (size_t)w < sizeof(line) - pos ? (size_t)w : sizeof(line) - pos - 1;
++        }
++        printf("display: NWOAS-DCP-S253 timing[%d..%d]:%s\n", first, i - 1, line);
++        lines++;
++    }
++    if (i < cnt)
++        printf("display: NWOAS-DCP-S253 timing modes %d..%d not logged\n", i, cnt - 1);
++}
++
++static void nwsvc_log_color_modes(const dcp_color_mode_t *modes, int cnt)
++{
++    char line[192];
++    u32 lines = 0;
++    int i = 0;
++
++    printf("display: NWOAS-DCP-S253 monitor color modes: %d "
++           "(colorimetry/eotf/encoding/bpp)\n",
++           cnt);
++    while (i < cnt && lines < NWSVC_COLOR_LOG_LINES) {
++        size_t pos = 0;
++        int first = i;
++        line[0] = 0;
++        for (u32 n = 0; n < NWSVC_MODES_PER_LINE && i < cnt; n++, i++) {
++            const dcp_color_mode_t *c = &modes[i];
++            int w = snprintf(line + pos, sizeof(line) - pos, " %u/%u/%u/%u%s", c->colorimetry,
++                             c->eotf, c->encoding, c->bpp, c->valid ? "" : "(invalid)");
++            if (w > 0)
++                pos += (size_t)w < sizeof(line) - pos ? (size_t)w : sizeof(line) - pos - 1;
++        }
++        printf("display: NWOAS-DCP-S253 color[%d..%d]:%s\n", first, i - 1, line);
++        lines++;
++    }
++    if (i < cnt)
++        printf("display: NWOAS-DCP-S253 color modes %d..%d not logged\n", i, cnt - 1);
++}
++
+ static int nwsvc_swap_begin(const struct nwsvc_surface *sf)
+ {
+     dcp_layer_t layer;
+@@ -1283,6 +1382,8 @@
+                                                  : -1;
+         if (cnt <= 0)
+             return nwsvc_fail("timing modes", cnt);
++        if (!nwsvc.modes_logged)
++            nwsvc_log_timing_modes(modes, cnt);
+         display_choose_timing_mode((dcp_timing_mode_t *)modes, cnt, &nwsvc.tmode, &want);
+         if (!nwsvc.tmode.valid || nwsvc.tmode.width != NWSVC_WANT_WIDTH ||
+             nwsvc.tmode.height != NWSVC_WANT_HEIGHT)
+@@ -1302,6 +1403,10 @@
+                                                  : -1;
+         if (cnt <= 0)
+             return nwsvc_fail("color modes", cnt);
++        if (!nwsvc.modes_logged) {
++            nwsvc_log_color_modes(modes, cnt);
++            nwsvc.modes_logged = true;
++        }
+         display_choose_color_mode((dcp_color_mode_t *)modes, cnt, &nwsvc.cmode);
+         ret = dcp_ib_set_mode_async(nwsvc.cmd, iboot, &nwsvc.tmode, &nwsvc.cmode);
+         if (ret)
+@@ -1488,12 +1593,34 @@
+ }
+ 
+ bool display_nwoas_svc_present_begin(u64 iova, u64 pa, u32 width, u32 height, u32 stride,
+-                                     bool rgba, u64 bytes, u64 *cookie)
++                                     bool rgba, u64 bytes, u32 dst_x, u32 dst_y, u32 dst_w,
++                                     u32 dst_h, u64 *cookie)
+ {
+     if (!cookie || !nwsvc_ready() || !iova || !pa || !width || !height ||
+         (u64)stride < (u64)width * 4 || (u64)stride * height > bytes)
+         return false;
+-    nwsvc.pending = (struct nwsvc_surface){iova, pa, bytes, width, height, stride, rgba};
++    if (!dst_w || !dst_h) {
++        dst_x = dst_y = 0;
++        dst_w = width;
++        dst_h = height;
++    }
++    /* NWOAS S253: the rectangle lies inside the mode chosen at takeover (the
++     * broker already checked it against the native 1920x1080). */
++    if (!nwsvc.tmode.width || !nwsvc.tmode.height || dst_w > nwsvc.tmode.width ||
++        dst_h > nwsvc.tmode.height || dst_x > nwsvc.tmode.width - dst_w ||
++        dst_y > nwsvc.tmode.height - dst_h)
++        return false;
++    nwsvc.pending = (struct nwsvc_surface){.iova = iova,
++                                           .pa = pa,
++                                           .bytes = bytes,
++                                           .width = width,
++                                           .height = height,
++                                           .stride = stride,
++                                           .rgba = rgba,
++                                           .dst_x = dst_x,
++                                           .dst_y = dst_y,
++                                           .dst_w = dst_w,
++                                           .dst_h = dst_h};
+     if (nwsvc.clean)
+         dc_civac_range((void *)(uintptr_t)pa, (size_t)stride * height);
+     nwsvc.present_synthetic = !nwsvc.powered;
+@@ -1542,6 +1669,7 @@
+     nwsvc.applied_ticks = get_ticks();
+     nwsvc.active = nwsvc.pending;
+     nwsvc.presents++;
++    nwsvc_log_geometry(&nwsvc.active, nwsvc.present_synthetic);
+     if (nwsvc.presents <= 4 || !(nwsvc.presents & 0x3ff))
+         printf("display: NWOAS-DCP-S251 present #%lu iova=%#lx swap_id=%#x apply avg %lu max %lu us "
+                "failures %lu%s\n",
+diff -ruN -x build -x *.o -x target -x *.log -x __pycache__ /private/tmp/claude-501/-Users-angigyeom--claude-spares-spare-fyK5X7/190663ff-131b-41ce-b986-875c996ae717/scratchpad/hvJ/src/display.h /Users/angigyeom/Desktop/DEV/NWOAS/m1n1-gpu-hv2/src/display.h
+--- /private/tmp/claude-501/-Users-angigyeom--claude-spares-spare-fyK5X7/190663ff-131b-41ce-b986-875c996ae717/scratchpad/hvJ/src/display.h	2026-11-16 17:55:11
++++ /Users/angigyeom/Desktop/DEV/NWOAS/m1n1-gpu-hv2/src/display.h	2026-11-16 19:34:42
+@@ -51,8 +51,11 @@
+ void display_nwoas_svc_free_iova(u64 iova, u64 size);
+ bool display_nwoas_svc_map(unsigned dart_index, u64 iova, u64 pa, u64 size);
+ void display_nwoas_svc_unmap(unsigned dart_index, u64 iova, u64 size);
++/* NWOAS S253: dst_* is the panel rectangle the source is scaled into
++ * (dst_w/dst_h 0 = the whole source at 0,0, i.e. 1:1 as before). */
+ bool display_nwoas_svc_present_begin(u64 iova, u64 pa, u32 width, u32 height, u32 stride,
+-                                     bool rgba, u64 bytes, u64 *cookie);
++                                     bool rgba, u64 bytes, u32 dst_x, u32 dst_y, u32 dst_w,
++                                     u32 dst_h, u64 *cookie);
+ int display_nwoas_svc_present_poll(u64 cookie, u32 *swap_id);
+ int display_nwoas_svc_latch_poll(u32 expected_swap_id);
+ bool display_nwoas_svc_quiesce_begin(u64 *cookie);
+diff -ruN -x build -x *.o -x target -x *.log -x __pycache__ /private/tmp/claude-501/-Users-angigyeom--claude-spares-spare-fyK5X7/190663ff-131b-41ce-b986-875c996ae717/scratchpad/hvJ/src/hv_agx_scanout_broker.c /Users/angigyeom/Desktop/DEV/NWOAS/m1n1-gpu-hv2/src/hv_agx_scanout_broker.c
+--- /private/tmp/claude-501/-Users-angigyeom--claude-spares-spare-fyK5X7/190663ff-131b-41ce-b986-875c996ae717/scratchpad/hvJ/src/hv_agx_scanout_broker.c	2026-11-16 18:39:10
++++ /Users/angigyeom/Desktop/DEV/NWOAS/m1n1-gpu-hv2/src/hv_agx_scanout_broker.c	2026-11-16 19:34:27
+@@ -6,8 +6,13 @@
+ 
+ /* NWOAS S251: upstream windows-on-m1 broker + J274 geometry (header) and the
+  * CAP_DISPLAY_POWER command/register. Without that capability bit every
+- * request behaves exactly as upstream. */
++ * request behaves exactly as upstream.
++ * NWOAS S253: CAP_SCALED_SOURCE (upstream rc106 ABI, REG_DEST_ORIGIN/SIZE).
++ * Without that bit only the native geometry is accepted, as before. */
+ 
++#define SCANOUT_DEST_FULL_PANEL \
++    (HV_AGX_SCANOUT_J313_WIDTH | (HV_AGX_SCANOUT_J313_HEIGHT << 16))
++
+ #define SCANOUT_V1_CAPS                                                         \
+     (HV_AGX_SCANOUT_CAP_FIXED_J313 | HV_AGX_SCANOUT_CAP_BGRA8888 |             \
+      HV_AGX_SCANOUT_CAP_REGISTERED_POOL | HV_AGX_SCANOUT_CAP_APPLIED_RECEIPT | \
+@@ -43,17 +48,64 @@
+     return sequence != 0 && sequence > broker->highest_sequence;
+ }
+ 
++static bool native_geometry(const struct hv_agx_scanout_broker *broker)
++{
++    return broker->staging_surface_size == HV_AGX_SCANOUT_J313_SURFACE_SIZE &&
++           broker->staging_width == HV_AGX_SCANOUT_J313_WIDTH &&
++           broker->staging_height == HV_AGX_SCANOUT_J313_HEIGHT &&
++           broker->staging_stride == HV_AGX_SCANOUT_J313_STRIDE;
++}
++
++/* NWOAS S253: a source smaller than the panel, scaled into the destination
++ * rectangle. The rules are those the KMD's shared mode table guarantees
++ * (apple_agx_fixed_panel_modes.h): width a multiple of 16 (stride a multiple
++ * of 64, DCP's stride rule), height even, linear 32 bpp stride = width * 4,
++ * size = stride * height (or that rounded up to 64 KiB). The rectangle is
++ * non-empty, inside the panel, and never smaller than the source (the guest
++ * only centres, stretches or aspect-fits up; DCP downscaling is untested). */
++static bool scaled_geometry(const struct hv_agx_scanout_broker *broker)
++{
++    uint32_t width = broker->staging_width;
++    uint32_t height = broker->staging_height;
++    uint32_t x = broker->staging_dest_origin & 0xffffu;
++    uint32_t y = broker->staging_dest_origin >> 16;
++    uint32_t dest_width = broker->staging_dest_size & 0xffffu;
++    uint32_t dest_height = broker->staging_dest_size >> 16;
++    uint64_t bytes;
++
++    if (!(broker->capabilities & HV_AGX_SCANOUT_CAP_SCALED_SOURCE) || !width || !height ||
++        width > HV_AGX_SCANOUT_J313_WIDTH || height > HV_AGX_SCANOUT_J313_HEIGHT ||
++        (width & 15u) || (height & 1u) || broker->staging_stride != width * 4u)
++        return false;
++    bytes = (uint64_t)broker->staging_stride * height;
++    if (broker->staging_surface_size != bytes &&
++        broker->staging_surface_size !=
++            ((bytes + HV_AGX_SCANOUT_ALIGNMENT - 1) & ~(HV_AGX_SCANOUT_ALIGNMENT - 1)))
++        return false;
++    if (!dest_width || !dest_height || x > HV_AGX_SCANOUT_J313_WIDTH - dest_width ||
++        dest_width > HV_AGX_SCANOUT_J313_WIDTH || dest_height > HV_AGX_SCANOUT_J313_HEIGHT ||
++        y > HV_AGX_SCANOUT_J313_HEIGHT - dest_height || dest_width < width ||
++        dest_height < height)
++        return false;
++    /* The native source only ever covers the whole panel. */
++    if (width == HV_AGX_SCANOUT_J313_WIDTH && height == HV_AGX_SCANOUT_J313_HEIGHT)
++        return broker->staging_dest_origin == 0 &&
++               broker->staging_dest_size == SCANOUT_DEST_FULL_PANEL;
++    return true;
++}
++
+ static bool surface_valid(const struct hv_agx_scanout_broker *broker)
+ {
+     uint64_t offset = broker->staging_surface_offset;
+     uint64_t size = broker->staging_surface_size;
++    bool native = native_geometry(broker);
+ 
+     if (broker->registered_pool_size != broker->pool_size ||
+         (offset & (HV_AGX_SCANOUT_ALIGNMENT - 1)) != 0 ||
+-        size != HV_AGX_SCANOUT_J313_SURFACE_SIZE ||
+-        broker->staging_width != HV_AGX_SCANOUT_J313_WIDTH ||
+-        broker->staging_height != HV_AGX_SCANOUT_J313_HEIGHT ||
+-        broker->staging_stride != HV_AGX_SCANOUT_J313_STRIDE ||
++        (native && (broker->capabilities & HV_AGX_SCANOUT_CAP_SCALED_SOURCE) &&
++         (broker->staging_dest_origin != 0 ||
++          broker->staging_dest_size != SCANOUT_DEST_FULL_PANEL)) ||
++        (!native && !scaled_geometry(broker)) ||
+         (broker->staging_format != HV_AGX_SCANOUT_FORMAT_BGRA8888 &&
+          (broker->staging_format != HV_AGX_SCANOUT_FORMAT_RGBA8888 ||
+           !(broker->capabilities & HV_AGX_SCANOUT_CAP_RGBA8888))) ||
+@@ -142,6 +194,16 @@
+     broker->pending.Stride = broker->staging_stride;
+     broker->pending.Format = broker->staging_format;
+     broker->pending.Power = broker->staging_power;
++    broker->pending.DestX = 0;
++    broker->pending.DestY = 0;
++    broker->pending.DestWidth = HV_AGX_SCANOUT_J313_WIDTH;
++    broker->pending.DestHeight = HV_AGX_SCANOUT_J313_HEIGHT;
++    if (broker->capabilities & HV_AGX_SCANOUT_CAP_SCALED_SOURCE) {
++        broker->pending.DestX = broker->staging_dest_origin & 0xffffu;
++        broker->pending.DestY = broker->staging_dest_origin >> 16;
++        broker->pending.DestWidth = broker->staging_dest_size & 0xffffu;
++        broker->pending.DestHeight = broker->staging_dest_size >> 16;
++    }
+     broker->state_before_pending = broker->state;
+     broker->state = command == HV_AGX_SCANOUT_CMD_RELEASE ? HV_AGX_SCANOUT_QUIESCING
+                                                           : HV_AGX_SCANOUT_PENDING;
+@@ -164,6 +226,8 @@
+     broker->result = HV_AGX_SCANOUT_RESULT_OK;
+     broker->pool_size = HV_AGX_SCANOUT_J313_POOL_SIZE;
+     broker->power_state = 1u;
++    broker->staging_dest_origin = 0;
++    broker->staging_dest_size = SCANOUT_DEST_FULL_PANEL;
+ }
+ 
+ bool hv_agx_scanout_broker_set_pool_size(struct hv_agx_scanout_broker *broker,
+@@ -233,6 +297,16 @@
+             return false;
+         *value = broker->power_state;
+         break;
++    case HV_AGX_SCANOUT_REG_DEST_ORIGIN:
++        if (!(broker->capabilities & HV_AGX_SCANOUT_CAP_SCALED_SOURCE))
++            return false;
++        *value = broker->staging_dest_origin;
++        break;
++    case HV_AGX_SCANOUT_REG_DEST_SIZE:
++        if (!(broker->capabilities & HV_AGX_SCANOUT_CAP_SCALED_SOURCE))
++            return false;
++        *value = broker->staging_dest_size;
++        break;
+     default:
+         return false;
+     }
+@@ -322,6 +396,16 @@
+             if (!(broker->capabilities & HV_AGX_SCANOUT_CAP_DISPLAY_POWER))
+                 return false;
+             broker->staging_power = (uint32_t)*value;
++            return true;
++        case HV_AGX_SCANOUT_REG_DEST_ORIGIN:
++            if (!(broker->capabilities & HV_AGX_SCANOUT_CAP_SCALED_SOURCE))
++                return false;
++            broker->staging_dest_origin = (uint32_t)*value;
++            return true;
++        case HV_AGX_SCANOUT_REG_DEST_SIZE:
++            if (!(broker->capabilities & HV_AGX_SCANOUT_CAP_SCALED_SOURCE))
++                return false;
++            broker->staging_dest_size = (uint32_t)*value;
+             return true;
+         case HV_AGX_SCANOUT_REG_COMMAND:
+             return submit(broker, (uint32_t)*value);
+diff -ruN -x build -x *.o -x target -x *.log -x __pycache__ /private/tmp/claude-501/-Users-angigyeom--claude-spares-spare-fyK5X7/190663ff-131b-41ce-b986-875c996ae717/scratchpad/hvJ/src/hv_agx_scanout_broker.h /Users/angigyeom/Desktop/DEV/NWOAS/m1n1-gpu-hv2/src/hv_agx_scanout_broker.h
+--- /private/tmp/claude-501/-Users-angigyeom--claude-spares-spare-fyK5X7/190663ff-131b-41ce-b986-875c996ae717/scratchpad/hvJ/src/hv_agx_scanout_broker.h	2026-11-16 18:39:10
++++ /Users/angigyeom/Desktop/DEV/NWOAS/m1n1-gpu-hv2/src/hv_agx_scanout_broker.h	2026-11-16 19:33:55
+@@ -7,7 +7,10 @@
+ #include <stdint.h>
+ 
+ #define HV_AGX_SCANOUT_MMIO_OFFSET UINT64_C(0x400)
+-#define HV_AGX_SCANOUT_MMIO_SIZE UINT64_C(0xa0)
++/* NWOAS S253: the window ends after REG_DEST_SIZE (KMD apple_agx_scanout.h
++ * APPLE_AGX_SCANOUT_MMIO_SIZE 0xa8). Without CAP_SCALED_SOURCE +0xa0/+0xa4
++ * are refused exactly like any offset past the old 0xa0 window. */
++#define HV_AGX_SCANOUT_MMIO_SIZE UINT64_C(0xa8)
+ #define HV_AGX_SCANOUT_MAGIC UINT32_C(0x53584741) /* "AGXS" */
+ #define HV_AGX_SCANOUT_ABI_VERSION_V1 1u
+ #define HV_AGX_SCANOUT_ABI_VERSION_V2 2u
+@@ -30,6 +33,11 @@
+  * this bit is advertised (J274 DCP scanout service, nwoas_agx_broker.c). */
+ #define HV_AGX_SCANOUT_CAP_DISPLAY_POWER (1u << 9)
+ 
++/* NWOAS S253 (upstream rc106 m1n1-scaled ABI): PRESENT accepts a source
++ * smaller than the native mode; DCP scales it into the panel rectangle
++ * REG_DEST_ORIGIN/REG_DEST_SIZE. The output timing stays the native mode. */
++#define HV_AGX_SCANOUT_CAP_SCALED_SOURCE (1u << 8)
++
+ #if defined(NWOAS_AGX_SCANOUT_J274) && NWOAS_AGX_SCANOUT_J274
+ /* NWOAS-J274 S251: same values as the KMD's P15 (driver-p15
+  * shared/include/apple_agx_scanout.h, APPLE_AGX_BOARD_J274): the Mac mini HDMI
+@@ -86,6 +94,11 @@
+     /* NWOAS S251 (CAP_DISPLAY_POWER only), u32: write = requested display
+      * power for CMD_SET_POWER (0 off, 1 on); read = current power state. */
+     HV_AGX_SCANOUT_REG_POWER = 0x9c,
++    /* NWOAS S253 (CAP_SCALED_SOURCE only), u32: X | Y << 16 and
++     * Width | Height << 16 of the panel rectangle. Both default to the full
++     * native panel, so a guest that never writes them presents as before. */
++    HV_AGX_SCANOUT_REG_DEST_ORIGIN = 0xa0,
++    HV_AGX_SCANOUT_REG_DEST_SIZE = 0xa4,
+ };
+ enum hv_agx_scanout_command {
+     HV_AGX_SCANOUT_CMD_QUERY = 0,
+@@ -131,6 +144,9 @@
+     uint64_t SurfaceOffset;
+     uint64_t SurfaceSize;
+     uint32_t Power; /* NWOAS S251: CMD_SET_POWER argument (0 off, 1 on) */
++    /* NWOAS S253: PRESENT panel rectangle (full native panel unless
++     * CAP_SCALED_SOURCE admitted another one). */
++    uint32_t DestX, DestY, DestWidth, DestHeight;
+ };
+ 
+ struct hv_agx_scanout_broker {
+@@ -170,6 +186,9 @@
+     /* NWOAS S251 (CAP_DISPLAY_POWER) */
+     uint32_t staging_power;
+     uint32_t power_state; /* 1 = display on (initial), 0 = off */
++    /* NWOAS S253 (CAP_SCALED_SOURCE): raw REG_DEST_ORIGIN / REG_DEST_SIZE */
++    uint32_t staging_dest_origin;
++    uint32_t staging_dest_size;
+ };
+ 
+ void hv_agx_scanout_broker_init(struct hv_agx_scanout_broker *broker);
+diff -ruN -x build -x *.o -x target -x *.log -x __pycache__ /private/tmp/claude-501/-Users-angigyeom--claude-spares-spare-fyK5X7/190663ff-131b-41ce-b986-875c996ae717/scratchpad/hvJ/src/nwoas_agx_broker.c /Users/angigyeom/Desktop/DEV/NWOAS/m1n1-gpu-hv2/src/nwoas_agx_broker.c
+--- /private/tmp/claude-501/-Users-angigyeom--claude-spares-spare-fyK5X7/190663ff-131b-41ce-b986-875c996ae717/scratchpad/hvJ/src/nwoas_agx_broker.c	2026-11-16 18:39:30
++++ /Users/angigyeom/Desktop/DEV/NWOAS/m1n1-gpu-hv2/src/nwoas_agx_broker.c	2026-11-16 19:34:42
+@@ -539,7 +539,8 @@
+            display_nwoas_svc_present_begin(surface_iova, surface_pa, request->Width,
+                                            request->Height, request->Stride,
+                                            request->Format == HV_AGX_SCANOUT_FORMAT_RGBA8888,
+-                                           request->SurfaceSize, cookie);
++                                           request->SurfaceSize, request->DestX, request->DestY,
++                                           request->DestWidth, request->DestHeight, cookie);
+ }
+ 
+ static enum hv_agx_scanout_async_result svc_present_poll(void *opaque, uint64_t cookie,
+@@ -620,6 +621,9 @@
+     }
+     hv_agx_scanout_broker_init_v2(&scanout_broker, true); /* LATCHED is time based */
+     scanout_broker.capabilities |= HV_AGX_SCANOUT_CAP_DISPLAY_POWER;
++    /* NWOAS S253: smaller sources scaled by DCP into REG_DEST_ORIGIN/SIZE; the
++     * timing stays the native mode chosen at takeover. */
++    scanout_broker.capabilities |= HV_AGX_SCANOUT_CAP_SCALED_SOURCE;
+     /* Only BGRA8888 was shown on the J274 iBoot path (S250 hardware test);
+      * RGBA surfaces stay refused (INVALID_SURFACE) until that is tested. */
+     scanout_broker.capabilities &= ~HV_AGX_SCANOUT_CAP_RGBA8888;

@@ -42,6 +42,8 @@ static struct {
     bool iova_reserved;
     uint64_t last_iova, last_pa;
     uint32_t last_w, last_h, last_stride;
+    uint32_t last_dx, last_dy, last_dw, last_dh; /* S253 */
+    uint64_t last_size;
     bool last_rgba;
     int quiesce_polls;
     bool quiesced;
@@ -110,6 +112,8 @@ static bool p_present_begin(void *o, uint64_t iova, uint64_t pa,
     (void)o;
     m.last_iova = iova; m.last_pa = pa; m.last_w = r->Width; m.last_h = r->Height;
     m.last_stride = r->Stride; m.last_rgba = r->Format == HV_AGX_SCANOUT_FORMAT_RGBA8888;
+    m.last_dx = r->DestX; m.last_dy = r->DestY; m.last_dw = r->DestWidth; m.last_dh = r->DestHeight;
+    m.last_size = r->SurfaceSize;
     m.present_polls = 0;
     *cookie = ++m.cookie;
     return true;
@@ -210,18 +214,21 @@ static APPLE_AGX_SCANOUT_BOOL io_w64(void *c, APPLE_AGX_SCANOUT_U32 off, APPLE_A
 }
 static APPLE_AGX_SCANOUT_BOOL io_pause(void *c) { (void)c; tick(); return APPLE_AGX_SCANOUT_TRUE; }
 
-static void hv_install_like(bool service)
+static void hv_install_like2(bool service, bool scaled)
 {
     hv_agx_scanout_broker_init(&br);
     br.capabilities = 0;
     if (service) { /* scanout_select() in nwoas_agx_broker.c */
         hv_agx_scanout_broker_init_v2(&br, true);
         br.capabilities |= HV_AGX_SCANOUT_CAP_DISPLAY_POWER;
+        if (scaled) /* NWOAS S253 */
+            br.capabilities |= HV_AGX_SCANOUT_CAP_SCALED_SOURCE;
         br.capabilities &= ~HV_AGX_SCANOUT_CAP_RGBA8888;
         hv_agx_scanout_broker_set_pool_size(&br, POOL_BYTES);
         hv_agx_scanout_service_init(&svc, &ops, NULL);
     }
 }
+static void hv_install_like(bool service) { hv_install_like2(service, true); }
 
 static uint32_t r32(uint32_t reg) { uint64_t v = 0; hv_agx_scanout_broker_mmio(&br, reg, &v, false, 2); return (uint32_t)v; }
 static uint64_t r64(uint32_t reg) { uint64_t v = 0; hv_agx_scanout_broker_mmio(&br, reg, &v, false, 3); return v; }
@@ -241,6 +248,41 @@ static uint32_t raw_power(uint64_t seq, uint32_t on, uint64_t *waited_ticks)
         *waited_ticks = m.ticks - t0;
     return r32(HV_AGX_SCANOUT_REG_RESULT);
 }
+
+/* NWOAS S253 helpers */
+static void wait_latched(void)
+{
+    for (int i = 0; i < 100000 && r64(HV_AGX_SCANOUT_REG_LATCHED_SEQUENCE) !=
+                                      r64(HV_AGX_SCANOUT_REG_APPLIED_SEQUENCE); i++)
+        tick();
+}
+static void client_geometry(APPLE_AGX_SCANOUT_CLIENT *k, uint32_t w, uint32_t h, uint64_t size,
+                            uint32_t x, uint32_t y, uint32_t dw, uint32_t dh)
+{
+    k->PresentWidth = w; k->PresentHeight = h; k->PresentStride = w * 4u;
+    k->PresentSurfaceBytes = size;
+    k->PresentDestOrigin = x | (y << 16); k->PresentDestSize = dw | (dh << 16);
+}
+/* Raw PRESENT with arbitrary registers; returns the RESULT register. */
+static uint32_t raw_present(APPLE_AGX_SCANOUT_CLIENT *k, uint32_t w, uint32_t h, uint32_t stride,
+                            uint64_t size, uint32_t origin, uint32_t dsize)
+{
+    uint64_t seq = k->NextSequence++;
+    w64(HV_AGX_SCANOUT_REG_SURFACE_OFFSET, 0);
+    w64(HV_AGX_SCANOUT_REG_SURFACE_SIZE, size);
+    w32(HV_AGX_SCANOUT_REG_WIDTH, w); w32(HV_AGX_SCANOUT_REG_HEIGHT, h); w32(HV_AGX_SCANOUT_REG_STRIDE, stride);
+    w32(HV_AGX_SCANOUT_REG_FORMAT, HV_AGX_SCANOUT_FORMAT_BGRA8888);
+    w32(HV_AGX_SCANOUT_REG_DEST_ORIGIN, origin); w32(HV_AGX_SCANOUT_REG_DEST_SIZE, dsize);
+    w64(HV_AGX_SCANOUT_REG_REQUEST_SEQUENCE, seq);
+    w32(HV_AGX_SCANOUT_REG_COMMAND, HV_AGX_SCANOUT_CMD_PRESENT);
+    if (r64(HV_AGX_SCANOUT_REG_RECEIPT_SEQUENCE) != seq &&
+        r32(HV_AGX_SCANOUT_REG_RESULT) == HV_AGX_SCANOUT_RESULT_OK) {
+        for (int i = 0; i < 100000 && r64(HV_AGX_SCANOUT_REG_RECEIPT_SEQUENCE) != seq; i++)
+            tick();
+    }
+    return r32(HV_AGX_SCANOUT_REG_RESULT);
+}
+#define FULL_PANEL (1920u | (1080u << 16))
 
 int nwoas_scanout_service_tests(void)
 {
@@ -262,6 +304,15 @@ int nwoas_scanout_service_tests(void)
           (HV_AGX_SCANOUT_CAP_DISPLAY_POWER & APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES) == 0,
           "CAP_DISPLAY_POWER 0x%x is a free bit on the KMD side", HV_AGX_SCANOUT_CAP_DISPLAY_POWER);
 
+    /* NWOAS S253: ABI agreement for the scaled source */
+    CHECK(HV_AGX_SCANOUT_CAP_SCALED_SOURCE == APPLE_AGX_SCANOUT_CAP_SCALED_SOURCE &&
+          (unsigned)HV_AGX_SCANOUT_REG_DEST_ORIGIN == (unsigned)APPLE_AGX_SCANOUT_REG_DEST_ORIGIN &&
+          (unsigned)HV_AGX_SCANOUT_REG_DEST_SIZE == (unsigned)APPLE_AGX_SCANOUT_REG_DEST_SIZE &&
+          HV_AGX_SCANOUT_MMIO_SIZE == APPLE_AGX_SCANOUT_MMIO_SIZE,
+          "S253 HV and KMD agree: CAP_SCALED_SOURCE 0x%x, DEST regs 0x%x/0x%x, window 0x%llx",
+          HV_AGX_SCANOUT_CAP_SCALED_SOURCE, HV_AGX_SCANOUT_REG_DEST_ORIGIN,
+          HV_AGX_SCANOUT_REG_DEST_SIZE, (unsigned long long)HV_AGX_SCANOUT_MMIO_SIZE);
+
     /* 1. Default (service off): the KMD's v2 qualification fails as today */
     mock_reset();
     hv_install_like(false);
@@ -275,6 +326,10 @@ int nwoas_scanout_service_tests(void)
     w32(HV_AGX_SCANOUT_REG_COMMAND, HV_AGX_SCANOUT_CMD_SET_POWER);
     CHECK(r32(HV_AGX_SCANOUT_REG_RESULT) == HV_AGX_SCANOUT_RESULT_INVALID_COMMAND,
           "service off: CMD_SET_POWER -> INVALID_COMMAND (unchanged)");
+    pv = 0;
+    CHECK(!hv_agx_scanout_broker_mmio(&br, HV_AGX_SCANOUT_REG_DEST_ORIGIN, &pv, false, 2) &&
+          !hv_agx_scanout_broker_mmio(&br, HV_AGX_SCANOUT_REG_DEST_SIZE, &pv, true, 2),
+          "S253 service off: DEST_ORIGIN/DEST_SIZE refused (as past the old 0xa0 window)");
 
     /* 2. Service on: qualify exactly like scanout_windows.c:1355-1363 */
     mock_reset();
@@ -285,8 +340,10 @@ int nwoas_scanout_service_tests(void)
           (k.Capabilities & APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES) == APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES,
           "service on: KMD Qualify Ok, ABI v%u caps 0x%x (KMD needs 0x%x)", k.AbiVersion, k.Capabilities,
           APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES);
-    CHECK((k.Capabilities & HV_AGX_SCANOUT_CAP_DISPLAY_POWER) && !(k.Capabilities & APPLE_AGX_SCANOUT_CAP_SCALED_SOURCE),
-          "service on: CAP_DISPLAY_POWER set, CAP_SCALED_SOURCE clear");
+    CHECK((k.Capabilities & HV_AGX_SCANOUT_CAP_DISPLAY_POWER) && (k.Capabilities & APPLE_AGX_SCANOUT_CAP_SCALED_SOURCE),
+          "service on: CAP_DISPLAY_POWER and CAP_SCALED_SOURCE set (S253, caps 0x%x)", k.Capabilities);
+    CHECK(r32(HV_AGX_SCANOUT_REG_DEST_ORIGIN) == 0 && r32(HV_AGX_SCANOUT_REG_DEST_SIZE) == FULL_PANEL,
+          "S253 DEST_ORIGIN/DEST_SIZE read back 0 / 1920x1080 before any write");
 
     /* 3. REGISTER_POOL through the KMD client (deadline 2000 ms as AdmissionScanoutStart) */
     uint64_t t0 = m.ticks;
@@ -305,7 +362,8 @@ int nwoas_scanout_service_tests(void)
     /* 4. PresentApplied (synchronous) */
     res = AppleAgxScanoutPresentApplied(&k, 0, io_now(NULL) + 2000, &swap);
     CHECK(res == AppleAgxScanoutOk && swap != 0 && m.last_w == 1920 && m.last_h == 1080 &&
-          m.last_stride == 7680 && m.last_iova == POOL_IOVA && m.last_pa == POOL_IPA && !m.last_rgba,
+          m.last_stride == 7680 && m.last_iova == POOL_IOVA && m.last_pa == POOL_IPA && !m.last_rgba &&
+          m.last_dx == 0 && m.last_dy == 0 && m.last_dw == 1920 && m.last_dh == 1080,
           "PresentApplied Ok swap_id %u, 1920x1080 stride 7680 BGRA at iova 0x%llx pa 0x%llx", swap,
           (unsigned long long)m.last_iova, (unsigned long long)m.last_pa);
     uint64_t applied = r64(HV_AGX_SCANOUT_REG_APPLIED_SEQUENCE);
@@ -344,6 +402,76 @@ int nwoas_scanout_service_tests(void)
     CHECK(svc.presents_applied == 2 && svc.latches == 2 && svc.latch_failures == 0,
           "service counters: %llu applied, %llu latched", (unsigned long long)svc.presents_applied,
           (unsigned long long)svc.latches);
+
+    /* 5b. NWOAS S253: scaled sources through the KMD client */
+    uint32_t rr;
+    client_geometry(&k, 1280, 720, UINT64_C(5120) * 720, 0, 0, 1920, 1080);
+    res = AppleAgxScanoutPresentApplied(&k, 0, io_now(NULL) + 2000, &swap);
+    CHECK(res == AppleAgxScanoutOk && m.last_w == 1280 && m.last_h == 720 && m.last_stride == 5120 &&
+          m.last_dx == 0 && m.last_dy == 0 && m.last_dw == 1920 && m.last_dh == 1080 &&
+          m.last_size == UINT64_C(5120) * 720,
+          "S253 1280x720 stretched -> service request src 1280x720 stride 5120, dst 0,0 1920x1080 (%d)", res);
+    wait_latched();
+    /* 1440x900 aspect fit: (1440*1080+450)/900 = 1728, x = (1920-1728)/2 = 96 */
+    client_geometry(&k, 1440, 900, UINT64_C(5760) * 900, 96, 0, 1728, 1080);
+    res = AppleAgxScanoutPresentApplied(&k, 0x800000, io_now(NULL) + 2000, &swap);
+    CHECK(res == AppleAgxScanoutOk && m.last_w == 1440 && m.last_h == 900 && m.last_dx == 96 &&
+          m.last_dy == 0 && m.last_dw == 1728 && m.last_dh == 1080 &&
+          r32(HV_AGX_SCANOUT_REG_DEST_ORIGIN) == 96u && r32(HV_AGX_SCANOUT_REG_DEST_SIZE) == (1728u | (1080u << 16)),
+          "S253 1440x900 aspect fit -> dst 96,0 1728x1080, DEST regs read back (%d)", res);
+    wait_latched();
+    /* 800x600 centred 1:1, surface size rounded up to 64 KiB (0x1d4c00 -> 0x1e0000) */
+    client_geometry(&k, 800, 600, UINT64_C(0x1e0000), 560, 240, 800, 600);
+    res = AppleAgxScanoutPresentApplied(&k, 0, io_now(NULL) + 2000, &swap);
+    CHECK(res == AppleAgxScanoutOk && m.last_w == 800 && m.last_h == 600 && m.last_dx == 560 &&
+          m.last_dy == 240 && m.last_dw == 800 && m.last_dh == 600 && m.last_size == UINT64_C(0x1e0000),
+          "S253 800x600 centred, size rounded to 64 KiB -> dst 560,240 800x600 (%d)", res);
+    wait_latched();
+    client_geometry(&k, 800, 600, UINT64_C(0x1d4c00), 560, 240, 800, 600);
+    res = AppleAgxScanoutPresentApplied(&k, 0x800000, io_now(NULL) + 2000, &swap);
+    CHECK(res == AppleAgxScanoutOk && m.last_size == UINT64_C(0x1d4c00),
+          "S253 800x600 with the exact size stride*height (what the KMD writes) accepted (%d)", res);
+    wait_latched();
+
+    /* 5c. NWOAS S253: bad geometry is refused (terminal INVALID_SURFACE) */
+    uint64_t applied_before = svc.presents_applied;
+    static const struct {
+        uint32_t w, h, stride; uint64_t size; uint32_t origin, dsize; const char *what;
+    } bad[] = {
+        {1366, 768, 5464, UINT64_C(5464) * 768, 0, FULL_PANEL, "width not a multiple of 16 (1366x768)"},
+        {1280, 721, 5120, UINT64_C(5120) * 721, 0, FULL_PANEL, "odd height (1280x721)"},
+        {1280, 720, 5632, UINT64_C(5632) * 720, 0, FULL_PANEL, "stride != width*4"},
+        {1280, 720, 5120, UINT64_C(5120) * 720 + 0x1000, 0, FULL_PANEL, "size neither stride*height nor its 64 KiB round-up"},
+        {1280, 720, 5120, UINT64_C(5120) * 719, 0, FULL_PANEL, "size smaller than stride*height"},
+        {1920, 1200, 7680, UINT64_C(7680) * 1200, 0, FULL_PANEL, "source taller than the panel (1920x1200)"},
+        {2048, 1080, 8192, UINT64_C(8192) * 1080, 0, FULL_PANEL, "source wider than the panel"},
+        {0, 720, 0, 0, 0, FULL_PANEL, "zero width"},
+        {1280, 720, 5120, UINT64_C(5120) * 720, 0, 0, "empty destination"},
+        {1280, 720, 5120, UINT64_C(5120) * 720, 0, 1920u, "destination of height 0"},
+        {1280, 720, 5120, UINT64_C(5120) * 720, 200, FULL_PANEL, "destination past the right edge"},
+        {1280, 720, 5120, UINT64_C(5120) * 720, 1u << 16, FULL_PANEL, "destination past the bottom edge"},
+        {1280, 720, 5120, UINT64_C(5120) * 720, 0, 1921u | (1080u << 16), "destination wider than the panel"},
+        {1280, 720, 5120, UINT64_C(5120) * 720, 0, 640u | (360u << 16), "destination smaller than the source"},
+        {1920, 1080, 7680, UINT64_C(0x7e9000), 0, 1280u | (720u << 16), "native source into a partial rectangle"},
+        {1920, 1080, 7680, UINT64_C(0x7e9000), 8, FULL_PANEL, "native source with origin 8,0"},
+    };
+    for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        rr = raw_present(&k, bad[i].w, bad[i].h, bad[i].stride, bad[i].size, bad[i].origin, bad[i].dsize);
+        CHECK(rr == HV_AGX_SCANOUT_RESULT_INVALID_SURFACE &&
+              r64(HV_AGX_SCANOUT_REG_RECEIPT_SEQUENCE) == k.NextSequence - 1 &&
+              r32(HV_AGX_SCANOUT_REG_STATE) == HV_AGX_SCANOUT_ACTIVE,
+              "S253 refused INVALID_SURFACE: %s (result %u)", bad[i].what, rr);
+    }
+    CHECK(svc.presents_applied == applied_before, "S253 no refused geometry reached the service");
+
+    /* 5d. NWOAS S253: native traffic unchanged (the KMD's default geometry) */
+    client_geometry(&k, 1920, 1080, HV_AGX_SCANOUT_J313_SURFACE_SIZE, 0, 0, 1920, 1080);
+    res = AppleAgxScanoutPresentApplied(&k, 0, io_now(NULL) + 2000, &swap);
+    CHECK(res == AppleAgxScanoutOk && m.last_w == 1920 && m.last_h == 1080 && m.last_stride == 7680 &&
+          m.last_dx == 0 && m.last_dy == 0 && m.last_dw == 1920 && m.last_dh == 1080 &&
+          m.last_size == HV_AGX_SCANOUT_J313_SURFACE_SIZE,
+          "S253 native 1920x1080 after scaled ones -> dst 0,0 1920x1080 (%d)", res);
+    wait_latched();
 
     /* 6. Wrong geometry is refused by the broker (terminal) */
     uint64_t seq = k.NextSequence++;
@@ -430,6 +558,30 @@ int nwoas_scanout_service_tests(void)
     CHECK(res == AppleAgxScanoutBrokerRejected && k.LastBrokerResult == HV_AGX_SCANOUT_RESULT_INVALID_POOL &&
           m.owner_polls == 0,
           "pool size != segment 2 -> INVALID_POOL, DCP not touched");
+
+    /* 12. NWOAS S253: without CAP_SCALED_SOURCE only native geometry, dest = full panel */
+    mock_reset();
+    hv_install_like2(true, false);
+    AppleAgxScanoutInitialize(&k, &io, 1, 40000);
+    AppleAgxScanoutQualify(&k);
+    res = AppleAgxScanoutRegisterPool(&k, POOL_IPA, POOL_BYTES, io_now(NULL) + 2000);
+    CHECK(res == AppleAgxScanoutOk && !(k.Capabilities & APPLE_AGX_SCANOUT_CAP_SCALED_SOURCE),
+          "S253 cap clear: RegisterPool Ok, KMD sees no CAP_SCALED_SOURCE");
+    res = AppleAgxScanoutPresentApplied(&k, 0, io_now(NULL) + 2000, &swap);
+    CHECK(res == AppleAgxScanoutOk && m.last_w == 1920 && m.last_dx == 0 && m.last_dy == 0 &&
+          m.last_dw == 1920 && m.last_dh == 1080,
+          "S253 cap clear: native present Ok (no DEST writes), service dst full panel (%d)", res);
+    wait_latched();
+    pv = 0;
+    CHECK(!hv_agx_scanout_broker_mmio(&br, HV_AGX_SCANOUT_REG_DEST_ORIGIN, &pv, false, 2),
+          "S253 cap clear: DEST_ORIGIN refused");
+    seq = k.NextSequence++;
+    w64(HV_AGX_SCANOUT_REG_SURFACE_SIZE, UINT64_C(5120) * 720);
+    w32(HV_AGX_SCANOUT_REG_WIDTH, 1280); w32(HV_AGX_SCANOUT_REG_HEIGHT, 720); w32(HV_AGX_SCANOUT_REG_STRIDE, 5120);
+    w64(HV_AGX_SCANOUT_REG_REQUEST_SEQUENCE, seq);
+    w32(HV_AGX_SCANOUT_REG_COMMAND, HV_AGX_SCANOUT_CMD_PRESENT);
+    CHECK(r32(HV_AGX_SCANOUT_REG_RESULT) == HV_AGX_SCANOUT_RESULT_INVALID_SURFACE,
+          "S253 cap clear: 1280x720 refused INVALID_SURFACE (pre-S253 behaviour)");
 
     printf("S251 scanout service: %d failure(s)\n", fails);
     return fails;
