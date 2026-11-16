@@ -1,0 +1,219 @@
+--- a/src/display.c	(g253K)
++++ b/src/display.c	(g254L)
+@@ -1150,8 +1150,20 @@
+     bool geometry_logged;
+     struct nwsvc_surface logged; /* geometry of the last S253 scanout line */
+     u32 geometry_logs;
++    /* NWOAS S254: HDMI reconnect watch.  The iBoot endpoint has no hotplug
++     * notification, so while the display is on and the endpoint is idle the
++     * HV asks GET_HPD once per NWSVC_WATCH_US; HPD low -> high, or a changed
++     * timing-mode count, reruns the power-on modeset on its own. */
++    bool watch_active;  /* GET_HPD of the watch in flight on nwsvc.cmd */
++    bool watch_lost;    /* HPD seen low (or the last reconnect failed) */
++    bool reconnecting;  /* the watch runs the power-on sequence */
++    int watch_tcnt;     /* timing-mode count of the last connected answer */
++    u64 watch_next;
++    u64 watch_polls, watch_errors, reconnects;
+ } nwsvc;
+ 
++#define NWSVC_WATCH_US       1000000u /* one GET_HPD per second */
++#define NWSVC_WATCH_DRAIN_US 20000u   /* bound for waiting out a watch GET_HPD */
+ 
+ static int nwsvc_fail(const char *what, int ret)
+ {
+@@ -1554,8 +1566,105 @@
+ {
+     return nwsvc_owner == 2 && dcp && iboot && dcp->iovad_dcp && !nwsvc_seq_busy() &&
+            !nwsvc.present_active && !nwsvc.quiescing;
++}
++
++static void nwsvc_watch_reconnect(int tcnt)
++{
++    printf("display: NWOAS-DCP-S254 monitor %s (timing modes %d), redoing the modeset\n",
++           nwsvc.watch_lost ? "reconnected" : "changed", tcnt);
++    nwsvc.reconnecting = true;
++    nwsvc_seq_start_on();
++    if (nwsvc.seq == NWSVC_SEQ_FAILED) {
++        nwsvc.seq = NWSVC_SEQ_IDLE;
++        nwsvc.reconnecting = false;
++        nwsvc.watch_lost = true; /* retry on the next connected answer */
++        return;
++    }
++    nwsvc.watch_lost = false;
++}
++
++static void nwsvc_watch_finish(enum dcp_ib_swap_async_result r)
++{
++    int tcnt = 0, ccnt = 0;
++    int hpd = r == DCP_IB_SWAP_ASYNC_APPLIED ? dcp_ib_cmd_async_hpd(nwsvc.cmd, &tcnt, &ccnt) : -1;
++
++    nwsvc.watch_active = false;
++    nwsvc.watch_next = timeout_calculate(NWSVC_WATCH_US);
++    nwsvc.watch_polls++;
++    if (hpd < 0) {
++        if (nwsvc.watch_errors++ < 8)
++            printf("display: NWOAS-DCP-S254 GET_HPD failed (%d)\n", hpd);
++        return;
++    }
++    if (!(hpd > 0 && tcnt > 0 && ccnt > 0)) {
++        if (!nwsvc.watch_lost)
++            printf("display: NWOAS-DCP-S254 monitor disconnected (hpd %d, modes %d/%d)\n", hpd,
++                   tcnt, ccnt);
++        nwsvc.watch_lost = true;
++        return;
++    }
++    bool changed = nwsvc.watch_lost || (nwsvc.watch_tcnt && tcnt != nwsvc.watch_tcnt);
++    nwsvc.watch_tcnt = tcnt;
++    if (changed && nwsvc.powered)
++        nwsvc_watch_reconnect(tcnt);
++}
++
++/* Callers that are about to use the iBoot endpoint wait out a watch GET_HPD
++ * (a few ms; bounded).  False if it is still in flight. */
++static bool nwsvc_watch_drain(void)
++{
++    if (!nwsvc.watch_active)
++        return true;
++    u64 deadline = timeout_calculate(NWSVC_WATCH_DRAIN_US);
++    for (;;) {
++        enum dcp_ib_swap_async_result r = nwsvc_cmd_poll();
++        if (r != DCP_IB_SWAP_ASYNC_PENDING) {
++            bool was_powered = nwsvc.powered;
++            nwsvc.powered = false; /* the caller owns the endpoint now: no reconnect */
++            nwsvc_watch_finish(r);
++            nwsvc.powered = was_powered;
++            return true;
++        }
++        if (timeout_expired(deadline))
++            return false;
++    }
+ }
+ 
++/* Called every HV tick (bhl + broker lock held), after the service step. */
++void display_nwoas_svc_watch_tick(void)
++{
++    if (nwsvc_owner != 2 || !iboot || !nwsvc.cmd)
++        return;
++    if (nwsvc.reconnecting) {
++        int r = nwsvc_seq_step();
++        if (r == 0)
++            return;
++        nwsvc.seq = NWSVC_SEQ_IDLE;
++        nwsvc.reconnecting = false;
++        nwsvc.reconnects++;
++        if (r < 0)
++            nwsvc.watch_lost = true;
++        nwsvc.watch_next = timeout_calculate(NWSVC_WATCH_US);
++        printf("display: NWOAS-DCP-S254 reconnect modeset %s in %lu us (#%lu)\n",
++               r > 0 ? "done" : "FAILED", ticks_to_usecs(get_ticks() - nwsvc.seq_start),
++               nwsvc.reconnects);
++        return;
++    }
++    if (nwsvc.watch_active) {
++        enum dcp_ib_swap_async_result r = nwsvc_cmd_poll();
++        if (r != DCP_IB_SWAP_ASYNC_PENDING)
++            nwsvc_watch_finish(r);
++        return;
++    }
++    if (!nwsvc.powered || nwsvc_seq_busy() || nwsvc.present_active || nwsvc.quiescing)
++        return;
++    if (nwsvc.watch_next && !timeout_expired(nwsvc.watch_next))
++        return;
++    if (dcp_ib_get_hpd_async(nwsvc.cmd, iboot) == 0)
++        nwsvc.watch_active = true;
++    else
++        nwsvc.watch_next = timeout_calculate(NWSVC_WATCH_US);
++}
+ 
+ bool display_nwoas_svc_reserve_iova(u64 size, u64 alignment, u64 *iova)
+ {
+@@ -1598,7 +1707,10 @@
+                                      bool rgba, u64 bytes, u32 dst_x, u32 dst_y, u32 dst_w,
+                                      u32 dst_h, u64 *cookie)
+ {
+-    if (!cookie || !nwsvc_ready() || !iova || !pa || !width || !height ||
++    /* NWOAS S254: during a watch reconnect the present retires like a
++     * display-off present and becomes the surface shown at the end of it. */
++    bool reconnect = nwsvc.reconnecting && !nwsvc.present_active && !nwsvc.quiescing;
++    if (!cookie || !(nwsvc_ready() || reconnect) || !iova || !pa || !width || !height ||
+         (u64)stride < (u64)width * 4 || (u64)stride * height > bytes)
+         return false;
+     if (!dst_w || !dst_h) {
+@@ -1625,8 +1737,8 @@
+                                            .dst_h = dst_h};
+     if (nwsvc.clean)
+         dc_civac_range((void *)(uintptr_t)pa, (size_t)stride * height);
+-    nwsvc.present_synthetic = !nwsvc.powered;
+-    if (!nwsvc.present_synthetic && nwsvc_swap_begin(&nwsvc.pending))
++    nwsvc.present_synthetic = !nwsvc.powered || reconnect;
++    if (!nwsvc.present_synthetic && (!nwsvc_watch_drain() || nwsvc_swap_begin(&nwsvc.pending)))
+         return false;
+     nwsvc.present_active = true;
+     if (++nwsvc.cookie == 0)
+@@ -1694,7 +1806,7 @@
+  * (UP display_scanout_quiesce_*: APPLIED + 150 ms). */
+ bool display_nwoas_svc_quiesce_begin(u64 *cookie)
+ {
+-    if (!cookie || !nwsvc_ready())
++    if (!cookie || !nwsvc_ready() || !nwsvc_watch_drain())
+         return false;
+     nwsvc.pending = nwsvc.fb;
+     nwsvc.quiesce_synthetic = !nwsvc.powered;
+@@ -1742,8 +1854,20 @@
+ 
+ bool display_nwoas_svc_power_begin(bool on, u64 *cookie)
+ {
+-    if (!cookie || !nwsvc_ready())
++    if (!cookie)
+         return false;
++    /* NWOAS S254: an "on" during a watch reconnect adopts that sequence. */
++    if (on && nwsvc.reconnecting && !nwsvc.present_active && !nwsvc.quiescing) {
++        nwsvc.reconnecting = false;
++        nwsvc.power_target = true;
++        if (++nwsvc.cookie == 0)
++            ++nwsvc.cookie;
++        nwsvc.power_cookie = *cookie = nwsvc.cookie;
++        printf("display: NWOAS-DCP-S251 display power on requested (joins the reconnect)\n");
++        return true;
++    }
++    if (!nwsvc_ready() || !nwsvc_watch_drain())
++        return false;
+     nwsvc.power_target = on;
+     if (on) {
+         nwsvc_seq_start_on(); /* full modeset, then the active surface is presented again */
+--- a/src/display.h	(g253K)
++++ b/src/display.h	(g254L)
+@@ -62,6 +62,8 @@
+ int display_nwoas_svc_quiesce_poll(u64 cookie);
+ bool display_nwoas_svc_power_begin(bool on, u64 *cookie);
+ int display_nwoas_svc_power_poll(u64 cookie);
++/* NWOAS S254: HDMI reconnect watch, every HV tick after the service step. */
++void display_nwoas_svc_watch_tick(void);
+ #endif
+ 
+ #endif
+--- a/src/nwoas_agx_broker.c	(g253K)
++++ b/src/nwoas_agx_broker.c	(g254L)
+@@ -667,6 +667,7 @@
+         if (r != HV_AGX_SCANOUT_SERVICE_PROGRESSED || get_ticks() - t0 > budget)
+             break;
+     }
++    display_nwoas_svc_watch_tick();
+     /* S252I: same guest ESR 0xbf40100b as S6-D49 (2026-09-07), whose cause was a
+      * synthetic SPI taken while another LR was ACTIVE (two ACTIVE LRs -> guest SEI).
+      * Never raise the synthetic scanout line while this vCPU has an ACTIVE LR;
+--- a/src/hv_vgic.c	(g253K)
++++ b/src/hv_vgic.c	(g254L)
+@@ -705,8 +705,11 @@
+             u8 *prio = (u8 *)distributor->gicd_interrupt_priority_regs;
+             for (u32 i = 0; i < (1u << width) && off + i < sizeof(distributor->gicd_interrupt_priority_regs); i++)
+                 prio[off + i] = (*val >> (8 * i)) & 0xff;
+-            if (off <= 889 && 889 < off + (1u << width))
++            static u32 nwoas_prio_logs;
++            if (off <= 889 && 889 < off + (1u << width) && nwoas_prio_logs < 4) {
++                nwoas_prio_logs++;
+                 printf("[vgic-prio] guest wrote INTID 889 priority 0x%x (width %d)\n", prio[889], width);
++            }
+             vgic_log("HV vGIC DEBUG [INFO] [Distributor]: interrupt priority byte %u = 0x%llx\n", off, *val);
+             register_handled = true;
+             //unimplemented_reg_accessed = true;
