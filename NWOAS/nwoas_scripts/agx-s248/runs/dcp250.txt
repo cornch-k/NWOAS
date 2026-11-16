@@ -1,0 +1,6 @@
+17:31:20 START old=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261116-163904.gEbigu.link
+17:31:43 chainloaded g250E, test start log=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/dcp-s250-20261116-173140.log
+17:32:22 test rc=0
+17:32:23 reboot rc=0
+17:32:27 windows launched /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-agxmed1g-after250-20261116-173227.out
+17:32:32 ABORT: launcher exited before worker

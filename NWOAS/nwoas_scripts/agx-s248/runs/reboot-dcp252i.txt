@@ -1,0 +1,10 @@
+18:40:09 START old=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261116-182336.JCziB1.link
+18:40:23 launched /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-agxdcp252-dcp252i-20261116-184023.out
+18:40:53 worker connected link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261116-184023.pcLI16.link
+DEV OK CM_PROB_NONE
+Wom1StartStage = 12
+Wom1StartStatus = 0
+Wom1GpuvaArmPhase = 6
+Wom1GpuvaArmStatus = 0
+DWM CRASHES 0
+18:41:43 ARMED DONE link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261116-184023.pcLI16.link out=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-agxdcp252-dcp252i-20261116-184023.out

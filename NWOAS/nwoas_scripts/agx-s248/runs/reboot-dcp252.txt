@@ -1,0 +1,10 @@
+18:19:08 START old=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261116-181545.t0oB5C.link
+18:19:28 launched /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-agxdcp252-dcp252-20261116-181928.out
+18:19:58 worker connected link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261116-181928.exTwV6.link
+DEV Error CM_PROB_FAILED_POST_START
+Wom1StartStage = 10
+Wom1StartStatus = -1073740669
+Wom1GpuvaArmPhase = 6
+Wom1GpuvaArmStatus = 0
+DWM CRASHES 0
+18:20:48 ARMED DONE link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261116-181928.exTwV6.link out=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-agxdcp252-dcp252-20261116-181928.out

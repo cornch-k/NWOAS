@@ -429,7 +429,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/dis
  _Use_decl_annotations_ NTSTATUS AdmissionDdiUpdateMonitorLinkInfo(
 diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/scanout_windows.c port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/scanout_windows.c
 --- external/windows-on-m1/drivers/apple-agx/render-admission/src/scanout_windows.c	2026-11-15 19:39:30
-+++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/scanout_windows.c	2026-11-16 16:32:11
++++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/scanout_windows.c	2026-11-16 18:11:13
 @@ -9,6 +9,18 @@
  static KSYNCHRONIZE_ROUTINE AdmissionScanoutVsyncControl;
  static ULONGLONG AdmissionScanoutTime100ns(void);
@@ -461,7 +461,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    /* MPO3 flip identity: tagged before the queue, carried with the pending
     * flip, and reported as CRTC_VSYNC_WITH_MULTIPLANE_OVERLAY2 on latch. */
    volatile LONG64 NextMpoPresentId;
-@@ -51,8 +68,715 @@
+@@ -51,8 +68,738 @@
    ULONG PresentCount;
    ADMISSION_PRESENT_QUERY PresentHistory[ADMISSION_PRESENT_QUERY_CAPACITY];
  #endif
@@ -495,6 +495,11 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
 +  /* NWOAS-J274 P16: copy thread + timing (build 2747).  Options from the
 +   * device key at start: NwSoftPoolCached (map the pool cached), NwSoftOverlay. */
 +  ULONG SoftPoolCached, SoftOverlay;
++  /* NWOAS-J274 P20: TRUE = this driver answers the broker window itself
++   * (gpu-hv2 without the DCP scanout service, or NwSoftForce=1).  FALSE =
++   * the hypervisor's ABI v2 + CAP_DISPLAY_POWER service (g251F) is used. */
++  BOOLEAN SoftActive;
++  ULONG SoftForce, HwCaps, PowerFailures;
 +  KDPC SoftWakeDpc;
 +  KEVENT SoftWake;
 +  HANDLE SoftThread; /* kernel handle */
@@ -640,7 +645,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
 +      &R->Adapter->NwPagingStaleLast, 0, 0) << 32);
 +  R->SoftSnap[13] = R->SoftHelpersLive;
 +  R->SoftSnap[14] = R->SoftPresentCount;
-+  R->SoftSnap[15] = 2755u;
++  R->SoftSnap[15] = 2756u;
 +}
 +
 +/* Thread only.  Gap = time between successive copies. */
@@ -954,6 +959,23 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
 +  R->SoftPool = NULL;
 +}
 +
++/* PASSIVE.  NwScanoutPath = 1 hypervisor service / 2 driver soft broker;
++ * NwScanoutHwCaps = the broker capabilities read at start. */
++static VOID AdmissionScanoutRecordPath(ADMISSION_CONTEXT *Context, ULONG Path,
++                                       ULONG Caps) {
++  HANDLE key = NULL;
++  UNICODE_STRING name;
++  if (KeGetCurrentIrql() != PASSIVE_LEVEL ||
++      !NT_SUCCESS(IoOpenDeviceRegistryKey(Context->PhysicalDeviceObject,
++          PLUGPLAY_REGKEY_DEVICE, KEY_SET_VALUE, &key)))
++    return;
++  RtlInitUnicodeString(&name, L"NwScanoutPath");
++  (void)ZwSetValueKey(key, &name, 0, REG_DWORD, &Path, sizeof(Path));
++  RtlInitUnicodeString(&name, L"NwScanoutHwCaps");
++  (void)ZwSetValueKey(key, &name, 0, REG_DWORD, &Caps, sizeof(Caps));
++  ZwClose(key);
++}
++
 +static ULONG AdmissionScanoutSoftReadDword(HANDLE Key, PCWSTR Name) {
 +  UNICODE_STRING name;
 +  UCHAR buffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)];
@@ -978,6 +1000,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
 +    return;
 +  R->SoftPoolCached = AdmissionScanoutSoftReadDword(key, L"NwSoftPoolCached") ? 1u : 0u;
 +  R->SoftOverlay = AdmissionScanoutSoftReadDword(key, L"NwSoftOverlay") ? 1u : 0u;
++  R->SoftForce = AdmissionScanoutSoftReadDword(key, L"NwSoftForce") ? 1u : 0u;
 +  ZwClose(key);
 +}
 +
@@ -1177,12 +1200,12 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
  _Use_decl_annotations_ ULONG AdmissionScanoutReceiptState(
      ADMISSION_CONTEXT *Context) {
    ADMISSION_SCANOUT_RUNTIME *runtime = Context->ScanoutRuntime;
-@@ -81,6 +805,13 @@
+@@ -81,6 +828,13 @@
        runtime->Adapter->BrokerBase == NULL ||
        !AdmissionScanoutOffsetValid(Offset, sizeof(*Value)))
      return APPLE_AGX_SCANOUT_FALSE;
 +#if defined(APPLE_AGX_BOARD_J274)
-+  if (AdmissionScanoutSoftOwns(Offset, sizeof(*Value))) {
++  if (runtime->SoftActive && AdmissionScanoutSoftOwns(Offset, sizeof(*Value))) {
 +    *Value = AdmissionScanoutSoftRead32(runtime,
 +                                        Offset - APPLE_AGX_SCANOUT_MMIO_OFFSET);
 +    return APPLE_AGX_SCANOUT_TRUE;
@@ -1191,12 +1214,12 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    *Value = READ_REGISTER_ULONG(
        (volatile ULONG *)(runtime->Adapter->BrokerBase + Offset));
    return APPLE_AGX_SCANOUT_TRUE;
-@@ -94,6 +825,13 @@
+@@ -94,6 +848,13 @@
        runtime->Adapter->BrokerBase == NULL ||
        !AdmissionScanoutOffsetValid(Offset, sizeof(*Value)))
      return APPLE_AGX_SCANOUT_FALSE;
 +#if defined(APPLE_AGX_BOARD_J274)
-+  if (AdmissionScanoutSoftOwns(Offset, sizeof(*Value))) {
++  if (runtime->SoftActive && AdmissionScanoutSoftOwns(Offset, sizeof(*Value))) {
 +    *Value = AdmissionScanoutSoftRead64(runtime,
 +                                        Offset - APPLE_AGX_SCANOUT_MMIO_OFFSET);
 +    return APPLE_AGX_SCANOUT_TRUE;
@@ -1205,12 +1228,12 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    *Value = READ_REGISTER_ULONG64(
        (volatile ULONG64 *)(runtime->Adapter->BrokerBase + Offset));
    return APPLE_AGX_SCANOUT_TRUE;
-@@ -107,6 +845,13 @@
+@@ -107,6 +868,13 @@
        runtime->Adapter->BrokerBase == NULL ||
        !AdmissionScanoutOffsetValid(Offset, sizeof(Value)))
      return APPLE_AGX_SCANOUT_FALSE;
 +#if defined(APPLE_AGX_BOARD_J274)
-+  if (AdmissionScanoutSoftOwns(Offset, sizeof(Value))) {
++  if (runtime->SoftActive && AdmissionScanoutSoftOwns(Offset, sizeof(Value))) {
 +    AdmissionScanoutSoftWrite32(runtime, Offset - APPLE_AGX_SCANOUT_MMIO_OFFSET,
 +                                Value);
 +    return APPLE_AGX_SCANOUT_TRUE;
@@ -1219,12 +1242,12 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    WRITE_REGISTER_ULONG(
        (volatile ULONG *)(runtime->Adapter->BrokerBase + Offset), Value);
    return APPLE_AGX_SCANOUT_TRUE;
-@@ -120,6 +865,13 @@
+@@ -120,6 +888,13 @@
        runtime->Adapter->BrokerBase == NULL ||
        !AdmissionScanoutOffsetValid(Offset, sizeof(Value)))
      return APPLE_AGX_SCANOUT_FALSE;
 +#if defined(APPLE_AGX_BOARD_J274)
-+  if (AdmissionScanoutSoftOwns(Offset, sizeof(Value))) {
++  if (runtime->SoftActive && AdmissionScanoutSoftOwns(Offset, sizeof(Value))) {
 +    AdmissionScanoutSoftWrite64(runtime, Offset - APPLE_AGX_SCANOUT_MMIO_OFFSET,
 +                                Value);
 +    return APPLE_AGX_SCANOUT_TRUE;
@@ -1233,7 +1256,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    WRITE_REGISTER_ULONG64(
        (volatile ULONG64 *)(runtime->Adapter->BrokerBase + Offset), Value);
    return APPLE_AGX_SCANOUT_TRUE;
-@@ -557,6 +1309,9 @@
+@@ -557,6 +1332,9 @@
    KeInitializeSpinLock(&runtime->TimerLock);
    KeInitializeTimer(&runtime->VsyncTimer);
    KeInitializeDpc(&runtime->VsyncDpc, AdmissionScanoutTimerDpc, runtime);
@@ -1243,23 +1266,45 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    runtime->Timeline.Running = APPLE_AGX_SCANOUT_TRUE;
    runtime->Timeline.Enabled = APPLE_AGX_SCANOUT_TRUE;
    runtime->VsyncNotifyEnabled = 1;
-@@ -571,6 +1326,15 @@
+@@ -571,6 +1349,37 @@
    AdmissionDisplayOutputLeaseInitialize(&runtime->ActiveLease);
    AdmissionDisplayOutputLeaseInitialize(&runtime->FallbackLease);
  #endif
 +#if defined(APPLE_AGX_BOARD_J274)
 +  {
-+    NTSTATUS soft = AdmissionScanoutSoftMap(Context, runtime, &memory);
-+    if (!NT_SUCCESS(soft)) {
-+      ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
-+      return soft;
++    /* NWOAS-J274 P20: use the hypervisor's scanout service when it offers
++     * ABI v2 with the capabilities this driver needs plus display power;
++     * otherwise answer the window here (P15). */
++    const ULONG want = APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES |
++                       APPLE_AGX_SCANOUT_CAP_DISPLAY_POWER;
++    ULONG magic = 0u, abi = 0u, caps = 0u;
++    AdmissionScanoutSoftOptions(Context, runtime);
++    if (Context->BrokerBase != NULL) {
++      magic = READ_REGISTER_ULONG((volatile ULONG *)(Context->BrokerBase +
++          APPLE_AGX_SCANOUT_MMIO_OFFSET + APPLE_AGX_SCANOUT_REG_MAGIC));
++      abi = READ_REGISTER_ULONG((volatile ULONG *)(Context->BrokerBase +
++          APPLE_AGX_SCANOUT_MMIO_OFFSET + APPLE_AGX_SCANOUT_REG_ABI_VERSION));
++      caps = READ_REGISTER_ULONG((volatile ULONG *)(Context->BrokerBase +
++          APPLE_AGX_SCANOUT_MMIO_OFFSET + APPLE_AGX_SCANOUT_REG_CAPABILITIES));
++    }
++    runtime->HwCaps = caps;
++    runtime->SoftActive = !(magic == APPLE_AGX_SCANOUT_MAGIC &&
++                            abi == APPLE_AGX_SCANOUT_ABI_VERSION_V2 &&
++                            (caps & want) == want && runtime->SoftForce == 0u);
++    AdmissionScanoutRecordPath(Context, runtime->SoftActive ? 2u : 1u, caps);
++    if (runtime->SoftActive) {
++      NTSTATUS soft = AdmissionScanoutSoftMap(Context, runtime, &memory);
++      if (!NT_SUCCESS(soft)) {
++        ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
++        return soft;
++      }
 +    }
 +  }
 +#endif
    RtlZeroMemory(&io, sizeof(io));
    io.Context = runtime;
    io.NowMs = AdmissionScanoutNow;
-@@ -583,6 +1347,7 @@
+@@ -583,6 +1392,7 @@
        &runtime->Panel, &io, memory.GuestIpaAddress, memory.PoolBytes, 1ULL,
        ADMISSION_SCANOUT_MAX_POLLS);
    if (result != AppleAgxFixedPanelOk) {
@@ -1267,7 +1312,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
      ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
      return STATUS_INVALID_PARAMETER;
    }
-@@ -593,6 +1358,7 @@
+@@ -593,6 +1403,7 @@
        (runtime->Panel.Scanout.Capabilities &
         APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES) !=
            APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES) {
@@ -1275,7 +1320,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
      ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
      return STATUS_NOT_SUPPORTED;
    }
-@@ -604,6 +1370,7 @@
+@@ -604,6 +1415,7 @@
        Context->ScanoutRuntime = runtime;
        return STATUS_DEVICE_BUSY;
      }
@@ -1283,7 +1328,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
      ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
      return STATUS_DEVICE_HARDWARE_ERROR;
    }
-@@ -650,6 +1417,9 @@
+@@ -650,6 +1462,9 @@
      (void)KeCancelTimer(&runtime->VsyncTimer);
      runtime->TimerArmed = FALSE;
      (void)KeRemoveQueueDpc(&runtime->VsyncDpc);
@@ -1293,7 +1338,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
      KeReleaseSpinLock(&runtime->TimerLock, oldIrql);
      /* No rearm is possible once Stopping is published under TimerLock. */
      KeFlushQueuedDpcs();
-@@ -694,6 +1464,7 @@
+@@ -694,6 +1509,7 @@
      return STATUS_DEVICE_BUSY;
  #endif
    Context->ScanoutRuntime = NULL;
@@ -1301,7 +1346,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
    return STATUS_SUCCESS;
  }
-@@ -1015,11 +1786,48 @@
+@@ -1015,11 +1831,75 @@
               : STATUS_GRAPHICS_INVALID_VIDEO_PRESENT_SOURCE_MODE;
  }
  
@@ -1342,15 +1387,42 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
 +#if defined(APPLE_AGX_BOARD_J274)
 +  /* NWOAS-J274 P19: the POST framebuffer keeps scanning whatever it holds;
 +   * a hidden source shows black, as a DCP plane-off would. */
-+  if (runtime->SoftThread != NULL && KeGetCurrentIrql() <= DISPATCH_LEVEL) {
-+    InterlockedExchange(&runtime->SoftBlankRequest, Visible ? 2 : 1);
-+    (void)KeSetEvent(&runtime->SoftWake, IO_NO_INCREMENT, FALSE);
++  if (runtime->SoftActive) {
++    if (runtime->SoftThread != NULL && KeGetCurrentIrql() <= DISPATCH_LEVEL) {
++      InterlockedExchange(&runtime->SoftBlankRequest, Visible ? 2 : 1);
++      (void)KeSetEvent(&runtime->SoftWake, IO_NO_INCREMENT, FALSE);
++    }
++  } else if ((runtime->HwCaps & APPLE_AGX_SCANOUT_CAP_DISPLAY_POWER) != 0u &&
++             KeGetCurrentIrql() == PASSIVE_LEVEL) {
++    /* NWOAS-J274 P20: turn the HDMI output off/on through the hypervisor.
++     * Own the broker window like a present does; a failure is counted and
++     * never fails the visibility change. */
++    ULONG tries;
++    BOOLEAN owned = FALSE;
++    LARGE_INTEGER ms;
++    ms.QuadPart = -10000LL;
++    for (tries = 0u; tries < 250u; ++tries) {
++      if (InterlockedCompareExchange(&runtime->PresentGate, 1, 0) == 0) {
++        owned = TRUE;
++        break;
++      }
++      (void)KeDelayExecutionThread(KernelMode, FALSE, &ms);
++    }
++    if (!owned ||
++        AppleAgxScanoutSetPower(&runtime->Panel.Scanout,
++                                Visible ? APPLE_AGX_SCANOUT_TRUE
++                                        : APPLE_AGX_SCANOUT_FALSE,
++                                AdmissionScanoutNow(runtime) + 2000ULL) !=
++            AppleAgxScanoutOk)
++      InterlockedIncrement((volatile LONG *)&runtime->PowerFailures);
++    if (owned)
++      InterlockedExchange(&runtime->PresentGate, 0);
 +  }
 +#endif
    return AppleAgxFixedPanelSetVisible(
               &runtime->Panel, 0u,
               Visible ? APPLE_AGX_SCANOUT_TRUE
-@@ -1104,6 +1912,9 @@
+@@ -1104,6 +1984,9 @@
                          InterlockedExchange64(&runtime->NextMpoPresentId, 0));
    InterlockedExchange(&runtime->PendingMpo,
                        InterlockedExchange(&runtime->NextMpo, 0));
@@ -1360,7 +1432,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    return STATUS_SUCCESS;
  }
  
-@@ -1250,6 +2061,13 @@
+@@ -1250,6 +2133,13 @@
      InterlockedExchange64(&runtime->DeferredPrimaryAddress,
                            Args->PrimaryAddress.QuadPart);
      InterlockedIncrement(&Context->DisplayModes.DeferredFlips);
@@ -1374,7 +1446,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
      return STATUS_SUCCESS;
    }
    if (InterlockedCompareExchange(&runtime->PresentGate, 1, 0) != 0) {
-@@ -1294,6 +2112,9 @@
+@@ -1294,6 +2184,9 @@
                          InterlockedExchange64(&runtime->NextMpoPresentId, 0));
    InterlockedExchange(&runtime->PendingMpo,
                        InterlockedExchange(&runtime->NextMpo, 0));
@@ -1384,7 +1456,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
  #if defined(APPLE_AGX_VISIBLE_AGX_QUALIFICATION)
    if (fallbackCandidateValid) {
      BOOLEAN retained;
-@@ -1434,6 +2255,15 @@
+@@ -1434,6 +2327,15 @@
    }
    if (matched && runtime->Timeline.Enabled)
      notify_vsync = TRUE;
@@ -1400,7 +1472,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    if (!mpo_flip && notify_vsync &&
        InterlockedCompareExchange(&runtime->PlaneOffPending, 0, 0) != 0) {
      /* A plane-0 disable completes on the next vertical sync. */
-@@ -1478,6 +2308,36 @@
+@@ -1478,6 +2380,36 @@
      ADMISSION_CONTEXT *Context) {
    return AdmissionScanoutProcessInterrupt(Context, FALSE);
  }
@@ -3430,8 +3502,17 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx
 +#endif
 diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_scanout.h port-j274/gpu/driver-p15/drivers/apple-agx/shared/include/apple_agx_scanout.h
 --- external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx_scanout.h	2026-11-15 19:39:30
-+++ port-j274/gpu/driver-p15/drivers/apple-agx/shared/include/apple_agx_scanout.h	2026-11-16 13:05:38
-@@ -41,10 +41,21 @@
++++ port-j274/gpu/driver-p15/drivers/apple-agx/shared/include/apple_agx_scanout.h	2026-11-16 18:10:43
+@@ -32,6 +32,8 @@
+  * DEST_ORIGIN/DEST_SIZE and a non-native WIDTH/HEIGHT/STRIDE/SURFACE_SIZE
+  * only when this bit is set. */
+ #define APPLE_AGX_SCANOUT_CAP_SCALED_SOURCE (1u << 8u)
++/* NWOAS-J274 P20: REG_POWER + CMD_SET_POWER (display on/off). */
++#define APPLE_AGX_SCANOUT_CAP_DISPLAY_POWER (1u << 9u)
+ #define APPLE_AGX_SCANOUT_REQUIRED_CAPABILITIES                              \
+   (APPLE_AGX_SCANOUT_CAP_FIXED_J313 | APPLE_AGX_SCANOUT_CAP_BGRA8888 |       \
+    APPLE_AGX_SCANOUT_CAP_REGISTERED_POOL |                                   \
+@@ -41,10 +43,21 @@
     APPLE_AGX_SCANOUT_CAP_REPEATED_PRESENT |                                  \
     APPLE_AGX_SCANOUT_CAP_LATCHED_RECEIPT | APPLE_AGX_SCANOUT_CAP_LATCHED_IRQ)
  
@@ -3453,6 +3534,38 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/apple_agx
  /* M2-f2c: the pool is segment 2 of the receipt-sized reserve; this is its
   * J313 maximum (a 1 GiB reserve less the private span and backend arena). */
  #define APPLE_AGX_SCANOUT_J313_POOL_MAX_SIZE 0x3b800000ULL
+@@ -82,6 +95,9 @@
+   APPLE_AGX_SCANOUT_REG_FORMAT = 0x8cu,
+   APPLE_AGX_SCANOUT_REG_REQUEST_SEQUENCE = 0x90u,
+   APPLE_AGX_SCANOUT_REG_COMMAND = 0x98u,
++  /* NWOAS-J274 P20 (gpu-hv2 g251F): CAP_DISPLAY_POWER only.  u32, 0 off /
++   * 1 on; CMD_SET_POWER applies it, reads back the current state. */
++  APPLE_AGX_SCANOUT_REG_POWER = 0x9cu,
+   /* CAP_SCALED_SOURCE only: X | Y << 16 and Width | Height << 16 of the
+    * panel rectangle the source is scaled into (MMIO size 0xa8). */
+   APPLE_AGX_SCANOUT_REG_DEST_ORIGIN = 0xa0u,
+@@ -93,6 +109,9 @@
+   APPLE_AGX_SCANOUT_CMD_REGISTER_POOL = 1u,
+   APPLE_AGX_SCANOUT_CMD_PRESENT = 2u,
+   APPLE_AGX_SCANOUT_CMD_RELEASE = 3u,
++  /* NWOAS-J274 P20: accepted in UNREGISTERED/READY/ACTIVE (ACTIVE only with
++   * LATCHED == APPLIED); RECEIPT = APPLIED = the request sequence. */
++  APPLE_AGX_SCANOUT_CMD_SET_POWER = 4u,
+ } APPLE_AGX_SCANOUT_COMMAND;
+ 
+ typedef enum _APPLE_AGX_SCANOUT_STATE {
+@@ -198,6 +217,11 @@
+ APPLE_AGX_SCANOUT_RESULT AppleAgxScanoutConsumeInterrupt(
+     APPLE_AGX_SCANOUT_CLIENT *Client, APPLE_AGX_SCANOUT_U32 *IrqStatus,
+     APPLE_AGX_SCANOUT_U64 *LatchedSequence);
++/* NWOAS-J274 P20: CAP_DISPLAY_POWER brokers only; no present pending. */
++APPLE_AGX_SCANOUT_RESULT AppleAgxScanoutSetPower(
++    APPLE_AGX_SCANOUT_CLIENT *Client, APPLE_AGX_SCANOUT_BOOL On,
++    APPLE_AGX_SCANOUT_U64 DeadlineMs);
++
+ APPLE_AGX_SCANOUT_RESULT AppleAgxScanoutRelease(
+     APPLE_AGX_SCANOUT_CLIENT *Client, APPLE_AGX_SCANOUT_U64 DeadlineMs);
+ 
 diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/include/j313_agx_g2.generated.h port-j274/gpu/driver-p15/drivers/apple-agx/shared/include/j313_agx_g2.generated.h
 --- external/windows-on-m1/drivers/apple-agx/shared/include/j313_agx_g2.generated.h	2026-11-15 19:39:30
 +++ port-j274/gpu/driver-p15/drivers/apple-agx/shared/include/j313_agx_g2.generated.h	2026-11-15 20:25:13
@@ -3559,6 +3672,67 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/src/apple_agx_reg
        return 0u;
    }
    for (; index < APPLE_AGX_CONFIG_MAX_PERF_STATES; ++index) {
+diff -ruN -x * external/windows-on-m1/drivers/apple-agx/shared/src/apple_agx_scanout.c port-j274/gpu/driver-p15/drivers/apple-agx/shared/src/apple_agx_scanout.c
+--- external/windows-on-m1/drivers/apple-agx/shared/src/apple_agx_scanout.c	2026-11-15 19:39:30
++++ port-j274/gpu/driver-p15/drivers/apple-agx/shared/src/apple_agx_scanout.c	2026-11-16 18:10:43
+@@ -422,3 +422,57 @@
+                                        AppleAgxScanoutWaitRelease, 0ULL,
+                                        DeadlineMs, APPLE_AGX_SCANOUT_NULL);
+ }
++
++/* NWOAS-J274 P20: display power through the broker (gpu-hv2 g251F). */
++APPLE_AGX_SCANOUT_RESULT AppleAgxScanoutSetPower(
++    APPLE_AGX_SCANOUT_CLIENT *Client, APPLE_AGX_SCANOUT_BOOL On,
++    APPLE_AGX_SCANOUT_U64 DeadlineMs) {
++  APPLE_AGX_SCANOUT_RESULT result;
++  APPLE_AGX_SCANOUT_U64 sequence = 0ULL, start_ms;
++  APPLE_AGX_SCANOUT_U32 polls;
++
++  if (Client == APPLE_AGX_SCANOUT_NULL || !Client->Qualified ||
++      (Client->Capabilities & APPLE_AGX_SCANOUT_CAP_DISPLAY_POWER) == 0u)
++    return AppleAgxScanoutInvalidArgument;
++  if (Client->PresentPending)
++    return AppleAgxScanoutNotQuiesced;
++  result = AppleAgxScanoutTakeSequence(Client, &sequence);
++  if (result != AppleAgxScanoutOk)
++    return result;
++  if (!AppleAgxScanoutWrite32(Client, APPLE_AGX_SCANOUT_REG_POWER,
++                              On ? 1u : 0u) ||
++      !AppleAgxScanoutWrite64(Client, APPLE_AGX_SCANOUT_REG_REQUEST_SEQUENCE,
++                              sequence) ||
++      !AppleAgxScanoutWrite32(Client, APPLE_AGX_SCANOUT_REG_COMMAND,
++                              APPLE_AGX_SCANOUT_CMD_SET_POWER))
++    return AppleAgxScanoutTransportFailed;
++  start_ms = Client->Io.NowMs(Client->Io.Context);
++  for (polls = 0u; polls < Client->MaxPolls; ++polls) {
++    APPLE_AGX_SCANOUT_U64 receipt, applied, now;
++    APPLE_AGX_SCANOUT_U32 broker;
++    if (!AppleAgxScanoutRead64(Client, APPLE_AGX_SCANOUT_REG_RECEIPT_SEQUENCE,
++                               &receipt) ||
++        !AppleAgxScanoutRead32(Client, APPLE_AGX_SCANOUT_REG_RESULT, &broker) ||
++        !AppleAgxScanoutRead64(Client, APPLE_AGX_SCANOUT_REG_APPLIED_SEQUENCE,
++                               &applied))
++      return AppleAgxScanoutTransportFailed;
++    now = Client->Io.NowMs(Client->Io.Context);
++    if (now < start_ms)
++      return AppleAgxScanoutClockRegression;
++    if (now > DeadlineMs)
++      return AppleAgxScanoutTimeout;
++    Client->LastBrokerResult = broker;
++    if (receipt > sequence)
++      return AppleAgxScanoutInconsistentReceipt;
++    if (receipt == sequence) {
++      if (broker != APPLE_AGX_SCANOUT_BROKER_OK)
++        return AppleAgxScanoutMapBrokerResult(broker);
++      return applied == sequence ? AppleAgxScanoutOk
++                                 : AppleAgxScanoutInconsistentReceipt;
++    }
++    if (Client->Io.Pause != APPLE_AGX_SCANOUT_NULL &&
++        !Client->Io.Pause(Client->Io.Context))
++      return AppleAgxScanoutTransportFailed;
++  }
++  return AppleAgxScanoutTimeout;
++}
 diff -ruN -x * external/windows-on-m1/drivers/apple-agx/windows/AppleAgx.vcxproj port-j274/gpu/driver-p15/drivers/apple-agx/windows/AppleAgx.vcxproj
 --- external/windows-on-m1/drivers/apple-agx/windows/AppleAgx.vcxproj	2026-11-15 19:39:30
 +++ port-j274/gpu/driver-p15/drivers/apple-agx/windows/AppleAgx.vcxproj	2026-11-15 20:25:48

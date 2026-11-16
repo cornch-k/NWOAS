@@ -1,0 +1,4 @@
+@echo off
+echo S252 D51 BUGCHECK
+powershell -NoProfile -Command "Get-WinEvent -FilterHashtable @{LogName='System';StartTime=(Get-Date).AddMinutes(-30)} -ErrorAction SilentlyContinue | Where-Object { $_.Id -in 41,1001,6008,1074,109 -or $_.ProviderName -match 'BugCheck|WER-SystemErrorReporting' } | Select-Object -First 10 | ForEach-Object { $_.TimeCreated.ToString('HH:mm:ss')+' '+$_.ProviderName+' '+$_.Id+' '+(($_.Message -replace '\s+',' ') | ForEach-Object { $_.Substring(0,[Math]::Min(220,$_.Length)) }) }; Get-ChildItem C:\Windows\Minidump,C:\Windows\MEMORY.DMP,C:\Windows\LiveKernelReports -Recurse -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 5 | ForEach-Object { 'DMP '+$_.FullName+' '+$_.Length+' '+$_.LastWriteTime.ToString('MM-dd HH:mm:ss') }; Get-Date -Format HH:mm:ss"
+exit /b 0

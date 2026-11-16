@@ -11,6 +11,12 @@
 #   NWOAS_AGX_POOL_IPA=0x...        4 GiB pool window IPA (default 0 = off; upstream J313 0xd00000000)
 #   NWOAS_AGX_SCANOUT_INTID=889     synthetic vINTID of the ACPI AGX0 device
 #   NWOAS_AGX_BASE_PSTATE=0         override only if the ADT lacks gpu-perf-base-pstate
+#   NWOAS_AGX_DCP_SERVICE=1         S251 (mediate + m1n1-g251F or later only): the HV answers the
+#                                   scanout window itself (DCP iBoot async swap, ABI v2, time-based
+#                                   LATCHED, display power). Unset/0: config bytes identical to S249.
+#   NWOAS_AGX_DCP_LATCH_US=17000    S251: LATCHED = APPLIED + this (0 = HV default 17000 us)
+#   NWOAS_AGX_DCP_NO_CLEAN=1        S251: skip the HV's cache clean over each presented surface
+# README: port-j274/gpu/hv/README-dcp-s251.md
 import os, struct
 
 P_HV_NWOAS_AGX_CONFIG = 0xc38
@@ -24,6 +30,14 @@ pool_ipa = int(os.environ.get("NWOAS_AGX_POOL_IPA", "0"), 0)
 scanout = int(os.environ.get("NWOAS_AGX_SCANOUT_INTID", "889"), 0)
 pstate = int(os.environ.get("NWOAS_AGX_BASE_PSTATE", "0"), 0)
 assert mode == 1 or local_ipa, "mediate needs NWOAS_AGX_LOCAL_IPA"
+# S251 opt-in (src/nwoas_agx.h NWOAS_AGX_CFG_FLAG_DCP_SERVICE / _DCP_NO_CLEAN, field dcp_latch_us)
+dcp_service = os.environ.get("NWOAS_AGX_DCP_SERVICE", "0") == "1"
+dcp_latch_us = int(os.environ.get("NWOAS_AGX_DCP_LATCH_US", "0"), 0)
+dcp_no_clean = os.environ.get("NWOAS_AGX_DCP_NO_CLEAN", "0") == "1"
+assert dcp_service or not (dcp_latch_us or dcp_no_clean), "DCP options need NWOAS_AGX_DCP_SERVICE=1"
+assert not dcp_service or (mode == 2 and scanout), "DCP service needs mediate and a scanout vINTID"
+assert 0 <= dcp_latch_us <= 100000, dcp_latch_us
+cfg_flags = (0x2 if dcp_service else 0) | (0x4 if dcp_no_clean else 0)
 
 ram_base = hv.phys_base
 ram_end = u.ba.phys_base + u.ba.mem_size          # host RAM end; includes the low-window backing
@@ -43,7 +57,7 @@ for kind, base, size in regions:
     snap += struct.pack("<IIQQ", REGION[kind], 0, base, size)
 snap += b"\0" * (24 * (16 - len(regions)))
 hdr = struct.pack("<IIIIQQQIIQII", MAGIC, VERSION, SIZE, mode, u.heap_base, local_ipa, pool_ipa,
-                  pstate, 0, hv.entry, scanout, 0)
+                  pstate, cfg_flags, hv.entry, scanout, dcp_latch_us)
 blob = hdr + snap
 assert len(blob) == SIZE, len(blob)
 
@@ -53,3 +67,6 @@ ret = p.request(P_HV_NWOAS_AGX_CONFIG, buf, SIZE)
 hv.log(f"HVLOG: NWOAS-AGX config mode={mode} ret={ret} heap_limit={u.heap_base:#x} "
        f"ram={ram_base:#x}..{ram_end:#x} local={local_ipa:#x} pool={pool_ipa:#x} vintid={scanout}")
 assert ret == 1, "HV refused the AGX config (see NWOAS-AGX: lines)"
+if dcp_service:
+    hv.log(f"HVLOG: NWOAS-AGX S251 DCP scanout service requested flags={cfg_flags:#x} "
+           f"latch_us={dcp_latch_us or 17000} (HV takes DCP over on the first REGISTER_POOL)")

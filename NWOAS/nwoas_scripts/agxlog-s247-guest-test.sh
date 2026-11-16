@@ -59,7 +59,7 @@ echo "Log: $LOG"
 [ "$(shasum -a 256 "$ROOT/nwoas_scripts/memory-s180/memtest/MEMTEST.EXE" | awk '{print $1}')" = ce9303eb00c0ddca980e7df58008423913065e689b31870154d50c37933442b4 ]
 [ "$(shasum -a 256 "$ROOT/nwoas_scripts/usb-s174/guest_map.py" | awk '{print $1}')" = 2477172728d5554c4b2a07488e42f956cfd2e7a78e70a15c2d7a1488bf5656c0 ]
 [ "$(shasum -a 256 "$ROOT/nwoas_scripts/layout-s231/module.py" | awk '{print $1}')" = cce19a6c3ef3e06be61482efa02743e10cbb2cd9cf18d9e15e3f8f48ab0e2004 ]
-[ "$(shasum -a 256 "$AGXMOD" | awk '{print $1}')" = 674f396b3e337f909c527415414265c58a84cb5f100f9e5572b1adbe972d2b22 ]
+[ "$(shasum -a 256 "$AGXMOD" | awk '{print $1}')" = 7af920a668e0c9459017707951f049362649ba284860f70ba2eebd4bd52dcdb9 ]
 [ "$(shasum -a 256 "$ROOT/nwoas_scripts/file-delivery-s243/module.py" | awk '{print $1}')" = f53939c89250ecff5fe0deefe2f60211c0a8d9ad9ae5811d2741a5243cdb36d7 ]
 [ "$(shasum -a 256 "$ROOT/nwoas_scripts/file-delivery-s243/s243_channel.py" | awk '{print $1}')" = c2e8b0e6330260e756b49fdf8e1d42f39d9d51cb0cd56d3671071fa34d338714 ]
 [ "$(shasum -a 256 "$ROOT/nwoas_scripts/file-delivery-s243/s243_adapter.py" | awk '{print $1}')" = a0dab3c091ec862e26765ff0f66170b083aa20222f4903dac73e0509336d6ee9 ]

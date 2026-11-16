@@ -20,6 +20,7 @@
 uint64_t nwoas_agx_gpu_base;
 uint32_t nwoas_agx_base_pstate_override;
 static int failures;
+int nwoas_scanout_service_tests(void); /* test_scanout_svc.c (NWOAS S251) */
 #define CHECK(cond, ...) do { int ok_ = (cond); printf("%s ", ok_ ? "PASS" : "FAIL"); printf(__VA_ARGS__); printf("\n"); if (!ok_) failures++; } while (0)
 #define INFO(...) do { printf("INFO "); printf(__VA_ARGS__); printf("\n"); } while (0)
 
@@ -87,6 +88,11 @@ int pmgr_adt_power_disable(const char *path) { strcat(pm_log, "-"); strcat(pm_lo
 static struct hv_guest_ipa_pa_request req __attribute__((aligned(0x4000)));
 static uint64_t fake_translate(uint64_t ipa, void *o) { (void)o; if (ipa == 0x1000000) return (uint64_t)(uintptr_t)&req; return ipa >= 0x880000000ull && ipa < 0x900000000ull ? ipa : 0; }
 static bool fake_is_ram(uint64_t pa, uint64_t sz, void *o) { (void)o; return pa == (uint64_t)(uintptr_t)&req || (pa >= 0x880000000ull && pa + sz <= 0x900000000ull); }
+
+static const unsigned char *read_sgx_prop(void *c, const char *name, unsigned int *len)
+{
+    return adt_getprop(NULL, *(int *)c, name, len);
+}
 
 static bool ident(void *c, uint64_t ipa, uint64_t *pa) { (void)c; *pa = ipa; return true; }
 
@@ -157,6 +163,10 @@ int main(int argc, char **argv)
         bool j313 = cs.perf_state_count == 7 && cs.perf_state_table_count == 1 && cs.max_pstate == 6 && cs.power_sample_period_ms == 8;
         INFO("J313 decoder constants (7/1/6/8) %s on J274 (base p-state itself is not in this ADT)", j313 ? "match" : "DIFFER");
     }
+    nwoas_agx_base_pstate_override = 3; /* Asahi t8103-j274.dts: apple,perf-base-pstate = <3> */
+    CHECK(hv_agx_config_snapshot_from_adt(adt_blob, &cs) && cs.base_pstate == 3,
+          "config snapshot with J274 base p-state 3 (launcher default): base=%u", cs.base_pstate);
+    nwoas_agx_base_pstate_override = 1;
     nwoas_agx_gpu_base = gb + 0x4000;
     CHECK(!hv_agx_config_snapshot_from_adt(adt_blob, &cs), "config snapshot refused when probe gpu-region differs");
     nwoas_agx_gpu_base = gb;
@@ -173,8 +183,13 @@ int main(int argc, char **argv)
         if (!p) { missing++; mism++; INFO("  hwdata input MISSING in J274 ADT: %s", e->Name); continue; }
         if (len != e->Length || memcmp(p, e->Bytes, len)) { mism++; INFO("  hwdata input differs: %s (len %u vs %u)", e->Name, len, e->Length); }
     }
-    INFO("Hwdata inputs: %u of %u differ from the J313 profile (%u missing)", mism, AGX_HWDATA_INPUT_COUNT, missing);
-    CHECK(mism == 0 ? 1 : 1, "Hwdata check runs; J274 profile_inputs_valid would be %u (0 = RR PREPARE refused, fail closed)", mism == 0);
+    INFO("Hwdata inputs: %u of %u differ from the selected profile (%u missing)", mism, AGX_HWDATA_INPUT_COUNT, missing);
+#ifdef NWOAS_AGX_HWDATA_J274
+    CHECK(mism == 0 && AgxHwdataInputsMatch(read_sgx_prop, &ctx.sgx),
+          "J274 Hwdata profile matches this ADT exactly (profile_inputs_valid=1)");
+#else
+    CHECK(1, "J313 Hwdata profile on this ADT: profile_inputs_valid would be %u (0 = RR PREPARE refused)", mism == 0);
+#endif
     (void)ctx;
 
     /* HVC 0x4d31 / 0x4d32 ABI (real hv_guest_ipa_pa.c) */
@@ -234,6 +249,9 @@ int main(int argc, char **argv)
     CHECK(v == 0, "scanout capabilities read 0 (magic 0x%llx)", (unsigned long long)mg);
     uint64_t en = 0; CHECK(hv_agx_scanout_broker_mmio(&sc, HV_AGX_SCANOUT_REG_IRQ_ENABLE, &en, true, 2), "scanout IRQ_ENABLE write 0 accepted (KMD AdmissionMaskInterrupt)");
     CHECK(hv_agx_scanout_broker_mmio(&sc, HV_AGX_SCANOUT_REG_IRQ_STATUS, &en, false, 2) && en == 0, "scanout IRQ_STATUS reads 0 (no synthetic IRQ ever pending)");
+
+    /* NWOAS S251: DCP scanout service driven by the J274 KMD client (mock DCP) */
+    failures += nwoas_scanout_service_tests();
 
     printf("%s: %d failure(s)\n", failures ? "FAILED" : "ALL PASS", failures);
     return failures ? 1 : 0;

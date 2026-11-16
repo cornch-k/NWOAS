@@ -103,3 +103,20 @@ DWM 설정(드라이버 밖): `HKLM\SOFTWARE\Microsoft\Windows\Dwm` `DisableDDis
 | P19 | 2755 | `render-admission/src/scanout_windows.c` | 화면 숨김 → 복사 스레드가 HDMI 화면 메모리를 검은색으로, 다시 보임 → 현재 표면을 다시 복사 | 절전 때 마지막 화면이 남던 문제. 실제 신호 끄기(DPMS)는 DCP 경로가 있어야 함 |
 
 [사실] 2754에서 연속 두 번째 절전 뒤 펌웨어 Timeout(4ms) → RTKit 드레인 실패 → 리셋 3회 실패가 한 번 있었음. 이후 하이퍼바이저 g249D(GPU 예약 1GB)로 바꾼 뒤에는 콘치님 시험에서 재현되지 않음(원인 미확정).
+
+## P20 (NWOAS-J274, 2026-11-16) — 하이퍼바이저 화면 서비스(DCP) 자동 선택, 화면 전원
+
+| 파일 | 변경 |
+|---|---|
+| `render-admission/src/scanout_windows.c` | 시작 때 브로커 창의 MAGIC·ABI·CAPS를 읽어, ABI v2이고 CAPS에 `V2_PRESENT_CAPABILITIES`와 `CAP_DISPLAY_POWER`(1<<9)가 모두 있으면 하이퍼바이저 서비스 사용(`SoftActive`=0), 아니면 기존 복사 방식(P15~P19). 장치 키 `NwSoftForce`=1이면 항상 복사 방식. 고른 경로는 `NwScanoutPath`(1=하이퍼바이저 서비스, 2=복사), CAPS는 `NwScanoutHwCaps`에 기록. 서비스 경로에서 화면 숨김/보임은 PASSIVE에서 PresentGate(최대 250회×1ms)를 잡고 `AppleAgxScanoutSetPower`를 부름, 실패 수는 `PowerFailures` |
+| `shared/include/apple_agx_scanout.h`, `shared/src/apple_agx_scanout.c` | `REG_POWER`(+0x9c), `CMD_SET_POWER`(4), `CAP_DISPLAY_POWER`, `AppleAgxScanoutSetPower`(순번 받기 → REG_POWER·REQUEST_SEQUENCE·COMMAND=4 쓰기 → RECEIPT/RESULT/APPLIED 확인) |
+
+실측(2756판):
+
+| 하이퍼바이저 | 고른 경로 | 결과 |
+|---|---|---|
+| g249D(서비스 없음) | 복사 | 바탕화면·작업 관리자 GPU 표시 정상(콘치님 확인) |
+| g252H(서비스) | 하이퍼바이저 서비스 | 화면 출력·끄기/켜기 동작, 약 45초 뒤 Windows 0x124 |
+| g252J(서비스, 인터럽트 우선순위 버그 수정) | 하이퍼바이저 서비스 | 31분 넘게 멈춤 없음, Windows가 쉬는 동안 화면 끄기 요청·완료 기록됨 |
+
+0x124 원인과 수정은 하이퍼바이저 쪽 `port-j274/gpu/hv/README-dcp-s251.md` §10에 있습니다.
