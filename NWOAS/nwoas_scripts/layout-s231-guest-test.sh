@@ -29,7 +29,7 @@ echo "Log: $LOG"
 [ -e "$VUART" ] || { echo 'STOP: direct CDC diagnostic pipe missing'; exit 1; }
 [ "$(stat -f %z "$HV")" -eq 2162688 ]
 [ "$(shasum -a 256 "$HV" | awk '{print $1}')" = 02c0bd9ea9d036d0e9d0bae13e9998f8da12f58ae5c54242f6ca22812f7dd0d6 ]
-[ "$(shasum -a 256 "$ROOT/nwoas_scripts/layout-s231/guest_module.py" | awk '{print $1}')" = e9ff72856d91e162d887752d9e645ef7d0df0a43721297d74128ffb8775ec5de ]
+[ "$(shasum -a 256 "$ROOT/nwoas_scripts/layout-s231/guest_module.py" | awk '{print $1}')" = 07523c1d282a3d54bdcad1cbc9ea8d7b0a4fbf1d139387bb54b576c72b36dc03 ]
 [ "$(stat -f %z "$PAYLOAD")" -eq 33669120 ]
 [ "$(shasum -a 256 "$PAYLOAD" | awk '{print $1}')" = 2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7 ]
 [ "$(shasum -a 256 "$ROOT/nwoas_scripts/native-s230/query_module.py" | awk '{print $1}')" = af4eeb7f45aa9669c264d2e3520ae3d79da4020c89354e85738989c55f80f09b ]
