@@ -92,3 +92,14 @@ J274 빌드에서만 적용. 판 2746(측정만) → 2747(복사 스레드) → 
 [가설] 풀 읽기가 느린 이유: 같은 물리 영역의 다른 CPU 맵(`pool_windows.c`, `physical_memory_windows.c`)이 쓰기 결합이라 Windows가 캐시 요청을 맞춰 바꾸는 것. 미확인.
 
 DWM 설정(드라이버 밖): `HKLM\SOFTWARE\Microsoft\Windows\Dwm` `DisableDDisplay`=1. 없으면 DWM이 DDisplay 경로에서 UMD `PresentMultiplaneOverlay1`(E_NOTIMPL)를 부른 뒤 `CD3DDevice::GetPresentError`가 고른 0x889800d0으로 종료함(dwmcore 10.0.26100.7920 공개 심볼로 확인). 원본 windows-on-m1도 EXP951~1782 동안 같은 값을 씀.
+
+## P17~P19 (NWOAS-J274, 2026-11-16) — 절전(모던 스탠바이) 대응
+
+| 패치 | 판 | 파일 | 내용 | 근거 |
+|---|---|---|---|---|
+| P17 | 2753 | `render-admission/src/scheduler_windows.c` | `AdmissionDdiResetFromTimeout` 성공 시 `PagingRecordsUnsubmitted`를 0으로. 리셋 순간 화면 상태를 `NwResetDisplay`(장치 키)에 기록(RestartFromTimeout에서 씀) | [사실] 2752: 리셋 뒤 148건 남아 CPU 복사가 조건 62(STATUS_DEVICE_BUSY)로 실패 → explorer.exe 887a0005 무한 충돌 |
+| P18 | 2754 | `render-admission/src/work_queue_windows.c` | 대기 수만 남고 큐·작업자·DPC·콜백이 모두 비어 있는 상태가 500ms 넘으면 남은 수를 버림(횟수는 `NwSoftStats[12]`) | [사실] 2753: 650건 남음. [가설] VidMm이 만들고 제출하지 않은 페이징 버퍼를 알리지 않음 |
+| P18 | 2754 | `render-admission/src/scanout_windows.c` | 화면 숨김 중 받은 화면 전환을 다음 수직 틱에 완료로 알림(MPO PresentId 포함, `HiddenFlipPending`) | [사실] 2753: 숨김 중 보류 3건, GPU 작업은 모두 끝난 상태에서 VidSch가 어댑터 리셋 |
+| P19 | 2755 | `render-admission/src/scanout_windows.c` | 화면 숨김 → 복사 스레드가 HDMI 화면 메모리를 검은색으로, 다시 보임 → 현재 표면을 다시 복사 | 절전 때 마지막 화면이 남던 문제. 실제 신호 끄기(DPMS)는 DCP 경로가 있어야 함 |
+
+[사실] 2754에서 연속 두 번째 절전 뒤 펌웨어 Timeout(4ms) → RTKit 드레인 실패 → 리셋 3회 실패가 한 번 있었음. 이후 하이퍼바이저 g249D(GPU 예약 1GB)로 바꾼 뒤에는 콘치님 시험에서 재현되지 않음(원인 미확정).

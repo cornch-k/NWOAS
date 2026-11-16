@@ -1,0 +1,30 @@
+16:05:33 START old=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed-s247-20261116-155544.8bk50X.link
+16:05:33 old launcher exited
+16:05:37 launched /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-agxmed2754-20261116-160537.out
+16:06:07 worker connected link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed-s247-20261116-160537.5NUIin.link
+16:06:17 deliver: S243 READBACK MATCH AppleAgxRenderAdmission.sys 645832 ac019b565a12d12d0e8b52e0f2babad6b18fcee8c672eb643da27b713105c137 S243 READBACK MATCH AppleAgxRenderAdmissionUmd.dll 13502976 818dbad5029b465bdd654f2bac514021f95cf11cebf3c328bee8102c3ebd2186 S243 READBACK MATCH AppleAgxRenderAdmission.arm64only.inf 3613 dcb5578b2cccb7bf1f29c08353ac978bb635687d8684200262cd8de6d45f36e0 S243 READBACK MATCH appleagxrenderadmission.cat 3254 b67b1d3c0c5f84480f8d9a4cf0e02e53fcbf186e0ef40366b2e9a895b38dfc52 
+S248 I16 INSTALL 2754 (arm before install)
+작업을 완료했습니다.
+작업을 완료했습니다.
+작업을 완료했습니다.
+Microsoft PnP 유틸리티
+
+드라이버 패키지를 추가하는 중:  AppleAgxRenderAdmission.arm64only.inf
+드라이버 패키지를 추가했습니다.
+게시된 이름:         oem13.inf
+드라이버 패키지가 장치에 설치됨: ACPI\APPL0002\0
+
+총 드라이버 패키지:  1
+추가된 드라이버 패키지:  1
+S248 I16 PNPUTIL EXIT 0
+DEV1 OK CM_PROB_NONE
+
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\APPL0002\0\Device Parameters
+    Wom1StartStage    REG_DWORD    0xc
+
+
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\APPL0002\0\Device Parameters
+    Wom1StartStatus    REG_DWORD    0x0
+
+S248 I16 DONE
+16:06:47 I16 DONE link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed-s247-20261116-160537.5NUIin.link

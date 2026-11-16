@@ -1,0 +1,5 @@
+@echo off
+echo S248 D41 POWER RECEIPTS
+powershell -NoProfile -Command "$k=Get-Item 'HKLM:\SYSTEM\CurrentControlSet\Enum\ACPI\APPL0002\0\Device Parameters'; foreach($n in $k.GetValueNames()){ if($n -match 'Reset|Tdr|Timeout|Power|Visib|Commit|Fault|Fail|Remov|Hang|Preempt|Ddi'){ $v=$k.GetValue($n); if($v -is [byte[]]){ ''+$n+' BIN '+$v.Length+' '+(($v|Select-Object -First 48|ForEach-Object{$_.ToString('x2')}) -join '') } else { ''+$n+' = '+$v } } }"
+powershell -NoProfile -Command "Get-WinEvent -FilterHashtable @{LogName='System';StartTime=(Get-Date).AddMinutes(-60)} -ErrorAction SilentlyContinue | Where-Object { $_.Id -in 4101,4116,4117,4118,4119,4120,141,117 -or $_.ProviderName -match 'Display|dxgkrnl|LiveKernel' } | Select-Object -First 10 | ForEach-Object { $_.TimeCreated.ToString('HH:mm:ss')+' '+$_.ProviderName+' '+$_.Id }; Get-ChildItem C:\Windows\LiveKernelReports -Recurse -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 5 | ForEach-Object { 'LKR '+$_.FullName+' '+$_.Length+' '+$_.LastWriteTime.ToString('HH:mm:ss') }"
+exit /b 0

@@ -182,3 +182,12 @@ J313용 드라이버 해독기는 1을 기대하므로 J274 드라이버도 3을
 
 - [사실] g247B + 풀 창(`agxmedp-s247`)에서 GPU 장치를 끈 직후 하이퍼바이저가 PC 0x580a4(`backing_find`, `handle_broker_locked`에 인라인)에서 NULL 역참조로 죽음. 직전 로그는 `power receipt seq=3 cmd=2 state=0`, 레지스터상 색인 포인터 0, slot bits 0. AGX_RR_CLOSE가 `gpuva_v5` 전체를 0으로 지운 뒤 풀 창 명령이 `hv_agx_retained_platform_page_busy` → `backing_find`를 부름.
 - 빌드: `tools-hv2/buildvar.sh … v1.0.2-1474-gbddf7f06-g248C NWOAS_AGX=1`. 실행 스크립트 `nwoas_scripts/agxmedq-s248-guest-test.sh`(풀 창 사용). **실기기 미검증.**
+
+### g249D — GPU 예약 384MB → 1GB (2026-11-16)
+
+| 바이너리 | 바뀐 점 | 크기(바이트) | sha256 |
+|---|---|---|---|
+| `out-hv2/m1n1-g249D-agx-hv2-local1g.bin` | `hv_agx_local_reserve.h` `HV_AGX_LOCAL_BYTES` 0x18000000 → 0x40000000 (+ g248C 수정 포함) | 2260992 | `439ec00331099c75960da7f5a3b78be95d80c51f2197dbb5c2ea44aeca33f929` |
+
+- 이유: 실행 스크립트가 풀 창 없이(pool=0) 돌기 때문에 Mesa 버퍼까지 구역 2에 들어가 전용 GPU 메모리가 287/320MB로 찼음. 원본은 384MB를 풀 창 전제로 정했음(`hv_agx_local_reserve.h` 주석).
+- [사실] 호스트 시험(실측 13.5 ADT) 전부 통과. 실기기: 예약 0x40000000 확인, 장치 시작 정상, 작업 관리자 전용 GPU 메모리 1.0GB(콘치님 확인). 실행 스크립트 `nwoas_scripts/agxmed1g-s249-guest-test.sh`.

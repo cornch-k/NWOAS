@@ -1,0 +1,4 @@
+@echo off
+echo S248 D44 WER KERNEL
+powershell -NoProfile -Command "Get-ChildItem C:\ProgramData\Microsoft\Windows\WER\ReportArchive,C:\ProgramData\Microsoft\Windows\WER\ReportQueue -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch 'explorer' } | Sort-Object LastWriteTime -Descending | Select-Object -First 6 | ForEach-Object { 'DIR '+$_.Name+' '+$_.LastWriteTime.ToString('MM-dd HH:mm:ss') }; Get-WinEvent -FilterHashtable @{LogName='System';StartTime=(Get-Date).Date.AddHours(6).AddMinutes(30)} -ErrorAction SilentlyContinue | Where-Object { $_.Level -le 3 } | Select-Object -First 15 | ForEach-Object { $_.TimeCreated.ToString('HH:mm:ss')+' L'+$_.Level+' '+$_.ProviderName+' '+$_.Id+' '+(($_.Message -replace '\s+',' ') | ForEach-Object { $_.Substring(0,[Math]::Min(140,$_.Length)) }) }"
+exit /b 0

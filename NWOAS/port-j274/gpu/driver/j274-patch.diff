@@ -238,6 +238,31 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/include
  #define J313_AGX_ABI_ADMISSION_HANDOFF_SIZE 0x4000ULL
  #define J313_AGX_ABI_ADMISSION_POWER_BROKER_BASE 0x300000000ULL
  #define J313_AGX_ABI_ADMISSION_POWER_BROKER_SIZE 0x1000ULL
+diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/include/render_admission.h port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/include/render_admission.h
+--- external/windows-on-m1/drivers/apple-agx/render-admission/include/render_admission.h	2026-11-15 19:39:30
++++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/include/render_admission.h	2026-11-16 16:02:15
+@@ -792,6 +792,11 @@
+   /* R161: records encoded by BuildPagingBuffer but not yet handed to
+    * SubmitCommand; their memory effects are still pending. */
+   volatile LONG PagingRecordsUnsubmitted;
++  ULONGLONG NwResetDisplay[10]; /* NWOAS-J274 P17 */
++  /* NWOAS-J274 P18: last paging build/submit (interrupt time, 100 ns) and
++   * how often a stale unsubmitted count was dropped. */
++  volatile LONG64 NwPagingLastActivity;
++  volatile LONG NwPagingStaleDrops, NwPagingStaleLast;
+   ADMISSION_PAGING_RECORD PagingRecords[ADMISSION_MAX_PAGING_RECORDS];
+   ULONG PagingRecordCount;
+   ULONG PresentCopyBytes;
+@@ -2189,6 +2194,9 @@
+ VOID AdmissionScanoutClearMpoFlip(_Inout_ ADMISSION_CONTEXT *Context);
+ NTSTATUS AdmissionScanoutMpoPlaneOff(_Inout_ ADMISSION_CONTEXT *Context,
+                                      _In_ ULONGLONG PresentId);
++/* NWOAS-J274 P17: display state at an adapter reset, for NwResetDisplay. */
++VOID AdmissionScanoutResetSnapshot(_In_ ADMISSION_CONTEXT *Context,
++                                   _Out_writes_(8) ULONGLONG *Out);
+ NTSTATUS AdmissionScanoutSetTimelinePaused(_Inout_ ADMISSION_CONTEXT *Context,
+                                           _In_ BOOLEAN Paused);
+ VOID AdmissionScanoutDpc(_Inout_ ADMISSION_CONTEXT *Context);
 diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/scripts/build-driver.ps1 port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/scripts/build-driver.ps1
 --- external/windows-on-m1/drivers/apple-agx/render-admission/scripts/build-driver.ps1	2026-11-15 19:39:30
 +++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/scripts/build-driver.ps1	2026-11-16 12:22:37
@@ -404,7 +429,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/dis
  _Use_decl_annotations_ NTSTATUS AdmissionDdiUpdateMonitorLinkInfo(
 diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/scanout_windows.c port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/scanout_windows.c
 --- external/windows-on-m1/drivers/apple-agx/render-admission/src/scanout_windows.c	2026-11-15 19:39:30
-+++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/scanout_windows.c	2026-11-16 14:54:36
++++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/scanout_windows.c	2026-11-16 16:32:11
 @@ -9,6 +9,18 @@
  static KSYNCHRONIZE_ROUTINE AdmissionScanoutVsyncControl;
  static ULONGLONG AdmissionScanoutTime100ns(void);
@@ -424,7 +449,19 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
  typedef struct _ADMISSION_SCANOUT_RUNTIME {
    ADMISSION_CONTEXT *Adapter;
    APPLE_AGX_FIXED_PANEL Panel;
-@@ -51,8 +63,583 @@
+@@ -21,6 +33,11 @@
+   volatile LONG64 PendingSequence;
+   volatile LONG64 PendingQueuedTime100ns;
+   volatile LONG64 DeferredPrimaryAddress;
++  /* NWOAS-J274 P18: a flip taken while the source is hidden completes on
++   * the next vertical tick (2753: VidSch reset the adapter in Modern
++   * Standby with three hidden flips outstanding). */
++  volatile LONG HiddenFlipPending, HiddenMpo;
++  volatile LONG64 HiddenMpoPresentId;
+   /* MPO3 flip identity: tagged before the queue, carried with the pending
+    * flip, and reported as CRTC_VSYNC_WITH_MULTIPLANE_OVERLAY2 on latch. */
+   volatile LONG64 NextMpoPresentId;
+@@ -51,8 +68,715 @@
    ULONG PresentCount;
    ADMISSION_PRESENT_QUERY PresentHistory[ADMISSION_PRESENT_QUERY_CAPACITY];
  #endif
@@ -463,6 +500,9 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
 +  HANDLE SoftThread; /* kernel handle */
 +  volatile LONG SoftThreadStop;
 +  volatile LONG SoftCopyPending;
++  /* NWOAS-J274 P19: 1 = blank the HDMI framebuffer (source hidden), 2 =
++   * show the active surface again (source visible). */
++  volatile LONG SoftBlankRequest;
 +  volatile LONG64 SoftCopyOffset;
 +  volatile LONG64 SoftCopySeq;
 +  LONGLONG SoftQpcFreq, SoftLastQpc;
@@ -476,6 +516,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
 +   * kept (SoftModeLocked).  Reads from the pool dominate (2748: read
 +   * 21.4 ms, write 0.45 ms per 1080p frame on one thread). */
 +  ULONG SoftMode, SoftModeLocked;
++  KAFFINITY SoftFastCpus; /* build 2751: highest EfficiencyClass CPUs */
 +  ULONGLONG SoftModeTicks[ADMISSION_SOFT_MODES], SoftModeCount[ADMISSION_SOFT_MODES];
 +  volatile LONG64 SoftJobOffset;
 +  volatile ULONG SoftJobParts;
@@ -593,10 +634,13 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
 +  R->SoftSnap[9] = R->SoftGapTicks;
 +  R->SoftSnap[10] = R->SoftMode | ((ULONGLONG)R->SoftModeLocked << 8);
 +  R->SoftSnap[11] = R->SoftMaxIrql;
-+  R->SoftSnap[12] = R->SoftPoolCached;
++  R->SoftSnap[12] = (ULONGLONG)(ULONG)InterlockedCompareExchange(
++      &R->Adapter->NwPagingStaleDrops, 0, 0) |
++      ((ULONGLONG)(ULONG)InterlockedCompareExchange(
++      &R->Adapter->NwPagingStaleLast, 0, 0) << 32);
 +  R->SoftSnap[13] = R->SoftHelpersLive;
 +  R->SoftSnap[14] = R->SoftPresentCount;
-+  R->SoftSnap[15] = 2749u;
++  R->SoftSnap[15] = 2755u;
 +}
 +
 +/* Thread only.  Gap = time between successive copies. */
@@ -657,6 +701,8 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
 +  ADMISSION_SCANOUT_SOFT_HELPER *h = Opaque;
 +  ULONG row0, row1;
 +  (void)KeSetPriorityThread(KeGetCurrentThread(), LOW_REALTIME_PRIORITY);
++  if (h->R->SoftFastCpus != 0)
++    (void)KeSetSystemAffinityThreadEx(h->R->SoftFastCpus);
 +  for (;;) {
 +    (void)KeWaitForSingleObject(&h->Go, Executive, KernelMode, FALSE, NULL);
 +    if (InterlockedCompareExchange(&h->R->SoftThreadStop, 0, 0) != 0)
@@ -709,10 +755,24 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
 +_Use_decl_annotations_ static VOID AdmissionScanoutSoftThread(PVOID Opaque) {
 +  ADMISSION_SCANOUT_RUNTIME *R = Opaque;
 +  (void)KeSetPriorityThread(KeGetCurrentThread(), LOW_REALTIME_PRIORITY);
++  if (R->SoftFastCpus != 0)
++    (void)KeSetSystemAffinityThreadEx(R->SoftFastCpus);
 +  for (;;) {
 +    (void)KeWaitForSingleObject(&R->SoftWake, Executive, KernelMode, FALSE, NULL);
 +    if (InterlockedCompareExchange(&R->SoftThreadStop, 0, 0) != 0)
 +      break;
++    {
++      LONG blank = InterlockedExchange(&R->SoftBlankRequest, 0);
++      if (blank == 1) {
++        ULONG row;
++        for (row = 0u; row < APPLE_AGX_SCANOUT_J313_HEIGHT; ++row)
++          RtlZeroMemory((PVOID)(R->SoftFb + (SIZE_T)row * R->SoftFbPitch),
++                        (SIZE_T)APPLE_AGX_SCANOUT_J313_WIDTH * 4u);
++      } else if (blank == 2 && R->SoftState == APPLE_AGX_SCANOUT_STATE_ACTIVE) {
++        AdmissionScanoutSoftCopyRows(R, R->SoftActiveOffset, 0u,
++                                     APPLE_AGX_SCANOUT_J313_HEIGHT);
++      }
++    }
 +    while (InterlockedExchange(&R->SoftCopyPending, 0) != 0) {
 +      ULONGLONG offset = (ULONGLONG)InterlockedCompareExchange64(&R->SoftCopyOffset, 0, 0);
 +      LONG64 seq = InterlockedCompareExchange64(&R->SoftCopySeq, 0, 0);
@@ -921,6 +981,114 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
 +  ZwClose(key);
 +}
 +
++/* build 2750: one-shot read benchmark at start (PASSIVE), NwSoftBench =
++ * {magic|version, QPC frequency, ticks: RAM->RAM, pool (current map)->RAM,
++ * pool fresh cached map->RAM, pool fresh WC map->RAM, pool fresh nocache
++ * map->RAM, status bits}.  Each read is 8 MB, timed on the second pass. */
++static LONGLONG AdmissionScanoutSoftBenchRead(PUCHAR Dst, const volatile UCHAR *Src,
++                                              SIZE_T Bytes) {
++  LONGLONG t0, t1;
++  ULONG pass;
++  t0 = t1 = 0;
++  for (pass = 0u; pass < 2u; ++pass) {
++    t0 = KeQueryPerformanceCounter(NULL).QuadPart;
++    RtlCopyMemory(Dst, (const VOID *)Src, Bytes);
++    t1 = KeQueryPerformanceCounter(NULL).QuadPart;
++  }
++  return t1 - t0;
++}
++
++static VOID AdmissionScanoutSoftBench(ADMISSION_CONTEXT *Context,
++                                      ADMISSION_SCANOUT_RUNTIME *R) {
++  const SIZE_T bytes = (SIZE_T)APPLE_AGX_SCANOUT_J313_WIDTH * 4u * APPLE_AGX_SCANOUT_J313_HEIGHT;
++  ULONGLONG out[64];
++  PUCHAR a, b;
++  PHYSICAL_ADDRESS pa;
++  volatile UCHAR *m;
++  HANDLE key = NULL;
++  UNICODE_STRING name;
++  LARGE_INTEGER f;
++  static const ULONG protect[3] = {
++      PAGE_READWRITE, PAGE_READWRITE | PAGE_WRITECOMBINE,
++      PAGE_READWRITE | PAGE_NOCACHE};
++  ULONG i;
++  RtlZeroMemory(out, sizeof(out));
++  out[0] = 0x3142534eULL | (1ULL << 32); /* 'NSB1' */
++  (void)KeQueryPerformanceCounter(&f);
++  out[1] = (ULONGLONG)f.QuadPart;
++  a = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, bytes, ADMISSION_SCANOUT_TAG);
++  b = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, bytes, ADMISSION_SCANOUT_TAG);
++  if (a != NULL && b != NULL && R->SoftPool != NULL && R->SoftPoolBytes >= bytes) {
++    out[2] = (ULONGLONG)AdmissionScanoutSoftBenchRead(a, b, bytes);
++    out[3] = (ULONGLONG)AdmissionScanoutSoftBenchRead(a, R->SoftPool, bytes);
++    pa.QuadPart = (LONGLONG)R->SoftPoolIpa;
++    for (i = 0u; i < 3u; ++i) {
++      m = (volatile UCHAR *)MmMapIoSpaceEx(pa, bytes, protect[i]);
++      if (m == NULL) {
++        out[7] |= 1ULL << i;
++        continue;
++      }
++      out[4u + i] = (ULONGLONG)AdmissionScanoutSoftBenchRead(a, m, bytes);
++      MmUnmapIoSpace((PVOID)m, bytes);
++    }
++    /* build 2752: pinned to each CPU: out[8+i] pool read, out[24+i] RAM
++     * copy, out[40+i] integer loop ticks; out[56] EfficiencyClass bytes
++     * (CPU 0-7), out[57] fast mask, out[58] CPU count.  Fast = pool read
++     * within 1.5x of the fastest CPU (2751: CPU 0-3 5.7 ms, 4-7 34.6 ms,
++     * all EfficiencyClass 0). */
++    {
++      ULONG cpus = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS), cpu;
++      ULONGLONG best = ~0ULL;
++      KAFFINITY fast = 0;
++      if (cpus > 16u) cpus = 16u;
++      for (cpu = 0u; cpu < cpus; ++cpu) {
++        PROCESSOR_NUMBER number;
++        UCHAR info[256];
++        ULONG length = sizeof(info);
++        UCHAR cls = 0xffu;
++        if (!NT_SUCCESS(KeGetProcessorNumberFromIndex(cpu, &number)) || number.Group != 0u)
++          continue;
++        if (NT_SUCCESS(KeQueryLogicalProcessorRelationship(&number,
++                RelationProcessorCore,
++                (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)info, &length)))
++          cls = ((PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)info)->Processor.EfficiencyClass;
++        if (cpu < 8u) out[56] |= (ULONGLONG)cls << (8u * cpu);
++        {
++          KAFFINITY old = KeSetSystemAffinityThreadEx((KAFFINITY)1 << number.Number);
++          volatile ULONG acc = 1u;
++          ULONG k;
++          LONGLONG t0, t1;
++          out[8u + cpu] = (ULONGLONG)AdmissionScanoutSoftBenchRead(a, R->SoftPool, bytes);
++          out[24u + cpu] = (ULONGLONG)AdmissionScanoutSoftBenchRead(a, b, bytes);
++          t0 = KeQueryPerformanceCounter(NULL).QuadPart;
++          for (k = 0u; k < 20000000u; ++k)
++            acc = acc * 1664525u + 1013904223u;
++          t1 = KeQueryPerformanceCounter(NULL).QuadPart;
++          out[40u + cpu] = (ULONGLONG)(t1 - t0);
++          KeRevertToUserAffinityThreadEx(old);
++        }
++        if (out[8u + cpu] < best) best = out[8u + cpu];
++      }
++      for (cpu = 0u; cpu < cpus && cpu < 16u; ++cpu)
++        if (out[8u + cpu] != 0u && out[8u + cpu] * 2u <= best * 3u)
++          fast |= (KAFFINITY)1 << cpu;
++      R->SoftFastCpus = fast;
++      out[57] = (ULONGLONG)fast;
++      out[58] = cpus;
++    }
++  } else {
++    out[7] |= 0x100u;
++  }
++  if (a != NULL) ExFreePoolWithTag(a, ADMISSION_SCANOUT_TAG);
++  if (b != NULL) ExFreePoolWithTag(b, ADMISSION_SCANOUT_TAG);
++  if (NT_SUCCESS(IoOpenDeviceRegistryKey(Context->PhysicalDeviceObject,
++          PLUGPLAY_REGKEY_DEVICE, KEY_SET_VALUE, &key))) {
++    RtlInitUnicodeString(&name, L"NwSoftBench");
++    (void)ZwSetValueKey(key, &name, 0, REG_BINARY, out, sizeof(out));
++    ZwClose(key);
++  }
++}
++
 +/* PASSIVE.  Adopt only the exact POST geometry the J274 build offers. */
 +static NTSTATUS AdmissionScanoutSoftMap(ADMISSION_CONTEXT *Context,
 +                                        ADMISSION_SCANOUT_RUNTIME *R,
@@ -952,6 +1120,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
 +    return STATUS_INSUFFICIENT_RESOURCES;
 +  }
 +  R->SoftState = APPLE_AGX_SCANOUT_STATE_UNREGISTERED;
++  AdmissionScanoutSoftBench(Context, R);
 +  {
 +    LARGE_INTEGER f;
 +    (void)KeQueryPerformanceCounter(&f);
@@ -1008,7 +1177,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
  _Use_decl_annotations_ ULONG AdmissionScanoutReceiptState(
      ADMISSION_CONTEXT *Context) {
    ADMISSION_SCANOUT_RUNTIME *runtime = Context->ScanoutRuntime;
-@@ -81,6 +668,13 @@
+@@ -81,6 +805,13 @@
        runtime->Adapter->BrokerBase == NULL ||
        !AdmissionScanoutOffsetValid(Offset, sizeof(*Value)))
      return APPLE_AGX_SCANOUT_FALSE;
@@ -1022,7 +1191,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    *Value = READ_REGISTER_ULONG(
        (volatile ULONG *)(runtime->Adapter->BrokerBase + Offset));
    return APPLE_AGX_SCANOUT_TRUE;
-@@ -94,6 +688,13 @@
+@@ -94,6 +825,13 @@
        runtime->Adapter->BrokerBase == NULL ||
        !AdmissionScanoutOffsetValid(Offset, sizeof(*Value)))
      return APPLE_AGX_SCANOUT_FALSE;
@@ -1036,7 +1205,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    *Value = READ_REGISTER_ULONG64(
        (volatile ULONG64 *)(runtime->Adapter->BrokerBase + Offset));
    return APPLE_AGX_SCANOUT_TRUE;
-@@ -107,6 +708,13 @@
+@@ -107,6 +845,13 @@
        runtime->Adapter->BrokerBase == NULL ||
        !AdmissionScanoutOffsetValid(Offset, sizeof(Value)))
      return APPLE_AGX_SCANOUT_FALSE;
@@ -1050,7 +1219,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    WRITE_REGISTER_ULONG(
        (volatile ULONG *)(runtime->Adapter->BrokerBase + Offset), Value);
    return APPLE_AGX_SCANOUT_TRUE;
-@@ -120,6 +728,13 @@
+@@ -120,6 +865,13 @@
        runtime->Adapter->BrokerBase == NULL ||
        !AdmissionScanoutOffsetValid(Offset, sizeof(Value)))
      return APPLE_AGX_SCANOUT_FALSE;
@@ -1064,7 +1233,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    WRITE_REGISTER_ULONG64(
        (volatile ULONG64 *)(runtime->Adapter->BrokerBase + Offset), Value);
    return APPLE_AGX_SCANOUT_TRUE;
-@@ -557,6 +1172,9 @@
+@@ -557,6 +1309,9 @@
    KeInitializeSpinLock(&runtime->TimerLock);
    KeInitializeTimer(&runtime->VsyncTimer);
    KeInitializeDpc(&runtime->VsyncDpc, AdmissionScanoutTimerDpc, runtime);
@@ -1074,7 +1243,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    runtime->Timeline.Running = APPLE_AGX_SCANOUT_TRUE;
    runtime->Timeline.Enabled = APPLE_AGX_SCANOUT_TRUE;
    runtime->VsyncNotifyEnabled = 1;
-@@ -571,6 +1189,15 @@
+@@ -571,6 +1326,15 @@
    AdmissionDisplayOutputLeaseInitialize(&runtime->ActiveLease);
    AdmissionDisplayOutputLeaseInitialize(&runtime->FallbackLease);
  #endif
@@ -1090,7 +1259,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    RtlZeroMemory(&io, sizeof(io));
    io.Context = runtime;
    io.NowMs = AdmissionScanoutNow;
-@@ -583,6 +1210,7 @@
+@@ -583,6 +1347,7 @@
        &runtime->Panel, &io, memory.GuestIpaAddress, memory.PoolBytes, 1ULL,
        ADMISSION_SCANOUT_MAX_POLLS);
    if (result != AppleAgxFixedPanelOk) {
@@ -1098,7 +1267,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
      ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
      return STATUS_INVALID_PARAMETER;
    }
-@@ -593,6 +1221,7 @@
+@@ -593,6 +1358,7 @@
        (runtime->Panel.Scanout.Capabilities &
         APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES) !=
            APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES) {
@@ -1106,7 +1275,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
      ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
      return STATUS_NOT_SUPPORTED;
    }
-@@ -604,6 +1233,7 @@
+@@ -604,6 +1370,7 @@
        Context->ScanoutRuntime = runtime;
        return STATUS_DEVICE_BUSY;
      }
@@ -1114,7 +1283,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
      ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
      return STATUS_DEVICE_HARDWARE_ERROR;
    }
-@@ -650,6 +1280,9 @@
+@@ -650,6 +1417,9 @@
      (void)KeCancelTimer(&runtime->VsyncTimer);
      runtime->TimerArmed = FALSE;
      (void)KeRemoveQueueDpc(&runtime->VsyncDpc);
@@ -1124,7 +1293,7 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
      KeReleaseSpinLock(&runtime->TimerLock, oldIrql);
      /* No rearm is possible once Stopping is published under TimerLock. */
      KeFlushQueuedDpcs();
-@@ -694,6 +1327,7 @@
+@@ -694,6 +1464,7 @@
      return STATUS_DEVICE_BUSY;
  #endif
    Context->ScanoutRuntime = NULL;
@@ -1132,7 +1301,56 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
    return STATUS_SUCCESS;
  }
-@@ -1104,6 +1738,9 @@
+@@ -1015,11 +1786,48 @@
+              : STATUS_GRAPHICS_INVALID_VIDEO_PRESENT_SOURCE_MODE;
+ }
+ 
++_Use_decl_annotations_ VOID AdmissionScanoutResetSnapshot(
++    ADMISSION_CONTEXT *Context, ULONGLONG *Out) {
++  ADMISSION_SCANOUT_RUNTIME *runtime = AdmissionScanoutGet(Context);
++  RtlZeroMemory(Out, 8u * sizeof(*Out));
++  Out[0] = (ULONGLONG)(Context->SourceVisible ? 1u : 0u) |
++           ((ULONGLONG)(ULONG)InterlockedCompareExchange(&Context->DisplayModes.LastVisible, 0, 0) << 8) |
++           ((ULONGLONG)(ULONG)InterlockedCompareExchange(&Context->DisplayModes.VisibilityCalls, 0, 0) << 16);
++  Out[1] = (ULONGLONG)(ULONG)InterlockedCompareExchange(&Context->DisplayModes.DeferredFlips, 0, 0);
++  if (runtime == NULL)
++    return;
++  Out[2] = (ULONGLONG)(ULONG)InterlockedCompareExchange(&runtime->PendingValid, 0, 0) |
++           ((ULONGLONG)(ULONG)InterlockedCompareExchange(&runtime->PresentGate, 0, 0) << 8) |
++           ((ULONGLONG)(ULONG)InterlockedCompareExchange(&runtime->IrqEnabled, 0, 0) << 16) |
++           ((ULONGLONG)(ULONG)InterlockedCompareExchange(&runtime->VsyncNotifyEnabled, 0, 0) << 24) |
++           ((ULONGLONG)(runtime->TimerArmed ? 1u : 0u) << 32) |
++           ((ULONGLONG)(runtime->Timeline.Running ? 1u : 0u) << 40) |
++           ((ULONGLONG)(runtime->Timeline.Enabled ? 1u : 0u) << 48) |
++           ((ULONGLONG)(runtime->Panel.Visible ? 1u : 0u) << 56);
++  Out[3] = (ULONGLONG)InterlockedCompareExchange64(&runtime->DeferredPrimaryAddress, 0, 0);
++  Out[4] = (ULONGLONG)InterlockedCompareExchange64(&runtime->PendingPhysicalAddress, 0, 0);
++  Out[5] = runtime->Timeline.ActiveAddress;
++#if defined(APPLE_AGX_BOARD_J274)
++  Out[6] = runtime->SoftPresentCount | ((ULONGLONG)(ULONG)
++           InterlockedCompareExchange(&runtime->SoftCopyPending, 0, 0) << 48) |
++           ((ULONGLONG)(ULONG)InterlockedCompareExchange(&runtime->SoftLatchPending, 0, 0) << 56);
++#endif
++  Out[7] = KeQueryInterruptTime() / 10000ULL;
++}
++
+ _Use_decl_annotations_ NTSTATUS AdmissionScanoutSetVisible(
+     ADMISSION_CONTEXT *Context, BOOLEAN Visible) {
+   ADMISSION_SCANOUT_RUNTIME *runtime = AdmissionScanoutGet(Context);
+   if (runtime == NULL)
+     return STATUS_DEVICE_NOT_READY;
++#if defined(APPLE_AGX_BOARD_J274)
++  /* NWOAS-J274 P19: the POST framebuffer keeps scanning whatever it holds;
++   * a hidden source shows black, as a DCP plane-off would. */
++  if (runtime->SoftThread != NULL && KeGetCurrentIrql() <= DISPATCH_LEVEL) {
++    InterlockedExchange(&runtime->SoftBlankRequest, Visible ? 2 : 1);
++    (void)KeSetEvent(&runtime->SoftWake, IO_NO_INCREMENT, FALSE);
++  }
++#endif
+   return AppleAgxFixedPanelSetVisible(
+              &runtime->Panel, 0u,
+              Visible ? APPLE_AGX_SCANOUT_TRUE
+@@ -1104,6 +1912,9 @@
                          InterlockedExchange64(&runtime->NextMpoPresentId, 0));
    InterlockedExchange(&runtime->PendingMpo,
                        InterlockedExchange(&runtime->NextMpo, 0));
@@ -1142,7 +1360,21 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
    return STATUS_SUCCESS;
  }
  
-@@ -1294,6 +1931,9 @@
+@@ -1250,6 +2061,13 @@
+     InterlockedExchange64(&runtime->DeferredPrimaryAddress,
+                           Args->PrimaryAddress.QuadPart);
+     InterlockedIncrement(&Context->DisplayModes.DeferredFlips);
++    runtime->Timeline.ActiveAddress =
++        (APPLE_AGX_SCANOUT_U64)Args->PrimaryAddress.QuadPart;
++    InterlockedExchange(&runtime->HiddenMpo,
++                        InterlockedExchange(&runtime->NextMpo, 0));
++    InterlockedExchange64(&runtime->HiddenMpoPresentId,
++                          InterlockedExchange64(&runtime->NextMpoPresentId, 0));
++    InterlockedExchange(&runtime->HiddenFlipPending, 1);
+     return STATUS_SUCCESS;
+   }
+   if (InterlockedCompareExchange(&runtime->PresentGate, 1, 0) != 0) {
+@@ -1294,6 +2112,9 @@
                          InterlockedExchange64(&runtime->NextMpoPresentId, 0));
    InterlockedExchange(&runtime->PendingMpo,
                        InterlockedExchange(&runtime->NextMpo, 0));
@@ -1152,7 +1384,23 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
  #if defined(APPLE_AGX_VISIBLE_AGX_QUALIFICATION)
    if (fallbackCandidateValid) {
      BOOLEAN retained;
-@@ -1478,6 +2118,36 @@
+@@ -1434,6 +2255,15 @@
+   }
+   if (matched && runtime->Timeline.Enabled)
+     notify_vsync = TRUE;
++  if (!mpo_flip && VerticalTick && runtime->Timeline.Running &&
++      InterlockedExchange(&runtime->HiddenFlipPending, 0) != 0) {
++    notify_vsync = TRUE;
++    if (InterlockedExchange(&runtime->HiddenMpo, 0) != 0) {
++      mpo_flip = TRUE;
++      mpo_present_id = (ULONGLONG)InterlockedExchange64(
++          &runtime->HiddenMpoPresentId, 0);
++    }
++  }
+   if (!mpo_flip && notify_vsync &&
+       InterlockedCompareExchange(&runtime->PlaneOffPending, 0, 0) != 0) {
+     /* A plane-0 disable completes on the next vertical sync. */
+@@ -1478,6 +2308,36 @@
      ADMISSION_CONTEXT *Context) {
    return AdmissionScanoutProcessInterrupt(Context, FALSE);
  }
@@ -1189,6 +1437,106 @@ diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/sca
  
  static BOOLEAN AdmissionScanoutVsyncTick(PVOID Opaque) {
    ADMISSION_SCANOUT_RUNTIME *runtime = Opaque;
+diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/scheduler_windows.c port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/scheduler_windows.c
+--- external/windows-on-m1/drivers/apple-agx/render-admission/src/scheduler_windows.c	2026-11-15 19:39:30
++++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/scheduler_windows.c	2026-11-16 15:52:17
+@@ -960,6 +960,13 @@
+   if (context == NULL)
+     return STATUS_INVALID_PARAMETER;
+   RtlZeroMemory(&reset, sizeof(reset));
++  /* NWOAS-J274 P17: what the display side looked like when VidSch reset
++   * the adapter (2752: one reset during Modern Standby, all GPU work had
++   * completed).  Written to NwResetDisplay from RestartFromTimeout. */
++  AdmissionScanoutResetSnapshot(context, context->NwResetDisplay);
++  context->NwResetDisplay[8] = (ULONGLONG)(LONG)InterlockedCompareExchange(
++      &context->PagingRecordsUnsubmitted, 0, 0);
++  context->NwResetDisplay[9]++;
+   if (context->LiveAdditivePaging) InterlockedExchange(&context->PagingAdapterResetting, 1);
+ #if defined(APPLE_AGX_EXP907_FRAME_RECEIPT)
+   AdmissionDwmFrameRecordTdr(context, STATUS_PENDING, FALSE);
+@@ -986,6 +993,12 @@
+       context->PagingScheduler.LastAbortedFence = 0u;
+     }
+     KeReleaseSpinLock(&context->SchedulerLock, oldIrql);
++    /* NWOAS-J274 P17: VidMm drops every paging buffer it built but had not
++     * submitted when the adapter resets, and rebuilds what it still needs.
++     * Without this the count never returns to 0 and every later CPU copy
++     * waits for quiescence and fails (2752: 148 left, explorer.exe crash
++     * loop on DXGI_ERROR_DEVICE_REMOVED after Modern Standby). */
++    InterlockedExchange(&context->PagingRecordsUnsubmitted, 0);
+     InterlockedExchange(&context->PagingAdapterResetting, 0);
+   }
+ #if defined(APPLE_AGX_EXP907_FRAME_RECEIPT)
+@@ -1000,6 +1013,18 @@
+       InterlockedCompareExchange(&context->SchedulerInitialized, 0, 0) == 0 ||
+       InterlockedCompareExchange(&context->SchedulerFaulted, 0, 0) != 0)
+     return STATUS_DEVICE_NOT_READY;
++  if (KeGetCurrentIrql() == PASSIVE_LEVEL && context->PhysicalDeviceObject != NULL) {
++    HANDLE key = NULL;
++    UNICODE_STRING name;
++    if (NT_SUCCESS(IoOpenDeviceRegistryKey(context->PhysicalDeviceObject,
++            PLUGPLAY_REGKEY_DEVICE, KEY_SET_VALUE, &key))) {
++      RtlInitUnicodeString(&name, L"NwResetDisplay");
++      (void)ZwSetValueKey(key, &name, 0, REG_BINARY, context->NwResetDisplay,
++                          sizeof(context->NwResetDisplay));
++      (void)ZwFlushKey(key);
++      ZwClose(key);
++    }
++  }
+   return AdmissionScanoutSetTimelinePaused(context, FALSE);
+ }
+ 
+diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/src/work_queue_windows.c port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/work_queue_windows.c
+--- external/windows-on-m1/drivers/apple-agx/render-admission/src/work_queue_windows.c	2026-11-15 19:39:30
++++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/src/work_queue_windows.c	2026-11-16 16:02:15
+@@ -93,6 +93,8 @@
+   ++*count;
+   if (Kind == ADMISSION_CPU_PACKET_PAGING) {
+     LONG records = (LONG)(Bytes / sizeof(ADMISSION_PAGING_RECORD));
++    InterlockedExchange64(&Context->NwPagingLastActivity,
++                          (LONG64)KeQueryInterruptTime());
+     LONG before, after;
+     do {
+       before = Context->PagingRecordsUnsubmitted;
+@@ -235,8 +237,11 @@
+ 
+ _Use_decl_annotations_ void AdmissionPagingNoteEncoded(ADMISSION_CONTEXT *Context,
+                                                        UINT Records) {
+-  if (Context != NULL && Records != 0u)
++  if (Context != NULL && Records != 0u) {
++    InterlockedExchange64(&Context->NwPagingLastActivity,
++                          (LONG64)KeQueryInterruptTime());
+     InterlockedExchangeAdd(&Context->PagingRecordsUnsubmitted, (LONG)Records);
++  }
+ }
+ 
+ /* R161: UPDATE_PAGE_TABLE changes the logical mapping when it is built, while
+@@ -251,6 +256,25 @@
+       InterlockedCompareExchange(&Context->PagingCallbacksActive, 0, 0) == 0 &&
+       InterlockedCompareExchange(&Context->PagingPending, 0, 0) == 0 &&
+       InterlockedCompareExchange(&Context->PagingWorkersActive, 0, 0) == 0;
++  /* NWOAS-J274 P18: VidMm does not tell the driver when it drops paging
++   * buffers it built but never submitted (adapter reset, power
++   * transitions).  2752/2753: 148 and 650 such records stayed counted with
++   * the whole paging path idle, and every later CPU copy failed (predicate
++   * 62), crash-looping explorer.exe.  Only the count blocks and nothing has
++   * been built or submitted for 500 ms: drop it. */
++  if (!quiescent && Context->PagingRecordsUnsubmitted > 0 &&
++      Context->CpuQueueCount == 0u && Context->PagingNodeCount == 0u &&
++      InterlockedCompareExchange(&Context->PagingCallbacksActive, 0, 0) == 0 &&
++      InterlockedCompareExchange(&Context->PagingPending, 0, 0) == 0 &&
++      InterlockedCompareExchange(&Context->PagingWorkersActive, 0, 0) == 0 &&
++      KeQueryInterruptTime() - (ULONGLONG)InterlockedCompareExchange64(
++          &Context->NwPagingLastActivity, 0, 0) > 5000000ULL) {
++    InterlockedExchange(&Context->NwPagingStaleLast,
++                        Context->PagingRecordsUnsubmitted);
++    InterlockedIncrement(&Context->NwPagingStaleDrops);
++    InterlockedExchange(&Context->PagingRecordsUnsubmitted, 0);
++    quiescent = TRUE;
++  }
+   KeReleaseSpinLock(&Context->PagingLock, oldIrql);
+   return quiescent;
+ }
 diff -ruN -x * external/windows-on-m1/drivers/apple-agx/render-admission/umd/AppleAgxRenderAdmissionUmd.vcxproj port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/umd/AppleAgxRenderAdmissionUmd.vcxproj
 --- external/windows-on-m1/drivers/apple-agx/render-admission/umd/AppleAgxRenderAdmissionUmd.vcxproj	2026-11-15 19:39:30
 +++ port-j274/gpu/driver-p15/drivers/apple-agx/render-admission/umd/AppleAgxRenderAdmissionUmd.vcxproj	2026-11-15 20:25:48

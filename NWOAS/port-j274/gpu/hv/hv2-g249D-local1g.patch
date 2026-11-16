@@ -1,0 +1,8 @@
+--- a/src/hv_agx_local_reserve.h	(g248C)
++++ b/src/hv_agx_local_reserve.h	(g249D)
+@@
+-#define HV_AGX_LOCAL_BYTES UINT64_C(0x18000000)
++/* NWOAS-J274 g249D: 1 GiB (segment 2 = 952 MiB, the upstream EXP954-1254
++ * size).  The J274 launcher runs without the pool window, so segment 2 also
++ * holds the Mesa BOs; at 384 MiB it ran 287/320 MB full. */
++#define HV_AGX_LOCAL_BYTES UINT64_C(0x40000000)
