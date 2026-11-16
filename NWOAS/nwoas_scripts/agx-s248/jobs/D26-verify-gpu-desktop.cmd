@@ -1,0 +1,4 @@
+@echo off
+echo S248 D26 VERIFY GPU DESKTOP
+powershell -NoProfile -Command "Get-PnpDevice -Class Display | ForEach-Object { 'DISPLAY '+$_.FriendlyName+' | '+$_.Status+' | '+$_.InstanceId }; $p=Get-Process dwm; 'DWM '+$p.Id+' START '+$p.StartTime.ToString('HH:mm:ss'); $p.Modules | Where-Object { $_.ModuleName -match 'agx|apple|d3d11|dxgi|ddisplay|warp|d3d10' } | ForEach-Object { 'MOD '+$_.ModuleName+' '+$_.FileName }; $e=@(Get-WinEvent -FilterHashtable @{LogName='Application';Id=1000;StartTime=(Get-Date).AddMinutes(-10)} -ErrorAction SilentlyContinue | Where-Object { $_.Properties[0].Value -eq 'dwm.exe' }); 'DWM CRASHES LAST 10 MIN '+$e.Count; $l=Get-Content C:\NWOAS\umd-trace.log; 'PRESENT-AFTER '+(@($l|Select-String 'measure-present-after')).Count+' TRACE '+$l.Count; ($l|Select-String 'measure-present-after'|Select-Object -Last 3)|ForEach-Object{$_.Line}"
+exit /b 0

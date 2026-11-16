@@ -173,3 +173,12 @@ J313용 드라이버 해독기는 1을 기대하므로 J274 드라이버도 3을
 
 드라이버가 없을 때 2단계 통과 기준은 "설정·설치·Mu 줄이 통과이고, Windows가 1단계처럼 바탕화면까지 감"입니다.
 펌웨어 시작 성공 여부는 드라이버(`Wom1FirmwareQualification*` 레지스트리 기록)와 위 마지막 줄로만 판단합니다. 하이퍼바이저 빌드 성공은 그 판단 근거가 아닙니다.
+
+### g248C — 풀 창 경로에서 하이퍼바이저가 죽던 것 고침 (2026-11-16)
+
+| 바이너리 | 바뀐 점 | 크기(바이트) | sha256 |
+|---|---|---|---|
+| `out-hv2/m1n1-g248C-agx-hv2-poolguard.bin` | `hv_agx_gpuva_v5.c` `backing_find`: 색인 표가 NULL이면 NULL 반환(`hv2-g248C-poolguard.patch`) | 2260992 | `684cb6277680150531aa713b5833273395cab17270ad82bd047ec3300e972175` |
+
+- [사실] g247B + 풀 창(`agxmedp-s247`)에서 GPU 장치를 끈 직후 하이퍼바이저가 PC 0x580a4(`backing_find`, `handle_broker_locked`에 인라인)에서 NULL 역참조로 죽음. 직전 로그는 `power receipt seq=3 cmd=2 state=0`, 레지스터상 색인 포인터 0, slot bits 0. AGX_RR_CLOSE가 `gpuva_v5` 전체를 0으로 지운 뒤 풀 창 명령이 `hv_agx_retained_platform_page_busy` → `backing_find`를 부름.
+- 빌드: `tools-hv2/buildvar.sh … v1.0.2-1474-gbddf7f06-g248C NWOAS_AGX=1`. 실행 스크립트 `nwoas_scripts/agxmedq-s248-guest-test.sh`(풀 창 사용). **실기기 미검증.**

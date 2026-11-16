@@ -1,0 +1,13 @@
+--- a/src/hv_agx_gpuva_v5.c	(g247B, sha256 c967aaa8...)
++++ b/src/hv_agx_gpuva_v5.c	(g248C, sha256 f7671fbe...)
+@@ static struct hv_agx_gpuva_v5_backing *backing_find(
+     const struct hv_agx_gpuva_v5 *b, uint64_t key, bool by_ipa)
+ {
+     const uint32_t *index = by_ipa ? b->backing_by_ipa : b->backing_by_pa;
+-    uint32_t slot = backing_hash(b, key), probes;
++    uint32_t slot, probes;
++    /* NWOAS gpu-hv2: AGX_RR_CLOSE zeroes the whole state (index pointers
++     * included) while the pool window may still ask which pages are held. */
++    if (!index) return NULL;
++    slot = backing_hash(b, key);
+     for (probes = 0; probes <= BACKING_SLOT_MASK(b); ++probes) {

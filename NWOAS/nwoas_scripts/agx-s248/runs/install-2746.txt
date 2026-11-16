@@ -1,0 +1,58 @@
+14:22:03 START old=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed-s247-20261116-134005.EAwjGU.link
+14:22:09 old launcher exited
+14:22:19 launched /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-agxmed2746-20261116-142219.out
+14:22:50 worker connected link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed-s247-20261116-142219.BCPvPT.link
+14:23:05 deliver: S243 READBACK MATCH AppleAgxRenderAdmission.sys 641184 70c3ddce369b25004101ec15a7decfe058f422a28f913e5ab0c9fadad0bbd237 S243 READBACK MATCH AppleAgxRenderAdmissionUmd.dll 13502976 594c84c91f0791f31f42010fe2153a96b0bd0b6815b5a052b504474f005b5505 S243 READBACK MATCH AppleAgxRenderAdmission.arm64only.inf 3613 dedc91f00a769d39160ab61e28547b14e81a37fd3b2022cec620363aee42f4d3 S243 READBACK MATCH appleagxrenderadmission.cat 3254 9a6c5120ef03c1094339e10dbc820a0f84bfb027a09bfcaab4c4ab812d9d76d3 
+S248 I8 INSTALL P16 2746 + ARM
+Microsoft PnP 유틸리티
+
+드라이버 패키지를 추가하는 중:  AppleAgxRenderAdmission.arm64only.inf
+드라이버 패키지를 추가했습니다.
+게시된 이름:         oem5.inf
+드라이버 패키지가 장치에 설치됨: ACPI\APPL0002\0
+
+총 드라이버 패키지:  1
+추가된 드라이버 패키지:  1
+S248 I3 PNPUTIL EXIT 0
+작업을 완료했습니다.
+작업을 완료했습니다.
+작업을 완료했습니다.
+Microsoft PnP 유틸리티
+
+장치를 사용하도록 설정하지 못함:  ACPI\APPL0002\0
+장치가 이미 사용하도록 설정되어 있습니다.
+
+이 명령은 이 OS 제품에서 지원되지 않습니다.
+Microsoft PnP 유틸리티
+
+장치를 다시 시작하는 중:         ACPI\APPL0002\0
+장치를 다시 시작했습니다.
+
+S248 I3 RESTART EXIT 0
+Microsoft PnP 유틸리티
+
+인스턴스 ID:                ACPI\APPL0002\0
+장치 설명:         Apple AGX clean WDDM render-admission experiment (NWOAS ARM64-only)
+클래스 이름:                 Display
+클래스 GUID:                 {4d36e968-e325-11ce-bfc1-08002be10318}
+제조업체 이름:          Windows on Apple Silicon Project
+상태:                     문제
+문제 코드:               43 (0x2B) [CM_PROB_FAILED_POST_START]
+드라이버 이름:                oem5.inf
+
+    Wom1StartStage    REG_DWORD    0x1
+    Wom1StartStatus    REG_DWORD    0xc00000bb
+    Wom1GpuvaArmPhase    REG_DWORD    0x2
+    Wom1RtkitHelloSeen    REG_DWORD    0x1
+    Wom1ProviderBootSucceeded    REG_DWORD    0x1
+    Wom1BackendStartResult    REG_DWORD    0x0
+    Wom1PostDisplayRoute    REG_BINARY    01000000380000000000000002000000000000008007000038040000001E000016000000FFFFFFFF00000000000000000000F6E30B000000
+
+
+오류: 오류: 시스템이 지정된 레지스트리 키 또는 값을 찾을 수 없습니다.
+
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Dwm
+    DisableDDisplay    REG_DWORD    0x1
+
+S248 I8 DONE
+14:24:00 I8 DONE link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed-s247-20261116-142219.BCPvPT.link
