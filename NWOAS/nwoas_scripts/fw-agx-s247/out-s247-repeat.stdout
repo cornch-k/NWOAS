@@ -1,0 +1,29 @@
+{
+  "variant": "agx",
+  "tree": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-agx-s247-mu",
+  "workspace_path_used": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-agx-s247-mu",
+  "fd_sha256": "ebd3bb723e9ade72e7096eeadef85889a206672ed13c449664b805c6a086bd6a",
+  "fd_bytes": 30965760,
+  "s216_layout_payload_sha256": "14de19a9dbd2b19a23b2879dc89c94b44751bab3991086cea26a2334feebd420",
+  "payload": "nwoas_scripts/fw-agx-s247/out/s247-repeat/m1n1-payload-s247-agx.bin",
+  "payload_sha256": "fb2011f96aea4ca30c69d5bd706a379a04010dc7895366b5c86e191444ee641c",
+  "payload_bytes": 33669120,
+  "reference": {
+    "s216_fd_sha256": "b008dcfc93059ee6f623dc7f8d96dd69276970c14931be68f8e7dce256e537cc",
+    "s216_payload_sha256": "0ae1cb75bfc3cbc2b7b15e6408c489fe5badd3d12d53fc4353a85b6b5ad3d197",
+    "s223_payload_sha256": "2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7"
+  },
+  "changed_sources": {},
+  "fd_identical_to_s216": false,
+  "payload_identical_to_s223": false,
+  "ssdt_aml": [
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-agx-s247-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/MacMini2020Pkg/AcpiTables/DeviceAcpiTables/OUTPUT/J274AppleAgxAbiAdmissionSsdt.aml",
+      "sha256": "15347541e59d46a36cb2e6b1953b55f52e0b01d7baa6484b8795add06fcf240a",
+      "bytes": 1069,
+      "has_APPL0002": true,
+      "has_J274ABI": true
+    }
+  ],
+  "s247_string_in_build": []
+}

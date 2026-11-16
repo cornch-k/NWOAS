@@ -1,0 +1,75 @@
+33a34
+> #include <Library/IoLib.h>           // NWOAS S247: MmioRead32/64 of the AGX broker receipt
+34a36,53
+> //
+> // NWOAS S247 (TEST PAYLOAD ONLY): windows-on-m1 AGX local reserve, receipt ABI v3.
+> // m1n1-gpu-hv2 (MEDIATE mode) publishes {magic, version, valid, ipa, pa, bytes} at
+> // broker+0xD00; the ACPI AGX0 device (J274AppleAgxAbiAdmission.asl.inc) hands the
+> // same range to the KMD. Windows must never use it, so it is removed from system
+> // memory here, in PEI, before DXE can allocate it. Logic follows windows-on-m1
+> // mu/Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c:562-606
+> // (BSD-2-Clause-Patent) with NWOAS checks. In LOG mode the HV page reads 0 -> skipped.
+> // Needs an HV that maps the broker page: an HV without it (S233b) faults on the read.
+> //
+> #define NWOAS_AGX_BROKER_BASE          0x300000000ULL
+> #define NWOAS_AGX_LOCAL_RECEIPT        (NWOAS_AGX_BROKER_BASE + 0xD00ULL)
+> #define NWOAS_AGX_LOCAL_MAGIC          0x4C584741U
+> #define NWOAS_AGX_LOCAL_VERSION        3U
+> #define NWOAS_AGX_LOCAL_MIN_BYTES      0x08800000ULL
+> #define NWOAS_AGX_LOCAL_MAX_BYTES      0x40000000ULL
+> #define NWOAS_AGX_LOCAL_ALIGNMENT      0x10000ULL
+> 
+444a464,509
+>   //
+>   // NWOAS S247: AGX local reserve (see the top of this file).
+>   //
+>   {
+>     UINT32                Magic   = MmioRead32 (NWOAS_AGX_LOCAL_RECEIPT + 0x00);
+>     UINT32                Version = MmioRead32 (NWOAS_AGX_LOCAL_RECEIPT + 0x04);
+>     UINT32                Valid   = MmioRead32 (NWOAS_AGX_LOCAL_RECEIPT + 0x08);
+>     UINT64                Ipa, Pa, Bytes;
+>     EFI_PEI_HOB_POINTERS  Hob;
+>     BOOLEAN               Ok;
+> 
+>     if ((Magic != NWOAS_AGX_LOCAL_MAGIC) || (Version != NWOAS_AGX_LOCAL_VERSION) || (Valid != 1)) {
+>       DEBUG ((DEBUG_ERROR, "HVLOG: S247 AGX local reserve absent (magic=%x version=%x valid=%x) -- nothing reserved\n",
+>               Magic, Version, Valid));
+>     } else {
+>       Ipa   = MmioRead64 (NWOAS_AGX_LOCAL_RECEIPT + 0x10);
+>       Pa    = MmioRead64 (NWOAS_AGX_LOCAL_RECEIPT + 0x18);
+>       Bytes = MmioRead64 (NWOAS_AGX_LOCAL_RECEIPT + 0x20);
+>       Ok = (Ipa != 0) && (Ipa == Pa) &&
+>            ((Ipa & (NWOAS_AGX_LOCAL_ALIGNMENT - 1)) == 0) &&
+>            ((Bytes & (NWOAS_AGX_LOCAL_ALIGNMENT - 1)) == 0) &&
+>            (Bytes >= NWOAS_AGX_LOCAL_MIN_BYTES) && (Bytes <= NWOAS_AGX_LOCAL_MAX_BYTES) &&
+>            (Ipa >= PcdGet64 (PcdSystemMemoryBase)) && (Ipa + Bytes > Ipa) &&
+>            (Ipa + Bytes <= SystemMemoryTop) &&
+>            // never the FD (also covered by the allocation-HOB scan below)
+>            ((Ipa >= FdTop) || (Ipa + Bytes <= PcdGet64 (PcdFdBaseAddress)));
+>       // No PEI allocation (stacks, HOB list, FD, copies) may overlap it.
+>       for (Hob.Raw = GetHobList (); Ok && (Hob.Raw = GetNextHob (EFI_HOB_TYPE_MEMORY_ALLOCATION, Hob.Raw)) != NULL;
+>            Hob.Raw = GET_NEXT_HOB (Hob)) {
+>         UINT64 B = Hob.MemoryAllocation->AllocDescriptor.MemoryBaseAddress;
+>         UINT64 L = Hob.MemoryAllocation->AllocDescriptor.MemoryLength;
+>         if ((L != 0) && (B < Ipa + Bytes) && (Ipa < B + L)) {
+>           Ok = FALSE;
+>         }
+>       }
+>       // ReserveMemoryRegion() succeeds only inside ONE system-memory resource HOB, so
+>       // already-reserved ranges (handoff copies, CPU carveouts, bridge window) refuse it.
+>       if (Ok && ReserveMemoryRegion (Ipa, (UINT32)Bytes)) {
+>         DEBUG ((DEBUG_ERROR, "HVLOG: S247 AGX local reserve reserved base=%llx bytes=%llx\n", Ipa, Bytes));
+>       } else {
+>         DEBUG ((DEBUG_ERROR, "HVLOG: S247 AGX local reserve REFUSED ipa=%llx pa=%llx bytes=%llx -- KMD must not bind\n",
+>                 Ipa, Pa, Bytes));
+>       }
+>     }
+>   }
+> 
+591a657,662
+>   //NWOAS S247: AGX broker page (m1n1-gpu-hv2 hook; device memory, 4 KiB)
+>   VirtualMemoryTable[++Index].PhysicalBase = NWOAS_AGX_BROKER_BASE;
+>   VirtualMemoryTable[Index].VirtualBase    = NWOAS_AGX_BROKER_BASE;
+>   VirtualMemoryTable[Index].Length         = SIZE_4KB;
+>   VirtualMemoryTable[Index].Attributes     = ARM_MEMORY_REGION_ATTRIBUTE_DEVICE;
+> 

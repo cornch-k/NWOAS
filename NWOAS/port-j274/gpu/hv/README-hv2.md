@@ -99,10 +99,10 @@ windows-on-m1 = `external/windows-on-m1`, `m1n1_windows` 하위 모듈 `882985fb
 
 ## 막힌 곳과 위험 (중요한 순서)
 
-1. [사실] **Hwdata 값 표가 J313용이라 펌웨어 시작이 막힙니다.** J274 ADT와 3개가 다릅니다. 하이퍼바이저와 드라이버가 같은 J274 표를 써야 풀립니다(드라이버 갈래와 함께 만들어야 함).
+1. [사실] g247A는 Hwdata 값 표가 J313용이라 펌웨어 시작이 막힙니다(J274 ADT와 3개 다름). **g247B는 J274 표를 써서 이 막힘이 풀립니다**(오프라인 66개 일치). 드라이버도 같은 J274 표로 빌드돼야 합니다.
 2. [사실] `gpu-perf-base-pstate`가 13.5 ADT에도 없습니다. 하이퍼바이저는 런처가 값을 줘야만 구성 정보를 내놓고, 드라이버 쪽 해독기(J313용)는 1을 기대합니다. 올바른 J274 값은 모릅니다 [모름].
 3. [가설] 이미지가 96 KiB 커진 것과 mode 2 설치 때의 힙 사용이 S231 배치와 충돌하지 않는다. 힙 사용(이 맥북에서 구조체 크기로 계산): 풀 창 없이 약 14 MiB(GPU 페이지 표 중개 상태 10.0 MiB + 여유 4 MiB), 풀 창을 켜면 약 47 MiB(+ 페이지 표 22.8 MiB, 창 표 4.1 MiB). m1n1은 자기 힙으로 128 MiB를 남겨 두지만 이미 쓰고 있는 양은 모릅니다. 설치 전에 런처가 준 한계로 여유를 검사하고 모자라면 거절합니다. 1단계 기록으로 확인합니다.
-4. [가설] 예약 메모리 후보 주소를 Mu가 실제로 예약해 Windows가 쓰지 않는다. Mu 변경(`../acpi-j274/README.md` 5번)이 빌드되지 않았습니다.
+4. [가설] 예약 메모리 후보 주소를 Mu가 실제로 예약해 Windows가 쓰지 않는다. Mu 변경은 시험용 페이로드(`nwoas_scripts/fw-agx-s247`)로 빌드했지만 부팅하지 않았습니다.
 5. [가설] 중개 페이지·GPU 영역 훅이 Python의 이후 페이지 표 갱신으로 덮이지 않는다. `hv_start`에서 설치하므로 시작 전 갱신은 안전하지만, 실행 중 모듈이 새로 매핑하면 덮일 수 있습니다.
 6. [사실] 화면 서비스는 옮기지 않아 GPU로 그린 화면은 나오지 않습니다. 정식(전체) 드라이버는 2560x1600 패널 검사에서 멈춥니다(드라이버 갈래 문서).
 7. [가설, 원본 저자 가설] VMID 0 때문에 GPU 주소 변환 캐시가 자주 비워져 느려질 수 있음.
@@ -111,3 +111,65 @@ windows-on-m1 = `external/windows-on-m1`, `m1n1_windows` 하위 모듈 `882985fb
 
 - 설치한 것 없음. 빌드 사본·시험 실행 파일은 스크래치 폴더에서 지웠습니다.
 - 파일 지문: `MANIFEST-hv2.sha256`, hv1과의 차이: `out-hv2/src-hv1-vs-hv2.diff`, `out-hv2/changed-files-hv1-vs-hv2.txt`.
+
+---
+
+## 갱신 2026-11-16 오후: 1단계 결과와 2단계 준비
+
+### 1단계 결과 (실기기, 코디네이터 보고) [사실]
+
+런처 `nwoas_scripts/agxlog-s247-guest-test.sh`(g247A, LOG). 로그 `nwoas_scripts/logs/agxlog-s247-20261116-120236.DbjqNp`:
+`config mode=1 ret=1`, `install: mode=1 entry=0x83dec0800`, `LOG mode armed`, Windows 바탕화면 도달.
+
+`probe OK` 줄이 없었던 이유 [사실]: 설치 함수는 ADT 확인이 통과하지 않으면 거절하므로 `LOG mode armed`가 찍혔다는 것 자체가 통과를 뜻합니다.
+ADT 확인은 `hv_init`에서 도는데, 그때는 Python이 진단 출력 통로(VUART)를 아직 켜지 않아 출력이 버려집니다(같은 때 찍히는 vGIC 준비 줄도 두 로그에 모두 없음).
+g247B부터는 설치할 때 `NWOAS-AGX: probe OK (hv_init): …` 요약을 다시 찍습니다.
+
+### 2단계용 새 하이퍼바이저 g247B
+
+| 바이너리 | 바뀐 점 | 크기(바이트) | sha256 |
+|---|---|---|---|
+| `out-hv2/m1n1-g247B-agx-hv2-j274hwdata.bin` | J274 Hwdata 값 표(`port-j274/gpu/hwdata-j274`, sha256 `ebf8e666…`) 사용, 설치 때 확인 결과 다시 출력 | 2260992 | `2d70d7f15ee405235b8d0141d6d1ebf16a1f83b2d68963c226e4f9fec890c20e` |
+
+- 새 사본 두 개에서 빌드해 같음. 기본 빌드는 여전히 S233b와 같음(`d2eb62b5…`). g247A 파일과 1단계 모듈은 바꾸지 않았습니다(1단계 런처 고정값 유지).
+- g247B 안에는 J274 프로필 ID만 있고 J313 ID는 없습니다(바이너리 검색, 사실). 오프라인 시험에서 J274 표는 13.5 ADT·Tahoe ADT와 66개 모두 일치합니다(`out-hv2/hosttest-adt135.txt`).
+
+### gpu-perf-base-pstate = 3 [사실, 출처]
+
+| 출처 | 값 |
+|---|---|
+| Asahi Linux `arch/arm64/boot/dts/apple/t8103-j274.dts`(asahi 브랜치 `ada43326…`) | `&gpu { apple,perf-base-pstate = <3>; }` — Mac mini 전용 덮어쓰기 |
+| Asahi `t8103.dtsi`(같은 커밋) | SoC 기본 `<1>`(J313 등) |
+| Asahi 드라이버 `drivers/gpu/drm/asahi/hw/mod.rs`(`1340031e…`) | DT 값이 없을 때 기본 1 |
+| m1n1 `proxyclient/m1n1/fw/agx/initdata.py:704` | ADT 값이 없을 때 기본 3 |
+| J313 ADT(windows-on-m1 fixture) | 1 |
+
+J274 ADT에는 이 값이 없습니다. 2단계 런처는 `NWOAS_AGX_BASE_PSTATE=3`을 줍니다.
+J313용 드라이버 해독기는 1을 기대하므로 J274 드라이버도 3을 받아들여야 합니다(드라이버 갈래 확인 필요).
+
+### 예약 메모리 위치: `NWOAS_AGX_LOCAL_IPA=0xA00000000`
+
+| 근거(1단계 로그, 사실) | 값 |
+|---|---|
+| 게스트 고주소 RAM | 0x83CE10000..0xAE0FCC000 |
+| 저주소 창 뒷받침 메모리 | 0xAE0FCC000..0xBE0FCC000 |
+| 핸드오프 복사본 | 0x840000000 + 0x5C000 |
+| 화면 버퍼 | 0xBE3F60000(게스트 RAM 밖) |
+| 정상 DRAM 카브아웃 | region-id-24 0x801224000 + 0x3dfddc000 |
+
+0xA00000000..0xA18000000(384 MiB): 64 KiB 정렬, region-id-24 안, 위 영역 어디와도 겹치지 않음, 뒷받침 메모리보다 약 3 GiB 아래.
+하이퍼바이저가 1:1 매핑·일반 메모리 속성·카브아웃을 다시 검사하고, 시험용 Mu가 PEI 단계에서 이 범위를 예약해 Windows가 쓰지 못하게 합니다.
+[가설] 게스트 시작 주소(Python 힙 끝)가 부팅마다 같다. 1단계 값 기준이며, 다르면 하이퍼바이저나 Mu가 거절합니다.
+
+### 2단계 로그 판정
+
+| 단계 | 통과 줄 | 실패(멈춤) 줄 |
+|---|---|---|
+| 설정 | `HVLOG: NWOAS-AGX config mode=2 ret=1 … local=0xa00000000 … vintid=889` | `ret=0` 또는 `config REFUSED` |
+| 설치 | `NWOAS-AGX: probe OK (hv_init): gpu-region 0xbfffb8000+0x4000 …`, `local reserve v3 IPA=0xa00000000 PA=0xa00000000 bytes=0x18000000`, `retained Hwdata input profile matched=1`, `retained-root broker v4 root=0xbfff78000 size=0x40000`, `MEDIATE armed: … config=1 local=1 pool=0` | `install REFUSED`, `local reserve unavailable`, `matched=0`, `retained-root broker unavailable`, `config=0` 또는 `local=0` |
+| Mu | `HVLOG: S247 AGX local reserve reserved base=a00000000 bytes=18000000`, 기존 `S237 reserved PCIe bridge window`, `S216 reserved handoff` | `S247 … absent`(MEDIATE인데 영수증 못 읽음), `S247 … REFUSED` |
+| Windows | 바탕화면 도달(1단계와 같게). 장치 관리자에 `ACPI\APPL0002`가 보임 | 바탕화면 전 멈춤 → 2단계 중단, 1단계 런처로 되돌림 |
+| 드라이버 설치 뒤 | `power receipt seq=… cmd=1 state=3 result=0`, `retained op=1 … status=0`(PREPARE), `retained root ACTIVE`, `GPUVA broker v5 init=0` | `broker REFUSED`/`gpu-region REFUSED` 줄 반복, `power receipt … result=4`, `retained op=1 … status≠0` |
+
+드라이버가 없을 때 2단계 통과 기준은 "설정·설치·Mu 줄이 통과이고, Windows가 1단계처럼 바탕화면까지 감"입니다.
+펌웨어 시작 성공 여부는 드라이버(`Wom1FirmwareQualification*` 레지스트리 기록)와 위 마지막 줄로만 판단합니다. 하이퍼바이저 빌드 성공은 그 판단 근거가 아닙니다.
