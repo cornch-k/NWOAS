@@ -1,0 +1,66 @@
+{
+  "contract_version": 2,
+  "dependencies": [
+    "/arm-io/sgx",
+    "/arm-io/gfx-asc"
+  ],
+  "firmware": {
+    "generation": "G13",
+    "version": "V13_5"
+  },
+  "interrupts": [
+    563,
+    564,
+    565,
+    566,
+    579,
+    576,
+    575,
+    578,
+    577
+  ],
+  "nodes": [
+    "/arm-io/sgx",
+    "/arm-io/gfx-asc"
+  ],
+  "platform": "J274",
+  "regions": {
+    "asc_mmio": {
+      "base": 8694792192,
+      "size": 442368
+    },
+    "gpu": {
+      "base": 51539312640,
+      "size": 16384
+    },
+    "handoff": {
+      "base": 51539017728,
+      "size": 16384
+    },
+    "rtkit_private": {
+      "base": 18446743523953737728,
+      "size": 137438953472
+    },
+    "sgx_mmio": {
+      "base": 8657043456,
+      "size": 67108864
+    },
+    "shared": {
+      "base": 51539050496,
+      "size": 262144
+    }
+  },
+  "source": {
+    "adt_identity": "435b78f6410ae1e169e40c69941c7550eebaf38ab6e09365b8416a74c510e8e6",
+    "host_agx_stack_sha256": "dc7355c7ce32b663af015183c49c57b1a17d04acb392c718b181de209d1f8f9a",
+    "m1n1_build": "v1.0.2-1471-g59fb544-dirty",
+    "m1n1_md5": "7bec0225edc101857be3b7f195dd7357",
+    "os_firmware_version": "iBoot-8422.141.2",
+    "system_firmware_version": "mBoot-18000.121.3"
+  },
+  "uat": {
+    "address_bits": 40,
+    "num_contexts": 64,
+    "page_size": 16384
+  }
+}

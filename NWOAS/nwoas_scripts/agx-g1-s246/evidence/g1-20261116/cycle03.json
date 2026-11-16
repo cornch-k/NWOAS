@@ -1,0 +1,169 @@
+{
+  "clocks_requested": true,
+  "contract": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/agx-g1-s246/evidence/g0-contract-20261116/j274-agx.json",
+  "contract_sha256": "732cae8b17f310da16a2141849d6d6ebc063c6ab46386d8d0914d1379061ef04",
+  "finished_at": 1794797653.515734,
+  "firmware_left_running": false,
+  "identity": {
+    "m1n1_base": "0x802b38000",
+    "m1n1_markers": [
+      {
+        "got_hex": "23236d316e315f766572232376312e302e322d313437312d67353966623534342d646972747900",
+        "match": true,
+        "offset": 366160
+      },
+      {
+        "got_hex": "4e574f41532d4443502d44454645523a206175746f6d6174696320646973706c617920696e697420646566657272656420746f20686f73740a00",
+        "match": true,
+        "offset": 349396
+      }
+    ],
+    "os_firmware": {
+      "firmware_version": "iBoot-8422.141.2",
+      "iboot_stage_one_tag": "",
+      "iboot_stage_two_tag": "",
+      "system_firmware_version": "mBoot-18000.121.3"
+    },
+    "random_seed_sha256": "4ddd53111e1eea3ef7c0cd0e94efca0479f099e62abd0b8364afe52b5b8a53f6"
+  },
+  "pong_latency_s": 0.0018089580116793513,
+  "release_requires_reboot": true,
+  "result": "PASS",
+  "snapshot": {
+    "ap_power_state": 32,
+    "asc_running": true,
+    "fault": {
+      "queue_uuid": 0,
+      "unk_0": 0,
+      "unk_10": 0,
+      "unk_14": 0,
+      "unk_4": 0,
+      "unk_c": 0
+    },
+    "fw_status": {
+      "halt_count": 0,
+      "halted": 0,
+      "resume": 0
+    },
+    "iop_power_state": 32,
+    "reason": "after_pong",
+    "sgx_irqs": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "uat": {
+      "cached_roots": [
+        34568749056,
+        34568781824,
+        34568798208,
+        34568830976,
+        34568863744,
+        34571370496,
+        34571452416,
+        34571468800,
+        51539050496,
+        51539312640
+      ],
+      "dirty_roots": [],
+      "initialized": true
+    }
+  },
+  "started_at": 1794797652.397714,
+  "steps": [
+    {
+      "contract_sha256": "732cae8b17f310da16a2141849d6d6ebc063c6ab46386d8d0914d1379061ef04",
+      "heap": [
+        "0x80c740000",
+        "0x84c740000"
+      ],
+      "step": "validated",
+      "t": 0.1848
+    },
+    {
+      "G": "G13",
+      "V": "V13_5",
+      "step": "schema",
+      "t": 0.1953
+    },
+    {
+      "paths": [
+        "/arm-io/gfx-asc",
+        "/arm-io/sgx"
+      ],
+      "step": "clocks_enabled",
+      "t": 0.1963
+    },
+    {
+      "step": "agx_constructed",
+      "t": 0.197
+    },
+    {
+      "asc_running": true,
+      "step": "firmware_started",
+      "t": 0.9203
+    },
+    {
+      "event_delta": 0,
+      "latency_s": 0.0018,
+      "pongs": 1,
+      "step": "pong",
+      "t": 0.9222
+    },
+    {
+      "ap_power_state": 32,
+      "asc_running": true,
+      "fault": {
+        "queue_uuid": 0,
+        "unk_0": 0,
+        "unk_10": 0,
+        "unk_14": 0,
+        "unk_4": 0,
+        "unk_c": 0
+      },
+      "fw_status": {
+        "halt_count": 0,
+        "halted": 0,
+        "resume": 0
+      },
+      "iop_power_state": 32,
+      "reason": "after_pong",
+      "sgx_irqs": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "step": "snapshot",
+      "t": 0.9483,
+      "uat": {
+        "cached_roots": [
+          34568749056,
+          34568781824,
+          34568798208,
+          34568830976,
+          34568863744,
+          34571370496,
+          34571452416,
+          34571468800,
+          51539050496,
+          51539312640
+        ],
+        "dirty_roots": [],
+        "initialized": true
+      }
+    },
+    {
+      "step": "firmware_stopped",
+      "t": 0.9524
+    },
+    {
+      "step": "uat_roots_cleared",
+      "t": 0.9544
+    }
+  ],
+  "tool": "g1_cycle.py"
+}

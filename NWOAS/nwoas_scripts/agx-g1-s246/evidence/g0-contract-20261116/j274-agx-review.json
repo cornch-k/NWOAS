@@ -1,0 +1,88 @@
+{
+  "aic_reg0": [
+    9580838912,
+    49152
+  ],
+  "board_id": 34,
+  "chip_id": 33027,
+  "clock_ids": {
+    "/arm-io/gfx-asc": [
+      317
+    ],
+    "/arm-io/sgx": [
+      317
+    ]
+  },
+  "m1n1_markers": [
+    {
+      "bytes_hex": "23236d316e315f766572232376312e302e322d313437312d67353966623534342d646972747900",
+      "offset": 366160
+    },
+    {
+      "bytes_hex": "4e574f41532d4443502d44454645523a206175746f6d6174696320646973706c617920696e697420646566657272656420746f20686f73740a00",
+      "offset": 349396
+    }
+  ],
+  "perf_states_sha256": "73dd1cf08b46746becbc04940ba082491891e2b6942644d4e9fc8e1e1ce10f96",
+  "platform": "J274",
+  "pmgr_chain": {
+    "/arm-io/gfx-asc": [
+      {
+        "id": 316,
+        "name": "GFX-ASC",
+        "parents": [
+          99,
+          0
+        ],
+        "psidx": 0,
+        "psreg": 0
+      },
+      {
+        "id": 99,
+        "name": "GFX",
+        "parents": [
+          0,
+          0
+        ],
+        "psidx": 31,
+        "psreg": 5
+      }
+    ],
+    "/arm-io/sgx": [
+      {
+        "id": 314,
+        "name": "GFX-SGX",
+        "parents": [
+          99,
+          0
+        ],
+        "psidx": 0,
+        "psreg": 0
+      },
+      {
+        "id": 99,
+        "name": "GFX",
+        "parents": [
+          0,
+          0
+        ],
+        "psidx": 31,
+        "psreg": 5
+      },
+      {
+        "id": 315,
+        "name": "GFX-BUSY",
+        "parents": [
+          0,
+          0
+        ],
+        "psidx": 0,
+        "psreg": 0
+      }
+    ]
+  },
+  "review_version": 1,
+  "sgx_compatible": [
+    "gpu,t8103"
+  ]
+}

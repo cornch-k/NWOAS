@@ -1,0 +1,362 @@
+{
+  "adt_identity": "435b78f6410ae1e169e40c69941c7550eebaf38ab6e09365b8416a74c510e8e6",
+  "adt_sha256": "32e63706ee8816b9a731324340ea2206c683ce441c7c2beda09ab20c4e285c23",
+  "adt_size": 360448,
+  "agx_schema_for_firmware": "V13_5",
+  "aic_reg0": [
+    9580838912,
+    49152
+  ],
+  "board_id": 34,
+  "chip_id": 33027,
+  "chosen_firmware": {
+    "firmware_version": "iBoot-8422.141.2",
+    "iboot_stage_one_tag": "",
+    "iboot_stage_two_tag": "",
+    "system_firmware_version": "mBoot-18000.121.3"
+  },
+  "dump_version": 1,
+  "gfx_asc_segment_ranges": [
+    {
+      "flags": 1,
+      "iova": 18446743523953737728,
+      "phys": 34371010560,
+      "remap": 34371010560,
+      "size": 311296
+    },
+    {
+      "flags": 0,
+      "iova": 18446743523954049024,
+      "phys": 34377252864,
+      "remap": 34377252864,
+      "size": 491520
+    }
+  ],
+  "hex": {
+    "asc_reg": [
+      [
+        "0x206400000",
+        "0x6c000"
+      ],
+      [
+        "0x206050000",
+        "0x8"
+      ]
+    ],
+    "sgx_reg": [
+      [
+        "0x204000000",
+        "0x4000000"
+      ],
+      [
+        "0x204d00000",
+        "0x20000"
+      ]
+    ],
+    "sgx_regions": {
+      "gpu": [
+        "0xbfffb8000",
+        "0x4000"
+      ],
+      "handoff": [
+        "0xbfff70000",
+        "0x4000"
+      ],
+      "rtkit_private": [
+        "0xffffff8000000000",
+        "0x2000000000"
+      ],
+      "shared": [
+        "0xbfff78000",
+        "0x40000"
+      ]
+    }
+  },
+  "nodes": {
+    "/arm-io/gfx-asc": {
+      "interrupts": [
+        576,
+        575,
+        578,
+        577
+      ],
+      "properties": {
+        "AAPL,phandle": 219,
+        "clock-gates": [
+          316
+        ],
+        "clock-ids": [
+          317
+        ],
+        "compatible": [
+          "iop,ascwrap-v4"
+        ],
+        "device_type": "gfx-asc",
+        "interrupt-parent": 95,
+        "interrupts": [
+          576,
+          575,
+          578,
+          577
+        ],
+        "iommu-parent": 221,
+        "iop-version": 1,
+        "power-gates": [
+          316
+        ],
+        "reg": [
+          {
+            "addr": 104857600,
+            "size": 442368
+          },
+          {
+            "addr": 100990976,
+            "size": 8
+          }
+        ],
+        "role": "GFX",
+        "segment-names": "__TEXT;__DATA",
+        "segment-ranges": {
+          "bytes_hex": "0000ac00080000000000000080ffffff0000ac000800000000c004000100000000400b010800000000c0040080ffffff00400b01080000000080070000000000"
+        }
+      },
+      "reg": [
+        [
+          8694792192,
+          442368
+        ],
+        [
+          8690925568,
+          8
+        ]
+      ]
+    },
+    "/arm-io/sgx": {
+      "interrupts": [
+        563,
+        564,
+        565,
+        566,
+        579
+      ],
+      "properties": {
+        "AAPL,phandle": 218,
+        "clock-gates": [
+          314,
+          315
+        ],
+        "clock-ids": [
+          317
+        ],
+        "compatible": [
+          "gpu,t8103"
+        ],
+        "device_type": "sgx",
+        "function-mcc_dataset": {
+          "args": [],
+          "name": "M$DS",
+          "phandle": 94
+        },
+        "gfx-handoff-base": 51539017728,
+        "gfx-handoff-size": 16384,
+        "gfx-qos": 4294967297,
+        "gfx-shared-region-base": 51539050496,
+        "gfx-shared-region-size": 262144,
+        "gptbat-ready": 1,
+        "gpu-avg-power-filter-tc-ms": 1000,
+        "gpu-avg-power-ki-only": 7.5,
+        "gpu-avg-power-kp": 4.0,
+        "gpu-avg-power-min-duty-cycle": 40,
+        "gpu-avg-power-target-filter-tc": 125,
+        "gpu-fast-die0-alarm-threshold": 94,
+        "gpu-fast-die0-integral-gain": 200.0,
+        "gpu-fast-die0-proportional-gain": 5.0,
+        "gpu-fast-die0-sensor-mask": 18,
+        "gpu-fast-die0-target": 94,
+        "gpu-num-perf-states": 6,
+        "gpu-perf-filter-drop-threshold": 0,
+        "gpu-perf-filter-time-constant": 5,
+        "gpu-perf-filter-time-constant2": 50,
+        "gpu-perf-integral-gain2": 0.19739200174808502,
+        "gpu-perf-integral-min-clamp": 0,
+        "gpu-perf-proportional-gain2": 6.853981018066406,
+        "gpu-perf-tgt-utilization": 85,
+        "gpu-power-sample-period": 8,
+        "gpu-power-zone-filter-tc-0": 6875,
+        "gpu-power-zone-target-0": 30000,
+        "gpu-power-zone-target-offset-0": 100,
+        "gpu-ppm-filter-time-constant-ms": 100,
+        "gpu-ppm-ki": 91.5,
+        "gpu-ppm-kp": 6.900000095367432,
+        "gpu-pwr-filter-time-constant": 313,
+        "gpu-pwr-integral-gain": 0.020212899893522263,
+        "gpu-pwr-integral-min-clamp": 0,
+        "gpu-pwr-min-duty-cycle": 40,
+        "gpu-pwr-perf-scale0": 0.0,
+        "gpu-pwr-perf-scale1": 1.0,
+        "gpu-pwr-proportional-gain": 5.2831854820251465,
+        "gpu-region-base": 51539312640,
+        "gpu-region-size": 16384,
+        "gpu-sochot-temp": 111,
+        "has-kf": 1,
+        "interrupt-parent": 95,
+        "interrupts": [
+          563,
+          564,
+          565,
+          566,
+          579
+        ],
+        "meta-sw-interrupt": {
+          "bytes_hex": "4840103b02000000c840103b0200000008000000"
+        },
+        "metal-standard": 256,
+        "opengl-standard": 768,
+        "perf-state-count": 7,
+        "perf-state-table-count": 1,
+        "perf-states": [
+          {
+            "freq": 0,
+            "volt": 400
+          },
+          {
+            "freq": 396000000,
+            "volt": 593
+          },
+          {
+            "freq": 528000000,
+            "volt": 628
+          },
+          {
+            "freq": 720000000,
+            "volt": 678
+          },
+          {
+            "freq": 924000000,
+            "volt": 768
+          },
+          {
+            "freq": 1128000000,
+            "volt": 846
+          },
+          {
+            "freq": 1278000000,
+            "volt": 912
+          }
+        ],
+        "procedural-antialiasing": null,
+        "product-dram": 50,
+        "reg": [
+          {
+            "addr": 67108864,
+            "size": 67108864
+          },
+          {
+            "addr": 80740352,
+            "size": 131072
+          }
+        ],
+        "rtkit-private-vm-region-base": 18446743523953737728,
+        "rtkit-private-vm-region-size": 137438953472,
+        "ttbat-phys-addr-base": 3145710
+      },
+      "reg": [
+        [
+          8657043456,
+          67108864
+        ],
+        [
+          8670674944,
+          131072
+        ]
+      ]
+    }
+  },
+  "pmgr_chain": {
+    "/arm-io/gfx-asc": [
+      {
+        "id": 316,
+        "name": "GFX-ASC",
+        "parents": [
+          99,
+          0
+        ],
+        "psidx": 0,
+        "psreg": 0
+      },
+      {
+        "id": 99,
+        "name": "GFX",
+        "parents": [
+          0,
+          0
+        ],
+        "psidx": 31,
+        "psreg": 5
+      }
+    ],
+    "/arm-io/sgx": [
+      {
+        "id": 314,
+        "name": "GFX-SGX",
+        "parents": [
+          99,
+          0
+        ],
+        "psidx": 0,
+        "psreg": 0
+      },
+      {
+        "id": 99,
+        "name": "GFX",
+        "parents": [
+          0,
+          0
+        ],
+        "psidx": 31,
+        "psreg": 5
+      },
+      {
+        "id": 315,
+        "name": "GFX-BUSY",
+        "parents": [
+          0,
+          0
+        ],
+        "psidx": 0,
+        "psreg": 0
+      }
+    ]
+  },
+  "random_seed_sha256": "e073d64859820c74ada76424118eebca343037e95ea1c3dc17e6267e2efb3c4c",
+  "sgx_regions": {
+    "gpu": {
+      "base": 51539312640,
+      "size": 16384
+    },
+    "handoff": {
+      "base": 51539017728,
+      "size": 16384
+    },
+    "rtkit_private": {
+      "base": 18446743523953737728,
+      "size": 137438953472
+    },
+    "shared": {
+      "base": 51539050496,
+      "size": 262144
+    }
+  },
+  "soc_generation": "H13",
+  "source": {
+    "m1n1_base": 34405531648,
+    "mode": "live",
+    "proxy": "/dev/cu.usbmodemC07HL05SQ6NY1"
+  },
+  "target_type": "J274",
+  "uat_geometry_host": {
+    "address_bits": 40,
+    "num_contexts": 64,
+    "page_size": 16384
+  }
+}
