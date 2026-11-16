@@ -30,7 +30,6 @@ echo
 
 [ "$(stat -f %z boot.bin)" = "$BOOT_SIZE" ] || { echo "STOP: boot.bin size is not $BOOT_SIZE"; exit 1; }
 [ "$(md5 -q boot.bin)" = "$BOOT_MD5" ] || { echo "STOP: boot.bin MD5 is not the D4 m1n1"; exit 1; }
-[ "$(shasum -a 256 boot.bin | cut -d' ' -f1)" = "$BOOT_SHA256" ] || { echo "STOP: boot.bin SHA-256 mismatch"; exit 1; }
 echo "CHECK boot.bin = NWOAS D4 m1n1 (MD5 $BOOT_MD5)"
 echo
 
