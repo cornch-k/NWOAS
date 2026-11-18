@@ -45,15 +45,16 @@ if [ "${NWOAS_S260_HV:-0}" = 1 ]; then
     PWRMOD=(-m "$S260/power_module.py")
 fi
 # S262 (opt-in, HARDWARE-UNVERIFIED; nwoas_scripts/nvmeqd-s262/README.md). Unset = the stack above unchanged.
-#   NWOAS_S262_HV=1   m1n1-g262P = g260O + concurrent NVMe path (port-j274/gpu/hv/hv2-g260O-to-g262P.patch),
+#   NWOAS_S262_HV=1   m1n1-g262Q = g260O + concurrent NVMe path (port-j274/gpu/hv/hv2-g260O-to-g262P.patch
+#                     + hv2-g262P-to-g262Q.patch; g262P refused every NWOAS_NVME_QD, hardware 2026-11-19),
 #                     -m power-s260/power_module.py then -m nvmeqd-s262/nvmeqd_module.py LAST (all NWOAS_PWR_*
 #                     switches work as with S260).  Wins over NWOAS_S260_HV=1.
 #   NWOAS_NVME_QD=<n> 1..61 commands in flight; unset/0 = the g260O one-at-a-time path (A/B on one binary).
 #                     NWOAS_NVME_QD_IRQ=0 (polling only), NWOAS_NVME_QD_STRICT=1 (FUA writes alone), NWOAS_NVME_QD_KICK=0.
 S262="$ROOT/nwoas_scripts/nvmeqd-s262"
 if [ "${NWOAS_S262_HV:-0}" = 1 ]; then
-    HV="/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/hv/out-hv2/m1n1-g262P-agx-hv2-nvmeqd.bin"
-    HV_SIZE=2326528 HV_SHA=c89fc27402f4f576dbd8f5f3590869bab540c12c722bd3abc846fc09efab6069
+    HV="/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/hv/out-hv2/m1n1-g262Q-agx-hv2-nvmeqd.bin"
+    HV_SIZE=2326528 HV_SHA=6a1ce6d4519146ae66940a5296803e44cf8dee65710956322ba20e778cca25d2
     PWRMOD=(-m "$S260/power_module.py" -m "$S262/nvmeqd_module.py")
 elif [ -n "${NWOAS_NVME_QD:-}" ] && [ "${NWOAS_NVME_QD}" != 0 ]; then
     echo 'STOP: NWOAS_NVME_QD needs NWOAS_S262_HV=1 (the g260O/g254L HV has no concurrent NVMe path)'; exit 1
@@ -97,7 +98,7 @@ if [ "${NWOAS_S260_HV:-0}" = 1 ] || [ "${NWOAS_S262_HV:-0}" = 1 ]; then
     [ "$(shasum -a 256 "$S260/power_module.py" | awk '{print $1}')" = 4fdd9ee3904c71f3d439a520f7f1bbd4b38b718fe62b0d60246aa2fa9d917356 ]
     [ "$(shasum -a 256 "$S260/nwoas_pwr_layout.py" | awk '{print $1}')" = 4690ba77885b1c131f5a93ded4dbef379c2c75a532ddcec937fce70dfda8f475 ]
     if [ "${NWOAS_S262_HV:-0}" = 1 ]; then
-        [ "$(shasum -a 256 "$S262/nvmeqd_module.py" | awk '{print $1}')" = 4a9b0d057487d9d45dafee272efb7665d728c3c53f4ac9c9b0212acaf33ffe87 ]
+        [ "$(shasum -a 256 "$S262/nvmeqd_module.py" | awk '{print $1}')" = 5a3939eb2b949ba3767ae600b9bfbe7ce32e72aeb5e5addc50c6d672bbdf64c9 ]
     fi
 fi
 [ "$(shasum -a 256 "$ROOT/nwoas_scripts/layout-s231/guest_module.py" | awk '{print $1}')" = 07523c1d282a3d54bdcad1cbc9ea8d7b0a4fbf1d139387bb54b576c72b36dc03 ]

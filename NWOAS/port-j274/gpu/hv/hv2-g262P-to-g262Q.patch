@@ -1,0 +1,119 @@
+diff -ruN a/src/nvme.c b/src/nvme.c
+--- a/src/nvme.c	2026-11-19 01:03:19
++++ b/src/nvme.c	2026-11-19 01:03:19
+@@ -879,11 +879,15 @@
+ 
+ int nvme_qd_setup(u32 depth, bool want_irq)
+ {
+-    if (!nvme_initialized || nvme_qd.active || !depth || depth > NVME_QD_MAX_DEPTH)
++    if (!nvme_initialized)
+         return -1;
++    if (nvme_qd.active)
++        return -2;
++    if (!depth || depth > NVME_QD_MAX_DEPTH)
++        return -3;
+     u64 *prp = memalign(SZ_4K, NVME_QUEUE_SIZE * SZ_4K);
+     if (!prp)
+-        return -1;
++        return -4;
+     memset(prp, 0, NVME_QUEUE_SIZE * SZ_4K);
+ 
+     u32 irq = want_irq ? nvme_qd_find_irq() : 0;
+@@ -891,7 +895,7 @@
+         /* The I/O queue state is unknown now: refuse; the launcher must stop. */
+         printf("nvme: S262 I/O queue re-create with IRQ enable FAILED\n");
+         free(prp);
+-        return -1;
++        return -5;
+     }
+     memset(&nvme_qd, 0, sizeof(nvme_qd));
+     nvme_qd.prp = prp;
+diff -ruN a/src/nvme.h b/src/nvme.h
+--- a/src/nvme.h	2026-11-19 01:03:19
++++ b/src/nvme.h	2026-11-19 01:03:19
+@@ -43,7 +43,9 @@
+ };
+ extern volatile u32 nwoas_nvmeqd_irq_live; /* AIC line owned by the HV, 0 = none */
+ /* Pre-guest only, I/O idle.  want_irq re-creates I/O CQ 1 with interrupts enabled.
+- * Returns the AIC IRQ (>0), 0 = polling only, <0 = error (I/O queue may be unusable). */
++ * Returns the AIC IRQ (>0), 0 = polling only, or an error: -1 ANS not initialized,
++ * -2 engine already active, -3 depth out of range, -4 PRP memory allocation failed,
++ * -5 I/O queue re-create with IRQ enable failed (I/O queue may be unusable). */
+ int nvme_qd_setup(u32 depth, bool want_irq);
+ bool nvme_qd_active(void);
+ bool nvme_qd_faulted(void);
+diff -ruN a/src/nwoas_nvmeqd.inc b/src/nwoas_nvmeqd.inc
+--- a/src/nwoas_nvmeqd.inc	2026-11-19 01:03:19
++++ b/src/nwoas_nvmeqd.inc	2026-11-19 01:03:19
+@@ -30,7 +30,7 @@
+ #define NWOAS_QD_F_NOKICK 4u /* do not IPI the NVMe IRQ CPU after posting on another CPU */
+ #define NWOAS_QD_F_ALL    7u
+ #define NWOAS_QD_SIG      0x53323632ULL /* "S262" */
+-#define NWOAS_QD_VERSION  1ULL
++#define NWOAS_QD_VERSION  2ULL /* g262Q: refusal reason codes */
+ 
+ enum { NWOAS_QD_FREE = 0, NWOAS_QD_RW, NWOAS_QD_FLUSH, NWOAS_QD_CHAIN };
+ enum { NWOAS_QD_CTX_SQDB = 0, NWOAS_QD_CTX_CQDB, NWOAS_QD_CTX_TICK, NWOAS_QD_CTX_IRQ,
+@@ -512,22 +512,53 @@
+         nvme_qd_irq_unmask();
+ }
+ 
++/* g262Q: a refusal answers (NWOAS_QD_REFUSE_SIG << 32) | (sub << 8) | reason (bit 63 clear),
++ * so the launcher log names the cause (HV printf is not captured before the guest runs). */
++#define NWOAS_QD_REFUSE_SIG       0x51444e4fULL /* "ONDQ" */
++#define NWOAS_QD_REFUSE(r, sub)   ((NWOAS_QD_REFUSE_SIG << 32) | ((u64)(sub) << 8) | (r))
++enum {
++    NWOAS_QD_R_ACTIVE = 1,   /* engine already configured */
++    NWOAS_QD_R_DEPTH = 2,    /* depth > NVME_QD_MAX_DEPTH */
++    NWOAS_QD_R_FLAGS = 3,    /* unknown flag bits */
++    NWOAS_QD_R_ARMED = 4,    /* guest I/O queue already armed */
++    NWOAS_QD_R_FAULTED = 5,  /* fast path faulted */
++    NWOAS_QD_R_LINK = 6,     /* NS2 host round trip in progress */
++    NWOAS_QD_R_COMMANDS = 7, /* guest I/O already executed */
++    NWOAS_QD_R_QUEUES = 8,   /* guest I/O SQ/CQ already registered */
++    NWOAS_QD_R_ENABLED = 9,  /* guest enabled the emulated controller (CSTS.RDY) */
++    NWOAS_QD_R_SETUP = 10,   /* nvme_qd_setup() failed, sub = its negative code */
++};
++
+ static u64 nwoas_qd_config(u64 depth, u64 flags)
+ {
+     if (nwoas_qd.active)
+-        return 0;
++        return NWOAS_QD_REFUSE(NWOAS_QD_R_ACTIVE, 0);
+     if (!depth)
+         return 1; /* explicit "off": legacy synchronous path */
+-    if (depth > NVME_QD_MAX_DEPTH || (flags & ~(u64)NWOAS_QD_F_ALL))
+-        return 0;
+-    /* Before UEFI or Windows touched the controller, I/O idle. */
+-    if (nwoas_nvme_fp.armed || nwoas_nvme_fp.faulted || nwoas_nvme_fp.link_busy ||
+-        nwoas_nvme_fp.lifecycle_epoch || nwoas_nvme_fp.commands ||
+-        (s229_enabled && (s229_front.control.csts & 1)))
+-        return 0;
++    if (depth > NVME_QD_MAX_DEPTH)
++        return NWOAS_QD_REFUSE(NWOAS_QD_R_DEPTH, 0);
++    if (flags & ~(u64)NWOAS_QD_F_ALL)
++        return NWOAS_QD_REFUSE(NWOAS_QD_R_FLAGS, 0);
++    /* Before UEFI or Windows touched the controller, I/O idle.  lifecycle_epoch is NOT a
++     * test for this: s229_enable() -> nwoas_frontend_init() -> control reset -> reset_io ->
++     * s229_control_local(0) already bumps it once before the guest exists (g262P refused
++     * every configuration for that reason, hardware 2026-11-19). */
++    if (nwoas_nvme_fp.armed)
++        return NWOAS_QD_REFUSE(NWOAS_QD_R_ARMED, 0);
++    if (nwoas_nvme_fp.faulted)
++        return NWOAS_QD_REFUSE(NWOAS_QD_R_FAULTED, 0);
++    if (nwoas_nvme_fp.link_busy)
++        return NWOAS_QD_REFUSE(NWOAS_QD_R_LINK, 0);
++    if (nwoas_nvme_fp.commands)
++        return NWOAS_QD_REFUSE(NWOAS_QD_R_COMMANDS, 0);
++    if (nwoas_nvme_fp.sq_base || nwoas_nvme_fp.cq_base || nwoas_nvme_fp.sq_size ||
++        nwoas_nvme_fp.cq_size)
++        return NWOAS_QD_REFUSE(NWOAS_QD_R_QUEUES, 0);
++    if (s229_enabled && (s229_front.control.csts & 1))
++        return NWOAS_QD_REFUSE(NWOAS_QD_R_ENABLED, 0);
+     int irq = nvme_qd_setup(depth, flags & NWOAS_QD_F_IRQ);
+     if (irq < 0)
+-        return 0;
++        return NWOAS_QD_REFUSE(NWOAS_QD_R_SETUP, (u8)-irq);
+     if (!irq)
+         flags &= ~(u64)NWOAS_QD_F_IRQ;
+     memset(&nwoas_qd, 0, sizeof(nwoas_qd));

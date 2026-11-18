@@ -20,9 +20,7 @@ EOF
 mkdir -p "$WORK"
 rsync -a --exclude build "$ROOT/m1n1-gpu-hv2/" "$WORK/src-g262P/"
 ( cd "$WORK/src-g262P" && patch -p1 -s --no-backup-if-mismatch < "$HERE/../hv2-g260O-to-g262P.patch" )
-clang -std=gnu11 -O1 -Wall -Wno-unused-function -Wno-format -I"$WORK/src-g262P/src" \
-    "$HERE/hosttest/test_nvmeqd.c" -o "$WORK/test_nvmeqd"
-"$WORK/test_nvmeqd"
+# hosttest/test_nvmeqd.c now follows g262Q (refusal codes): run build-g262Q.sh for the host test.
 bash "$HERE/buildvar.sh" "$WORK/src-g262P" "$WORK/build-g262P" g262P NWOAS_AGX=1
 BIN="$WORK/build-g262P/build/m1n1.bin"
 [ "$(stat -f %z "$BIN")" = "$EXPECT_SIZE" ] && [ "$(shasum -a 256 "$BIN" | awk '{print $1}')" = "$EXPECT_SHA" ] \

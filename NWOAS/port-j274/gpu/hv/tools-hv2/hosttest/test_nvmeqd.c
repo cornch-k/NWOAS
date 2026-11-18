@@ -141,8 +141,11 @@ static struct {
 } eng;
 static bool chain_flushed[65536];
 
+static int fake_setup_rc;
 int nvme_qd_setup(u32 depth, bool want_irq)
 {
+    if (fake_setup_rc)
+        return fake_setup_rc;
     memset(&eng, 0, sizeof(eng));
     eng.active = true;
     eng.depth = depth;
@@ -264,7 +267,8 @@ static void guest_arm(u16 sq_size, u16 cq_size, u32 depth, u32 flags, bool cache
     memset(guest_mem, 0, sizeof(guest_mem));
     u64 r = nwoas_qd_config(depth, flags);
     CHECK(r >> 63, "config refused depth=%u flags=%u", depth, flags);
-    CHECK(nwoas_qd_config(depth, flags) == 0, "second config accepted");
+    CHECK(nwoas_qd_config(depth, flags) == ((NWOAS_QD_REFUSE_SIG << 32) | NWOAS_QD_R_ACTIVE),
+          "second config not refused as ACTIVE");
     nwoas_nvme_fp.armed = true;
     nwoas_nvme_fp.sq_base = SQ_IPA;
     nwoas_nvme_fp.cq_base = CQ_IPA;
@@ -511,18 +515,47 @@ static void test_strict_fua(void)
 
 static void test_config_rules(void)
 {
+#define REF(r, sub) ((NWOAS_QD_REFUSE_SIG << 32) | ((u64)(sub) << 8) | (r))
     memset(&nwoas_nvme_fp, 0, sizeof(nwoas_nvme_fp));
     memset(&nwoas_qd, 0, sizeof(nwoas_qd));
     CHECK(nwoas_qd_config(0, 0) == 1, "depth 0 must be the explicit off answer");
-    CHECK(nwoas_qd_config(62, 0) == 0, "depth 62 accepted");
-    CHECK(nwoas_qd_config(8, 8) == 0, "unknown flag accepted");
+    CHECK(nwoas_qd_config(62, 0) == REF(NWOAS_QD_R_DEPTH, 0), "depth 62");
+    CHECK(nwoas_qd_config(8, 8) == REF(NWOAS_QD_R_FLAGS, 0), "unknown flag");
+    nwoas_nvme_fp.armed = true;
+    CHECK(nwoas_qd_config(8, 0) == REF(NWOAS_QD_R_ARMED, 0), "armed");
+    nwoas_nvme_fp.armed = false;
+    nwoas_nvme_fp.faulted = true;
+    CHECK(nwoas_qd_config(8, 0) == REF(NWOAS_QD_R_FAULTED, 0), "faulted");
+    nwoas_nvme_fp.faulted = false;
+    nwoas_nvme_fp.link_busy = true;
+    CHECK(nwoas_qd_config(8, 0) == REF(NWOAS_QD_R_LINK, 0), "link busy");
+    nwoas_nvme_fp.link_busy = false;
+    nwoas_nvme_fp.commands = 3;
+    CHECK(nwoas_qd_config(8, 0) == REF(NWOAS_QD_R_COMMANDS, 0), "commands");
+    nwoas_nvme_fp.commands = 0;
+    nwoas_nvme_fp.sq_size = 64;
+    CHECK(nwoas_qd_config(8, 0) == REF(NWOAS_QD_R_QUEUES, 0), "queues registered");
+    nwoas_nvme_fp.sq_size = 0;
+    s229_enabled = true;
+    s229_front.control.csts = 1;
+    CHECK(nwoas_qd_config(8, 0) == REF(NWOAS_QD_R_ENABLED, 0), "controller enabled");
+    s229_front.control.csts = 0;
+    fake_setup_rc = -5;
+    CHECK(nwoas_qd_config(8, 1) == REF(NWOAS_QD_R_SETUP, 5), "setup failure code");
+    fake_setup_rc = 0;
+    CHECK(!nwoas_qd.active, "refusals left the engine active");
+    /* The state right after S230 module.py (action 16): s229_enable -> nwoas_frontend_init ->
+     * control reset -> reset_io -> s229_control_local(0) bumped lifecycle_epoch to 1.
+     * g262P refused exactly this state on hardware (2026-11-19); it must be accepted. */
     nwoas_nvme_fp.lifecycle_epoch = 1;
-    CHECK(nwoas_qd_config(8, 0) == 0, "config accepted after the guest armed once");
-    nwoas_nvme_fp.lifecycle_epoch = 0;
+    nwoas_nvme_fp.cq_phase = 1;
     u64 r = nwoas_qd_config(8, NWOAS_QD_F_IRQ);
-    CHECK(r == ((1ULL << 63) | (590ULL << 32) | (8 << 8) | 1), "config answer %llx",
+    CHECK(r == ((1ULL << 63) | (590ULL << 32) | (8 << 8) | 1), "config after S229 init: %llx",
           (unsigned long long)r);
+    CHECK(nwoas_qd_config(8, 1) == REF(NWOAS_QD_R_ACTIVE, 0), "second config");
+    s229_enabled = false;
     printf("%-28s ok\n", "config rules");
+#undef REF
 }
 
 int main(int argc, char **argv)

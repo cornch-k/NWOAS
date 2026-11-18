@@ -1,5 +1,6 @@
 # NWOAS S262 launcher module (run_guest.py -m, LAST: after power-s260/power_module.py).
-# Only for the g262P HV (port-j274/gpu/hv/out-hv2/m1n1-g262P-agx-hv2-nvmeqd.bin).
+# Only for the g262Q HV (port-j274/gpu/hv/out-hv2/m1n1-g262Q-agx-hv2-nvmeqd.bin).  g262P refused every
+# configuration (lifecycle_epoch is already 1 after S230 module.py's action 16), see README.
 # HARDWARE-UNVERIFIED.  Not run by the agent that wrote it.
 #
 # Environment (unset = off = the g260O synchronous NVMe path, one ANS command at a time):
@@ -36,8 +37,15 @@ QD_SIZE = 8 * len(QD_FIELDS)
 F_IRQ, F_STRICT, F_NOKICK = 1, 2, 4
 
 _qd_sig = p.nwoas_nvme_fastpath(26)
-assert _qd_sig >> 32 == QD_SIG and (_qd_sig >> 24) & 0xff == 1, \
-    'S262: this HV has no concurrent NVMe path (action 26 = %#x); use the g262P image' % _qd_sig
+assert _qd_sig >> 32 == QD_SIG and (_qd_sig >> 24) & 0xff == 2, \
+    'S262: this HV has no usable concurrent NVMe path (action 26 = %#x); use the g262Q image' % _qd_sig
+QD_REFUSE_SIG = 0x51444e4f
+QD_REFUSE = {1: 'engine already active', 2: 'depth out of range', 3: 'unknown flag bits',
+             4: 'guest I/O queue already armed', 5: 'fast path faulted', 6: 'NS2 host round trip busy',
+             7: 'guest I/O already executed', 8: 'guest I/O SQ/CQ already registered',
+             9: 'guest enabled the controller', 10: 'ANS engine setup failed'}
+QD_SETUP = {1: 'ANS not initialized', 2: 'engine already active', 3: 'depth out of range',
+            4: 'PRP memory allocation failed', 5: 'I/O queue re-create with IRQ enable failed'}
 
 
 def _qd_env01(name, default):
@@ -56,7 +64,12 @@ _qd_flags = ((F_IRQ if _qd_env01('NWOAS_NVME_QD_IRQ', True) else 0) |
 
 if _qd_depth:
     _qd_ret = p.nwoas_nvme_fastpath(24, _qd_depth, _qd_flags)
-    assert _qd_ret >> 63, 'S262: HV refused NVMe QD=%d flags=%#x (ret=%#x)' % (_qd_depth, _qd_flags, _qd_ret)
+    if not _qd_ret >> 63:
+        _r, _sub = _qd_ret & 0xff, (_qd_ret >> 8) & 0xff
+        _why = (QD_REFUSE.get(_r, '?') + ('' if _r != 10 else ': ' + QD_SETUP.get(_sub, '?'))
+                if _qd_ret >> 32 == QD_REFUSE_SIG else 'unknown answer')
+        raise AssertionError('S262: HV refused NVMe QD=%d flags=%#x (ret=%#x reason=%d sub=%d: %s)' %
+                             (_qd_depth, _qd_flags, _qd_ret, _r, _sub, _why))
     _qd_irq = (_qd_ret >> 32) & 0x7fffffff
     _qd_acc = _qd_ret & 0xff
     assert (_qd_ret >> 8) & 0xff == _qd_depth, _qd_ret
