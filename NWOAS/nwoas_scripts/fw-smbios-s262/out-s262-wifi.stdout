@@ -1,0 +1,152 @@
+{
+  "variant": "wifi",
+  "tree": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-smbios-s262w-mu",
+  "workspace_path_used": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-smbios-s262w-mu",
+  "fd_sha256": "f3441de94e8cc922d090527bfae6757d02269c534aab42e905d9fe2ed848295b",
+  "fd_bytes": 30965760,
+  "s216_layout_payload_sha256": "21c7a6b5ab0c50a7d1ed3f6e31c68fdfaae92cb95c09ab76eb615f0eab0368ab",
+  "payload": "fw-smbios-s262/out/s262-wifi/m1n1-payload-s262-wifi.bin",
+  "payload_sha256": "b1364aff375227462cddfea994d32a4aa4d5a4ea63d48f3a2ece482cd3c46b00",
+  "payload_bytes": 33669120,
+  "window_ipa": "0x340000000",
+  "window_bytes": "0x40000",
+  "reference": {
+    "s247_payload_sha256": "fb2011f96aea4ca30c69d5bd706a379a04010dc7895366b5c86e191444ee641c",
+    "s247_fd_sha256": "ebd3bb723e9ade72e7096eeadef85889a206672ed13c449664b805c6a086bd6a",
+    "s247_agx_ssdt_aml_sha256": "15347541e59d46a36cb2e6b1953b55f52e0b01d7baa6484b8795add06fcf240a",
+    "s216_fd_sha256": "b008dcfc93059ee6f623dc7f8d96dd69276970c14931be68f8e7dce256e537cc",
+    "s216_payload_sha256": "0ae1cb75bfc3cbc2b7b15e6408c489fe5badd3d12d53fc4353a85b6b5ad3d197",
+    "s223_payload_sha256": "2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7",
+    "s259_payload_sha256": "fbc4406b0103cf028be5be2eb8ec60844af8952d9c845405338d48cb64e50497",
+    "s261_payload_sha256": "26428b579ba117ae3b26c8d914461cc125b07140de1c1bf3393ff1a62fd0ab92"
+  },
+  "changed_sources": {
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c": {
+      "before_sha256": "c133ec4da90e30d31759d7b7881c2ab39c9f3055582c7a54cf24a9bf8c28003f",
+      "after_sha256": "02e220b4f69d01fc22b656b88bd9e8883f51557c49c957abda9ea49fc2d4741c"
+    },
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.inf": {
+      "before_sha256": "d638b47bd4f5b30e2df56f04ccbc503d4a78ae6106a6f9887d615f1349112861",
+      "after_sha256": "8115fe09b094e81460a483d7887c64e7a16a9c6e026326b0755732a8ce9de476"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/J274AppleAgxAbiAdmission.asl.inc": {
+      "before_sha256": null,
+      "after_sha256": "574e7dc97f3d22fec1348bc2d9f84bfcf5a61955979b55ebf8a7d6b10b18db04"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/J274AppleAgxAbiAdmissionSsdt.asl": {
+      "before_sha256": null,
+      "after_sha256": "a3ab7f406ca437f0380a1fe91fcac0e967b3bdaee6bbcd53e167b9b6350dcc5f"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/NwoasAudioJ274.asl.inc": {
+      "before_sha256": null,
+      "after_sha256": "bb55894116caadde800a675b3c7d4645d50503b7c67134d902c21806d30eff02"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/NwoasAudioJ274Ssdt.asl": {
+      "before_sha256": null,
+      "after_sha256": "830227167dea1deb66821f884d2abce5261506dc734b017d81494cc2917684c9"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/NwoasWifiJ274.asl.inc": {
+      "before_sha256": null,
+      "after_sha256": "8e6de65d1d67d9675c587c04fb46c768f0da7ff618d5ab3124233a1b2867aa0d"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/NwoasWifiJ274Ssdt.asl": {
+      "before_sha256": null,
+      "after_sha256": "fc47baebb98610edf2358dedf0c0f1557a89d495349d58a971ecdbfab103c436"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/IORT.aslc": {
+      "before_sha256": "e21f55237244356a4b762254239cf82381dfc4adebf15074f512b8e05ca7ea64",
+      "after_sha256": "36fe664afdc450a8ec8f410c5bbbf1692748e5d20cf736d95f6cf2927ed306b4"
+    },
+    "Silicon/Apple/AppleSiliconPkg/Drivers/SmbiosInfoDxe/SmbiosInfoDxe.c": {
+      "before_sha256": "54a7b2676575d80347721c186eba3767062208d2b403d2735c33e10b3390ef68",
+      "after_sha256": "c4db830b429804e2b5a113fb5c2be86442ec82ac97233dc1bba49d765031a37b"
+    },
+    "Silicon/Apple/AppleSiliconPkg/Drivers/SmbiosInfoDxe/SmbiosInfoDxe.inf": {
+      "before_sha256": "7f0ec8ec59dc04f76ce810922883086d5eea89f6724e57df1e3f1705bb7ac43a",
+      "after_sha256": "e46ecb04c0384a81773b6e5126833bbedb0f9d976879d720d9807f8c4797f1e3"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/DeviceAcpiTables.inf": {
+      "before_sha256": "47960db983bb0b823857726d53a274c6146cdc51ed7306fd0017ac1bad31c0e5",
+      "after_sha256": "09906f1844d1c472dd98c725fe751e48714d4d4e4b6b9a3556d7cf112725c750"
+    },
+    "Platform/MacMini2020Pkg/MacMini2020.dsc": {
+      "before_sha256": "0b63d3fb598d4f23a5a69449f16aea9a976ce19d6d7f27354437bdf47a272902",
+      "after_sha256": "a6339e4d818a8c1167b0711b8afae767ea422dba50367f66fa714b261f7fe588"
+    }
+  },
+  "fd_identical_to_s216": false,
+  "payload_identical_to_s223": false,
+  "ssdt_aml": [
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-smbios-s262w-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/MacMini2020Pkg/AcpiTables/DeviceAcpiTables/OUTPUT/J274AppleAgxAbiAdmissionSsdt.aml",
+      "sha256": "15347541e59d46a36cb2e6b1953b55f52e0b01d7baa6484b8795add06fcf240a",
+      "bytes": 1069,
+      "has_APPL0002": true,
+      "has_J274ABI": true
+    }
+  ],
+  "agx_ssdt_identical_to_s247": true,
+  "audio_ssdt_aml": [
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-smbios-s262w-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/MacMini2020Pkg/AcpiTables/DeviceAcpiTables/OUTPUT/NwoasAudioJ274Ssdt.aml",
+      "sha256": "6621c8591f95f91bcb3ad8ef88e9f99d93d349870d030a4bf651b7a4f646ae9d",
+      "bytes": 322,
+      "has_NWAU0001": true,
+      "has_SPK0": true,
+      "has_window": true
+    }
+  ],
+  "s247_string_in_build": [],
+  "audio_ssdt_identical_to_s256": true,
+  "wifi_ssdt_aml": [
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-smbios-s262w-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/MacMini2020Pkg/AcpiTables/DeviceAcpiTables/OUTPUT/NwoasWifiJ274Ssdt.aml",
+      "sha256": "bcdcbb03b167eac4a845a8efcb4ba05a0a6f9caa46732b76fd63364221643254",
+      "bytes": 701,
+      "has_NWOA4378": true,
+      "has_WLN0": true,
+      "has_NWC0": true,
+      "has_ctrl_ipa": true,
+      "has_magic": true
+    }
+  ],
+  "iort_build_files": [
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-smbios-s262w-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/MacMini2020Pkg/AcpiTables/DeviceAcpiTables/OUTPUT/IORT.dll",
+      "has_WLN0_name": true,
+      "has_XHC0_name": true
+    },
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-smbios-s262w-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/MacMini2020Pkg/AcpiTables/DeviceAcpiTables/OUTPUT/IORT.acpi",
+      "has_WLN0_name": true,
+      "has_XHC0_name": true
+    },
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-smbios-s262w-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/MacMini2020Pkg/AcpiTables/DeviceAcpiTables/OUTPUT/IORT.obj",
+      "has_WLN0_name": true,
+      "has_XHC0_name": true
+    }
+  ],
+  "s259_string_in_build": [],
+  "wifi_ssdt_identical_to_s259": true,
+  "bt_ssdt_aml": [],
+  "bt_ssdt_identical_to_s261": true,
+  "smbios_efi": [
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-smbios-s262w-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/SmBiosTableDxe.efi",
+      "sha256": "a95bd9df87ebb4ac5005e2bc41b45f0559cc6adb953012b63900b7d692bbcdd2",
+      "has_S262_string": true
+    },
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-smbios-s262w-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/AppleSiliconPkg/Drivers/SmbiosInfoDxe/SmbiosInfoDxe/OUTPUT/SmBiosTableDxe.efi",
+      "sha256": "a95bd9df87ebb4ac5005e2bc41b45f0559cc6adb953012b63900b7d692bbcdd2",
+      "has_S262_string": true
+    },
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-smbios-s262w-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/AppleSiliconPkg/Drivers/SmbiosInfoDxe/SmbiosInfoDxe/DEBUG/SmBiosTableDxe.efi",
+      "sha256": "a95bd9df87ebb4ac5005e2bc41b45f0559cc6adb953012b63900b7d692bbcdd2",
+      "has_S262_string": true
+    }
+  ],
+  "checks_pass": true
+}

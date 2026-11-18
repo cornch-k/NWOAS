@@ -1,0 +1,47 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "bt4378b1-atlantisb-m.bin",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/bt/bcm4378-bthx/out/20261118-1849-s261g/package/bt4378b1-atlantisb-m.bin",
+   "bytes": 358605,
+   "sha256": "11d6aa02a247de70933abc1fce86e79521dbd32a756f46f375d558e1e32c07a4"
+  },
+  {
+   "name": "bt4378b1-atlantisb-m.ptb",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/bt/bcm4378-bthx/out/20261118-1849-s261g/package/bt4378b1-atlantisb-m.ptb",
+   "bytes": 786,
+   "sha256": "75a2726d210d819d5f34e1ca7042ebcd23e2243337ebb8a1eabb97c28839e0a1"
+  },
+  {
+   "name": "bt4378b1-atlantisb-u.bin",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/bt/bcm4378-bthx/out/20261118-1849-s261g/package/bt4378b1-atlantisb-u.bin",
+   "bytes": 358605,
+   "sha256": "dc046e4df710f821dc15a713adbea3239f3efa4a38b8fc5be729c34c298a7b81"
+  },
+  {
+   "name": "bt4378b1-atlantisb-u.ptb",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/bt/bcm4378-bthx/out/20261118-1849-s261g/package/bt4378b1-atlantisb-u.ptb",
+   "bytes": 786,
+   "sha256": "75a2726d210d819d5f34e1ca7042ebcd23e2243337ebb8a1eabb97c28839e0a1"
+  },
+  {
+   "name": "nwbt4378.cat",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/bt/bcm4378-bthx/out/20261118-1849-s261g/package/nwbt4378.cat",
+   "bytes": 4333,
+   "sha256": "352a45b76bf04c7ce58864cec0024653b1992fc4c236d299ffdeaabcf266817a"
+  },
+  {
+   "name": "nwbt4378.inf",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/bt/bcm4378-bthx/out/20261118-1849-s261g/package/nwbt4378.inf",
+   "bytes": 2195,
+   "sha256": "2964f295e25076a7fcc0be07ae732c18918a82f6078e5f84c340ce0e7ba1b844"
+  },
+  {
+   "name": "nwbt4378.sys",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/bt/bcm4378-bthx/out/20261118-1849-s261g/package/nwbt4378.sys",
+   "bytes": 57240,
+   "sha256": "5f7dbff0fb7b32a1c0d64bdbce2a2859a4cbfe53fca6d028711cedb854d29a7b"
+  }
+ ]
+}

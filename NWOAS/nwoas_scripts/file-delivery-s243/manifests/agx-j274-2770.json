@@ -1,0 +1,35 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "AppleAgxRenderAdmission.sys",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261119-0021-p34/package/AppleAgxRenderAdmission.sys",
+   "bytes": 651496,
+   "sha256": "928018a1b1d39e7f8b15de2317bd9066a939448cc406f3656e5818120181b4ac"
+  },
+  {
+   "name": "AppleAgxRenderAdmissionUmd.dll",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261119-0021-p34/package/AppleAgxRenderAdmissionUmd.dll",
+   "bytes": 13522432,
+   "sha256": "a8cf1eac5dc965af050fc347600a5bab62b479a77680af002ec1716e87de987e"
+  },
+  {
+   "name": "AppleAgxRenderAdmission.arm64only.inf",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261119-0021-p34/package/AppleAgxRenderAdmission.arm64only.inf",
+   "bytes": 3613,
+   "sha256": "01cb7cf08ee6af544617b8853300d65cfbe83e52d4da33af7eb0d3317410803d"
+  },
+  {
+   "name": "appleagxrenderadmission.cat",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261119-0021-p34/package/appleagxrenderadmission.cat",
+   "bytes": 3254,
+   "sha256": "e25bd57a713941af9f77e8e869dcd5d1f5d7312e0cb300cfc3db61ec2e480c5c"
+  },
+  {
+   "name": "edgelog2.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/ps/edgelog2.ps1",
+   "bytes": 3155,
+   "sha256": "c23a5c16fb911f4406a9edd9ebd65af4d2e3aaa2bbcb00bc31f8368192ffb93c"
+  }
+ ]
+}

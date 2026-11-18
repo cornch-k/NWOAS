@@ -1,0 +1,11 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "NWPWR.EXE",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/power-s260/NWPWR.EXE",
+   "bytes": 35328,
+   "sha256": "5ab2bee4b749311d4c2c343ee956858828d30d46b59dbb0d03897bd23528b8cb"
+  }
+ ]
+}

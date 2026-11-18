@@ -38,6 +38,7 @@
 #define JOB_LINK_LOST           0x0100
 #define JOB_DIAG                0x0200
 #define JOB_TASK_ACK            0x0400
+#define JOB_ROAM_STAY           0x0800   // WDI_TASK_ROAM to the current AP: complete it without roaming
 
 typedef struct _NWOA_DMABUF {
     WDFCOMMONBUFFER Cb;
@@ -66,6 +67,40 @@ typedef struct _NWOA_EVREC {
     ULONG Type, Status, Reason, Flags, Ms;
 } NWOA_EVREC;
 #define NWOA_EVLOG 32
+
+// WDI command record (no SSID/BSSID/key values).  Info for WDI_TASK_CONNECT / WDI_TASK_ROAM:
+//   bit0 RoamRequest, bits4-7 RoamTrigger, bits8-15 RoamNeededReason, bit16 first preferred BSSID is
+//   the current BSSID, bit17 first preferred entry is 5 GHz, bit18 it is in the scan cache,
+//   bits24-31 number of preferred entries.  WDI_TASK_DISCONNECT: 802.11 reason.  Radio: software state.
+typedef struct _NWOA_CMDREC {
+    ULONG  Ms;
+    USHORT Id;
+    UCHAR  Conn;                // driver thought it was connected when the command arrived
+    UCHAR  Pad;
+    ULONG  Status;              // M3 status (STATUS_PENDING for requests completed later)
+    ULONG  Info;
+} NWOA_CMDREC;
+#define NWOA_CMDLOG  32
+#define NWOA_CMDHIST 40
+#define NWOA_CMDSNAP 10
+
+// who sent NB_C_DISASSOC (NwoaHostDisassoc Src)
+#define DIS_CONNECT     1       // WDI_TASK_CONNECT while connected / joining
+#define DIS_ROAM        2       // WDI_TASK_ROAM to another BSS
+#define DIS_DISCONNECT  3       // WDI_TASK_DISCONNECT
+#define DIS_RESET       4       // WDI_TASK_DOT11_RESET
+#define DIS_RADIO_OFF   5       // WDI_TASK_SET_RADIO_STATE off
+#define DIS_CONN_FAIL   6       // failed connect clean-up
+#define DIS_SHUTDOWN    7       // D0 exit / release
+
+typedef struct _NWOA_LOSSREC {
+    ULONG  Ms;
+    USHORT Type, Reason;        // firmware event type / reason
+    UCHAR  WasConn;             // Connected when the event arrived (1 = not caused by our disassoc)
+    UCHAR  Pad;
+    USHORT SinceHostMs;         // ms since our last NB_C_DISASSOC (65535 = none / longer)
+    LONG   Rssi;                // last polled RSSI before the event
+} NWOA_LOSSREC;
 
 typedef struct _NWOA_RXITEM {
     USHORT Local;               // 1 = frame in EvRxBuf (EAPOL taken out of an E_EAPOL_MSG event)
@@ -123,7 +158,8 @@ typedef struct _NWOA_CONNECT {
 
 typedef struct _NWOA_CONFIG {
     WCHAR  FirmwareDir[160];
-    ULONG  PollIntervalMs;      // ring poll timer (also with an interrupt, as a safety net)
+    ULONG  PollIntervalMs;      // poll interval while traffic flows (ms, default 2)
+    ULONG  PollIdleMs;          // poll interval when idle for 200 ms (default 50; 200 with a verified IRQ)
     ULONG  ScanPassive;         // 1 = passive escan (receive only)
     ULONG  Mpc;                 // firmware "mpc" (S257 used 0)
     ULONG  PowerSave;           // 0 = CAM, 2 = fast PS
@@ -136,11 +172,15 @@ typedef struct _NWOA_CONFIG {
                                 //         3 + CR4 halt, 4 + chip reset/TCM/OTP, 5 + firmware up (no rings)
     ULONG  SettleMs;            // delay before the first backplane access (0 = none)
     ULONG  AccessDelayUs;       // stall before every backplane access (S257 ran through a slow UART proxy)
+    ULONG  RxProtectedBit;      // 802.11 RX: 1 = Protected bit on EAPOL once the PTK is set (default), 2 = all frames, 0 = never
     ULONG  LinkUpAtStart;       // 1 = report media connected right after NetAdapterStart (MS sample style)
     ULONG  VerifyFirmware;      // TCM read-back after the upload: 0 none, 1 every 256th word + first/last 4 KiB
                                 //  (default; each BAR access may be a hypervisor trap), 2 every word
     ULONG  PostWriteRead;       // 1 = read the register back after every backplane write (write completes
                                 //     before the next access / window change)
+    ULONG  FwRoamOff;           // firmware "roam_off": 1 = the firmware does not roam by itself (default; WDI roams from the host)
+    ULONG  LinkQualityUpdates;  // 1 = poll RSSI every 2 s and send LINK_STATE_CHANGE on a 5 point change (default)
+    ULONG  RoamStay;            // 1 = WDI_TASK_ROAM to the current AP completes without roaming (default)
 } NWOA_CONFIG;
 
 typedef struct _NWOA_DEVICE {
@@ -186,6 +226,8 @@ typedef struct _NWOA_DEVICE {
     PUCHAR          Clm;  ULONG ClmLen;
     PUCHAR          Txcap; ULONG TxcapLen;
     PUCHAR          Board; ULONG BoardLen;
+    PUCHAR          FwImg; ULONG FwImgLen;      // cached at first load, freed in ReleaseHardware
+    PUCHAR          NvTxt; ULONG NvTxtLen;
     nb_board        BoardInfo;
 
     // ---- msgbuf (msgbuf.cpp)
@@ -237,6 +279,12 @@ typedef struct _NWOA_DEVICE {
     WDFINTERRUPT    Interrupt;
     WDFTIMER        PollTimer;
     BOOLEAN         IntrEnabled;
+    volatile LONG   PollRunning;
+    volatile LONG   PollIdle;           // 1 while the timer runs at the idle interval
+    volatile LONG64 LastActivity;       // KeQueryInterruptTime of the last message / TX
+    ULONG64         RingsUpTime;
+    volatile LONG   IrqMode;            // 0 poll only, 1 irq on trial, 2 irq verified, 3 no irq seen -> poll, 4 storm -> poll
+    volatile LONG   IsrUnclaimedRow;
 
     // ---- events / state (events.cpp)
     KSPIN_LOCK      StateLock;
@@ -259,6 +307,12 @@ typedef struct _NWOA_DEVICE {
     ULONG           EvRxBusy;           // bit per EvRxBuf slot (under RingLock)
     ULONG           EapolEvFmt, EapolEvLen; // format/length of the last EAPOL event (no content)
     volatile LONG   RxNotifyPending;
+    BOOLEAN         PtkInstalled;       // pairwise key in the firmware: RX frames are decrypted ones
+    LONG            EapolRxMsg[8], EapolTxMsg[8];   // [0] other, [1..4] 4-way 1..4, [5] G1, [6] G2
+    struct { ULONG Crc, Len; ULONG64 T; } EapolRecent[4];
+    ULONG           EapolRecentNext;
+    volatile LONG   CntEapolDup;
+    volatile LONG   CntTxDropConv, CntTxDropSize, CntTxDropNotReady, CntTxDropOther;
     BOOLEAN         LinkUpReported;
     UCHAR           Mac[6];
     BOOLEAN         MacValid;
@@ -282,6 +336,22 @@ typedef struct _NWOA_DEVICE {
     NWOA_KEY        Keys[NWOA_MAX_KEYS];
     ULONG           NumKeys;
     BOOLEAN         FirstD0Done;
+    BOOLEAN         ConnIsRoam;         // the connect job serves a WDI_TASK_ROAM
+
+    // ---- disconnect evidence (diag.cpp writes it; under StateLock)
+    NWOA_CMDREC     CmdLog[NWOA_CMDLOG];
+    ULONG           CmdLogNext;
+    struct { USHORT Id; LONG Count; } CmdHist[NWOA_CMDHIST];
+    NWOA_CMDREC     CmdSnap[NWOA_CMDSNAP];  // last commands before the most recent link loss / our disassoc
+    ULONG           CmdSnapN, CmdSnapMs, CmdSnapWhy; // why: 100 + firmware event type, or DIS_* source
+    struct { ULONG Ms, Src; } HostDis[8];
+    ULONG           HostDisNext;
+    ULONG64         LastHostDisassoc;   // KeQueryInterruptTime, 0 = never
+    NWOA_LOSSREC    Loss[8];
+    ULONG           LossNext;
+    LONG            RssiLast, RssiMin, RssiMax;
+    ULONG           LqReported;
+    volatile LONG   CntLinkStateInd, CntRoamStay, CntRoamMove, CntConnWhileConn, CntD0Entry, CntD0Exit;
 
     // ---- statistics
     volatile LONG   CntIsr, CntPoll, CntMsgs, CntEvents, CntRx, CntRxDrop, CntTx, CntTxStatus,
@@ -323,6 +393,9 @@ void NwoaDiagDword(PNWOA_DEVICE Dev, PCWSTR Name, ULONG Value);
 void NwoaDiagCounters(PNWOA_DEVICE Dev);
 void NwoaDiagConsole(PNWOA_DEVICE Dev);
 void NwoaDiagEvents(PNWOA_DEVICE Dev);
+void NwoaDiagDisconnect(PNWOA_DEVICE Dev);
+void NwoaHostDisassoc(PNWOA_DEVICE Dev, ULONG Src);    // NB_C_DISASSOC + who sent it
+void NwoaCmdSnapshot(PNWOA_DEVICE Dev, ULONG Why);   // caller holds StateLock
 
 // ---- hw.cpp
 NTSTATUS NwoaMapResources(PNWOA_DEVICE Dev, WDFCMRESLIST Raw, WDFCMRESLIST Trans);
@@ -378,6 +451,7 @@ NTSTATUS NwoaTxFrame(PNWOA_DEVICE Dev, const UCHAR* Eth, ULONG Len);   // copy, 
 void     NwoaRxRepost(PNWOA_DEVICE Dev, USHORT Slot);                   // caller holds RingLock
 void     NwoaRxFlushHeld(PNWOA_DEVICE Dev);
 void     NwoaRxItemDone(PNWOA_DEVICE Dev, const NWOA_RXITEM* It);   // caller holds RingLock
+BOOLEAN  NwoaEapolRxDup(PNWOA_DEVICE Dev, const UCHAR* Eth, ULONG Len); // caller holds RingLock
 NTSTATUS NwoaInterruptCreate(PNWOA_DEVICE Dev);
 void     NwoaIntrEnable(PNWOA_DEVICE Dev, BOOLEAN On);
 EVT_WDF_TIMER NwoaEvtPollTimer;
@@ -394,6 +468,7 @@ EVT_WIFI_DEVICE_CREATE_WIFIDIRECTDEVICE NwoaEvtWifiCreateWifiDirect;
 EVT_WDF_WORKITEM                        NwoaEvtWork;
 NTSTATUS NwoaWifiSetCapabilities(PNWOA_DEVICE Dev);
 NTSTATUS NwoaFirmwareConfigure(PNWOA_DEVICE Dev);
+void     NwoaWifiPowerDown(PNWOA_DEVICE Dev);
 void     NwoaQueueJob(PNWOA_DEVICE Dev, LONG Job);
 
 // ---- datapath.cpp

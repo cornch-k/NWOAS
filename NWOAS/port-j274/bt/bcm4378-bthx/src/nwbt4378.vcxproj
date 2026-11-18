@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- nwbt4378.sys: KMDF 1.33 Bluetooth extensible transport (BthX) bus driver, Release|ARM64 only.
+     Built in the Parallels VM by build/build-bt.ps1 (port-j274/bt/bcm4378-bthx/build-bt.sh). -->
+<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|ARM64">
+      <Configuration>Release</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{5F694378-B7A1-4C3E-9D0B-5F6943785F69}</ProjectGuid>
+    <TemplateGuid>{1bc93793-694f-48fe-9372-81e2b05556fd}</TemplateGuid>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
+    <Configuration>Release</Configuration>
+    <Platform>ARM64</Platform>
+    <RootNamespace>nwbt4378</RootNamespace>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'" Label="Configuration">
+    <TargetVersion>Windows10</TargetVersion>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <ConfigurationType>Driver</ConfigurationType>
+    <DriverType>KMDF</DriverType>
+    <DriverTargetPlatform>Windows Driver</DriverTargetPlatform>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>33</KMDF_VERSION_MINOR>
+    <KMDF_MINIMUM_VERSION_REQUIRED>33</KMDF_MINIMUM_VERSION_REQUIRED>
+    <SupportsPackaging>false</SupportsPackaging>
+    <SpectreMitigation>false</SpectreMitigation>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
+    <TargetName>nwbt4378</TargetName>
+    <EnableInf2cat>false</EnableInf2cat>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
+    <SignMode>Off</SignMode>
+    <ApiValidator_Enable>false</ApiValidator_Enable>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
+    <ClCompile>
+      <WppEnabled>false</WppEnabled>
+      <AdditionalIncludeDirectories>$(MSBuildProjectDirectory)\core;$(MSBuildProjectDirectory)\driver;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <WarningLevel>Level4</WarningLevel>
+      <DisableSpecificWarnings>4201;4214;4324;4100;4189;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <Link>
+      <GenerateMapFile>true</GenerateMapFile>
+    </Link>
+    <Inf>
+      <TimeStamp>1.0.0.3</TimeStamp>
+    </Inf>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <Inf Include="nwbt4378.inf" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="core\nwbt_core.c" />
+    <ClCompile Include="driver\driver.c" />
+    <ClCompile Include="driver\hw.c" />
+    <ClCompile Include="driver\boot.c" />
+    <ClCompile Include="driver\io.c" />
+    <ClCompile Include="driver\pdo.c" />
+    <ClCompile Include="driver\diag.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="core\nwbt_core.h" />
+    <ClInclude Include="driver\nwbt.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

@@ -1110,6 +1110,32 @@ nb_u32 nb_80211_to_8023(const nb_u8 *in, nb_u32 len, nb_u8 *out, nb_u32 cap)
 
 nb_u32 nb_8023_to_80211(const nb_u8 *eth, nb_u32 len, const nb_u8 *bssid, nb_u8 *out, nb_u32 cap)
 {
+    return nb_8023_to_80211_p(eth, len, bssid, 0, out, cap);
+}
+
+int nb_eapol_key_msg(const nb_u8 *f, nb_u32 len)
+{
+    nb_u32 ki;
+    if (!f || len < 14 || nb_be16(f + 12) != NB_ETHERTYPE_EAPOL)
+        return -1;
+    if (len < 14 + 7 || f[15] != 3)                 /* packet type 3 = EAPOL-Key */
+        return NB_EAPOL_OTHER;
+    ki = nb_be16(f + 19);                           /* after version, type, length(2), descriptor */
+    if (ki & 0x0008) {                              /* pairwise */
+        int ack = (ki & 0x0080) != 0, mic = (ki & 0x0100) != 0, sec = (ki & 0x0200) != 0;
+        if (ack && !mic) return 1;
+        if (!ack && mic && !sec) return 2;
+        if (ack && mic) return 3;
+        if (!ack && mic && sec) return 4;
+        return NB_EAPOL_OTHER;
+    }
+    if (ki & 0x0080) return NB_EAPOL_G1;
+    if (ki & 0x0100) return NB_EAPOL_G2;
+    return NB_EAPOL_OTHER;
+}
+
+nb_u32 nb_8023_to_80211_p(const nb_u8 *eth, nb_u32 len, const nb_u8 *bssid, int prot, nb_u8 *out, nb_u32 cap)
+{
     nb_u32 n;
     nb_u8 da[6], sa[6], bs[6];
     if (!eth || !out || !bssid || len < 14)
@@ -1122,7 +1148,7 @@ nb_u32 nb_8023_to_80211(const nb_u8 *eth, nb_u32 len, const nb_u8 *bssid, nb_u8 
     memcpy(bs, bssid, 6);
     memmove(out + 30, eth + 12, len - 12);        /* ethertype + payload (may alias eth) */
     memcpy(out + 24, llc_snap, 6);
-    out[0] = 0x08; out[1] = 0x02;                 /* data, from-DS */
+    out[0] = 0x08; out[1] = (nb_u8)(0x02 | (prot ? 0x40 : 0));   /* data, from-DS (+Protected) */
     out[2] = 0; out[3] = 0;
     memcpy(out + 4, da, 6);                       /* addr1 = DA */
     memcpy(out + 10, bs, 6);                      /* addr2 = BSSID */

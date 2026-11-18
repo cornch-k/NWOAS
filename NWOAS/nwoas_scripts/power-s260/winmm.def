@@ -1,0 +1,4 @@
+LIBRARY WINMM.dll
+EXPORTS
+timeBeginPeriod
+timeEndPeriod

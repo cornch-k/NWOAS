@@ -1,0 +1,77 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "AppleAgxRenderAdmission.sys",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261118-1816-p22/package/AppleAgxRenderAdmission.sys",
+   "bytes": 647880,
+   "sha256": "6d83224d7cf6165d8c5947c36719d8655fa53288a2699cea5a3eeb85a6303ec2"
+  },
+  {
+   "name": "AppleAgxRenderAdmissionUmd.dll",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261118-1816-p22/package/AppleAgxRenderAdmissionUmd.dll",
+   "bytes": 13502976,
+   "sha256": "1a04727132f8e4c7d691406ebe47450fdc787235b9885b0e4a8a41fdcbfbd27c"
+  },
+  {
+   "name": "AppleAgxRenderAdmission.arm64only.inf",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261118-1816-p22/package/AppleAgxRenderAdmission.arm64only.inf",
+   "bytes": 3613,
+   "sha256": "9c5d30ae7ae69e72ee8920300ec56caf80050a7d832b2f30329116fe62f1c055"
+  },
+  {
+   "name": "appleagxrenderadmission.cat",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261118-1816-p22/package/appleagxrenderadmission.cat",
+   "bytes": 3254,
+   "sha256": "9c9006d578e697f134fa59b6478065560ee25e6cabf3235f77ea6c53dc4deb1c"
+  },
+  {
+   "name": "nwgpuprobe-arm64.exe",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/bin/nwgpuprobe-arm64.exe",
+   "bytes": 163328,
+   "sha256": "a517f292492d7752bb56fe54aa9a58e87216c4c8c505ac498ca7aa3df5fa07a6"
+  },
+  {
+   "name": "nwgpuprobe-x64.exe",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/bin/nwgpuprobe-x64.exe",
+   "bytes": 164864,
+   "sha256": "96cb77238b308662ae010cd13cfbba02792576b659a3e6c75d358783caafa562"
+  },
+  {
+   "name": "webgl.html",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/web/webgl.html",
+   "bytes": 5414,
+   "sha256": "24f4d8fe420aeed351092ab318c71f2ac92cb78434ecaae04dc8fa3ad17616b0"
+  },
+  {
+   "name": "usersess.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/ps/usersess.ps1",
+   "bytes": 1249,
+   "sha256": "cef1db063176f74852757f6fedd7c15acdc8fb7728a059a7902e3df87d81989e"
+  },
+  {
+   "name": "winstat.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/ps/winstat.ps1",
+   "bytes": 2559,
+   "sha256": "099db9f772ec397ef5cbac189a41538e559388698014516bd8be0a415f5b69d0"
+  },
+  {
+   "name": "cb26ui.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/ps/cb26ui.ps1",
+   "bytes": 1466,
+   "sha256": "afc61cc312c1593bb2f04640c9f282a25cd67a4fbe0fa545b728a64fd2a59212"
+  },
+  {
+   "name": "edge.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/ps/edge.ps1",
+   "bytes": 2481,
+   "sha256": "a8f460fef3638aab97d3a9b6665db8c6cec1bedf7abcf531ef630b2fa9dadbe3"
+  },
+  {
+   "name": "engines.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/ps/engines.ps1",
+   "bytes": 1996,
+   "sha256": "3df643a211a32b62f3faf48848abbce751cc4ffcb04915341f6bd482a2040634"
+  }
+ ]
+}

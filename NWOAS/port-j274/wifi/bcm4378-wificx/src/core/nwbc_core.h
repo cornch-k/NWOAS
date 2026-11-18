@@ -483,8 +483,19 @@ int nb_assoc_info_parse(const nb_u8 *b, nb_u32 len, nb_u32 *req_len, nb_u32 *res
 int nb_frame_kind(const nb_u8 *f, nb_u32 len);
 /* 802.11 data frame (to-DS, LLC/SNAP) -> Ethernet II.  Returns length, 0 on error. */
 nb_u32 nb_80211_to_8023(const nb_u8 *in, nb_u32 len, nb_u8 *out, nb_u32 cap);
-/* Ethernet II -> 802.11 from-DS data frame with LLC/SNAP (for RxFrameFormat=1) */
+/* Ethernet II -> 802.11 from-DS data frame with LLC/SNAP (for RxFrameFormat=1).
+ * prot = 1 sets the Protected Frame bit: the frame was received encrypted and the firmware
+ * already decrypted it (the native 802.11 convention; the OS drops unprotected frames, EAPOL
+ * included, once a pairwise key is installed). */
 nb_u32 nb_8023_to_80211(const nb_u8 *eth, nb_u32 len, const nb_u8 *bssid, nb_u8 *out, nb_u32 cap);
+nb_u32 nb_8023_to_80211_p(const nb_u8 *eth, nb_u32 len, const nb_u8 *bssid, int prot, nb_u8 *out, nb_u32 cap);
+
+/* EAPOL-Key message of an Ethernet EAPOL frame, from the Key Information flags only:
+ * 1..4 = pairwise 4-way message 1..4, 5/6 = group key message 1/2, 0 = other EAPOL, -1 = not EAPOL */
+#define NB_EAPOL_OTHER 0
+#define NB_EAPOL_G1    5
+#define NB_EAPOL_G2    6
+int nb_eapol_key_msg(const nb_u8 *eth, nb_u32 len);
 
 /* E_EAPOL_MSG (25): the firmware hands an EAPOL frame to the host inside an event
  * (hardware 2026-11-18 16:10: four of them one second apart = AP retransmitting 1/4, and no

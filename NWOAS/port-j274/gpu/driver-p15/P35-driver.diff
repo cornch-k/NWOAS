@@ -1,0 +1,135 @@
+diff --git a/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py b/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
+index 7bca420..881fd4f 100644
+--- a/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
++++ b/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
+@@ -1971,9 +1971,7 @@ void APIENTRY
+    {
+       UINT probe = AgxD3d10WindowsMsaaProbe();
+       *pFormatCaps &= ~(UINT)D3D10_DDI_FORMAT_SUPPORT_MULTISAMPLE_RENDERTARGET;
+-      if (AgxD3d10WindowsMsaaRenderTarget(Format, probe) ||
+-          ((probe & 0x80u) &&
+-           AgxD3d10WindowsMsaaRenderTargetBitOnly(Format, *pFormatCaps)))
++      if (AgxD3d10WindowsMsaaRenderTarget(Format, probe))
+          *pFormatCaps |= D3D10_DDI_FORMAT_SUPPORT_MULTISAMPLE_RENDERTARGET;
+       if (probe)
+          AgxD3d10WindowsMsaaReceipt(1u, (UINT)Format, 0u, *pFormatCaps);
+diff --git a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp b/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp
+index 317725c..f9ce394 100644
+--- a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp
++++ b/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp
+@@ -622,8 +622,7 @@ HRESULT AgxD3d10WindowsCreateDevice(AGX_D3D10_WINDOWS_ADAPTER *Adapter,
+   /* D3D-H6: out-of-bounds constant-buffer, UAV and vertex reads return 0
+    * and out-of-bounds UAV writes are dropped (D3D11.3 7.5, 8.19.2). */
+   owner->Backend.D3dRobustness=1;
+-  owner->Backend.Multisample=
+-      AgxD3d10WindowsDiagnosticSwitch("APPLE_AGX_D3D_SCREEN_MSAA") ? 1 : 0;
++  owner->Backend.Multisample=AgxD3d10WindowsScreenMsaa() ? 1 : 0;
+   owner->Screen=AgxWin32AsahiScreenCreateForWindows(&owner->Backend,&owner->Runtime.Screen,
+       &owner->OwnerOperations,&owner->Owner,AdmissionUmdAsahiBatchOperations());
+   {
+@@ -767,6 +766,39 @@ BOOL AgxD3d10WindowsDiagnosticSwitch(const char *Name) {
+   return length == 1 && value[0] == '1';
+ }
+ 
++/* NWOAS-J274 PATCH P35: D3D10/11 multisampling is on by default -- the
++ * cast-family caps policy 0x20 (BGRA8/BGRX8/D24S8/D32S8 and RGBA8/RGBA16/
++ * R32/R16 families, 2x and 4x, read-only members none: the EXP1288/EXP1289
++ * runtime rules, accepted by the runtime since EXP1290) and the screen's
++ * multisampled render targets (4x renders correct since EXP1310, 5b081276).
++ * Why: without MULTISAMPLE_RENDERTARGET ANGLE's D3D11 backend gives every
++ * format an empty GL sample-count list and Skia treats BGRA8/RGBA8 as
++ * unrenderable (2769 K36: Edge FATAL skia_output_surface_impl.cc:1228,
++ * backend_format.isValid()=0); with policy 0x20 + screen MSAA Edge ran on
++ * this driver (2770 K37f fatals 0), as it does through D3D11On12, whose
++ * D3D12 UMD has always reported 2x/4x (agx_d3d12_ddi.cpp C32).
++ * Switches, in this order:
++ *   APPLE_AGX_D3D_MSAA_CAPS=<hex>, APPLE_AGX_D3D_SCREEN_MSAA=0|1 (process);
++ *   HKLM\SOFTWARE\NWOAS\AgxD3d D3d11Msaa (REG_DWORD) 0 = off, the 2769
++ *   answers for every process including DWM (read at most every 5 s, so a
++ *   device restart after setting it takes effect); default on. */
++static LONG AgxD3d10WindowsMsaaRegistry(VOID) {
++  static volatile LONG cached = -1;
++  static volatile LONGLONG due;
++  LONGLONG now = (LONGLONG)GetTickCount64();
++  LONG value = InterlockedCompareExchange(&cached, -1, -1);
++  if (value < 0 || now >= InterlockedCompareExchange64(&due, 0, 0)) {
++    DWORD data = 1u, bytes = sizeof(data);
++    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\NWOAS\\AgxD3d", L"D3d11Msaa",
++                     RRF_RT_REG_DWORD, NULL, &data, &bytes) != ERROR_SUCCESS)
++      data = 1u;
++    value = data != 0u ? 1 : 0;
++    InterlockedExchange(&cached, value);
++    InterlockedExchange64(&due, now + 5000);
++  }
++  return value;
++}
++
+ UINT AgxD3d10WindowsMsaaProbe(VOID) {
+   static volatile LONG cached = -1;
+   LONG value = InterlockedCompareExchange(&cached, -1, -1);
+@@ -782,11 +814,24 @@ UINT AgxD3d10WindowsMsaaProbe(VOID) {
+       if (digit < 0) { value = 0; break; }
+       value = ((value << 4) | digit) & 0xff;
+     }
++    /* No (valid) process value: -2 = follow the registry/default. */
++    if (!length || length >= sizeof(text)) value = -2;
+     InterlockedExchange(&cached, value);
+   }
++  if (value == -2)
++    return AgxD3d10WindowsMsaaRegistry() ? 0x20u : 0u;
+   return (UINT)value;
+ }
+ 
++/* P35: the screen's multisampled render targets follow the same switch. */
++BOOL AgxD3d10WindowsScreenMsaa(VOID) {
++  char value[8];
++  DWORD length = GetEnvironmentVariableA("APPLE_AGX_D3D_SCREEN_MSAA", value, sizeof(value));
++  if (length == 1 && (value[0] == '0' || value[0] == '1'))
++    return value[0] == '1';
++  return AgxD3d10WindowsMsaaRegistry() ? TRUE : FALSE;
++}
++
+ /* EXP1288 measured the runtime's rule for multisample reporting (it is not
+  * documented): it walks every cast family, typeless parent first, asks
+  * sample counts 2..31, and refuses the device when a member answers levels
+@@ -904,27 +949,6 @@ BOOL AgxD3d10WindowsMsaaRenderTarget(DXGI_FORMAT Format, UINT Probe) {
+          AgxD3d10MsaaFamily(parent, Probe);
+ }
+ 
+-/* NWOAS-J274 PATCH P34 (policy 0x80, APPLE_AGX_D3D_MSAA_CAPS): the
+- * MULTISAMPLE_RENDERTARGET bit on every render-target member (and depth
+- * member, and typeless parent) of a cast family, with no 2x/4x levels.
+- * ANGLE's D3D11 backend fills a format's GL sample counts only when this
+- * bit is set (renderer11_utils GenerateTextureFormatCaps: "Assume 1x"), and
+- * Skia's GrGLCaps leaves a format unrenderable when GL_NUM_SAMPLE_COUNTS is
+- * 0 -- Edge's GPU process then stops at skia_output_surface_impl.cc
+- * (backend_format.isValid()=0). The levels stay those of the policy's
+- * families (none without 0x10/0x20), so the EXP1288 rules hold: no levels
+- * above a parent, no bit on a read-only member. */
+-BOOL AgxD3d10WindowsMsaaRenderTargetBitOnly(DXGI_FORMAT Format, UINT Caps) {
+-  enum AgxD3d10CastRole role;
+-  (void)AgxD3d10CastParent(Format, &role);
+-  switch (role) {
+-  case AgxCastTarget: return (Caps & D3D10_DDI_FORMAT_SUPPORT_RENDERTARGET) != 0u;
+-  case AgxCastDepth: return TRUE;
+-  case AgxCastParent: return TRUE;
+-  default: return FALSE;
+-  }
+-}
+-
+ VOID AgxD3d10WindowsMsaaReceipt(UINT Kind, UINT Format, UINT SampleCount,
+                                 UINT Answer) {
+   UINT values[4]={Kind,Format,SampleCount,Answer};
+diff --git a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.h b/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.h
+index a14d9b8..a4b4eb1 100644
+--- a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.h
++++ b/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.h
+@@ -91,7 +91,7 @@ BOOL AgxD3d10WindowsDiagnosticSwitch(const char *Name);
+ UINT AgxD3d10WindowsMsaaProbe(VOID);
+ BOOL AgxD3d10WindowsMsaaFormat(DXGI_FORMAT Format, UINT Probe);
+ BOOL AgxD3d10WindowsMsaaRenderTarget(DXGI_FORMAT Format, UINT Probe);
+-BOOL AgxD3d10WindowsMsaaRenderTargetBitOnly(DXGI_FORMAT Format, UINT Caps);
++BOOL AgxD3d10WindowsScreenMsaa(VOID);
+ /* D3D-G10a: the DXGI cast family of Format (its typeless parent; a parent
+  * names itself), DXGI_FORMAT_UNKNOWN for a format without one; ReadOnly is
+  * set for members that cannot be render or depth targets. */

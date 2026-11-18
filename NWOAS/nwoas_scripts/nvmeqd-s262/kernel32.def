@@ -1,0 +1,20 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+GetStdHandle
+WriteFile
+ReadFile
+GetOverlappedResult
+CreateFileW
+CreateEventW
+ResetEvent
+WaitForMultipleObjects
+CloseHandle
+FlushFileBuffers
+SetFilePointerEx
+SetEndOfFile
+QueryPerformanceCounter
+QueryPerformanceFrequency
+ExitProcess
+GetCommandLineA
+GetLastError
+VirtualAlloc

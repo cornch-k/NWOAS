@@ -1,0 +1,1262 @@
+diff -ruN a/src/hv_exc.c b/src/hv_exc.c
+--- a/src/hv_exc.c	2026-11-19 00:23:46
++++ b/src/hv_exc.c	2026-11-19 00:23:46
+@@ -14,6 +14,8 @@
+ #include "aic_regs.h"
+ #include "adt.h"
+ #include "nwoas_pwr.h" /* NWOAS S260 */
++#include "nvme.h"      /* NWOAS S262: nwoas_nvmeqd_irq_live */
++void nwoas_nvmeqd_irq(struct exc_info *ctx); /* NWOAS S262, hv_vm.c */
+ 
+ // NWOAS: quiet mode. Silences the heavy per-SMC / periodic diagnostic dumps (guest PC-ring,
+ // PSCI-SMC verbose, UEFI/bmgfw UART re-dumps, VGATE timer-gate trace). The direct tether is USB
+@@ -2290,6 +2292,20 @@
+     if (irq != 0 && type != 0)
+         nwoas_agx_irq_note(irq); /* counts/logs (bounded) the ADT AGX lines only */
+ #endif
++    /* NWOAS S262: with NWOAS_NVME_QD the ANS completion interrupt belongs to the HV
++     * NVMe fast path (masked here, unmasked after the CQ was reaped).  Slow path:
++     * bhl, then hv_exc_exit() bridges vIRQ 900 if this is the NVMe IRQ CPU. */
++    {
++        u32 nwoas_qd_line = nwoas_nvmeqd_irq_live;
++        if (nwoas_qd_line && type == AIC_EVENT_TYPE_HW && irq == (int)nwoas_qd_line) {
++            aic_set_mask(irq, true);
++            hv_get_context(ctx);
++            hv_exc_entry();
++            nwoas_nvmeqd_irq(ctx);
++            hv_exc_exit(ctx);
++            return;
++        }
++    }
+ 
+     // NWOAS D1 device-visibility (observational): a real device IRQ is (irq!=0 && type!=0);
+     // (irq==0 || type==0) is the maintenance path below. Log the first device IRQs (and a
+diff -ruN a/src/hv_vm.c b/src/hv_vm.c
+--- a/src/hv_vm.c	2026-11-19 00:23:46
++++ b/src/hv_vm.c	2026-11-19 00:23:46
+@@ -1641,14 +1641,23 @@
+ /* Called from the 5 kHz hypervisor tick while bhl is held. This resumes work
+  * after a CQ acknowledgement without executing physical I/O in Windows'
+  * NVMeCompletionDpcRoutine MMIO trap. One command per tick bounds latency. */
++static bool nwoas_qd_on(void);                          /* NWOAS S262 */
++static void nwoas_qd_tick(struct exc_info *ctx);       /* NWOAS S262 */
+ void nwoas_nvme_fastpath_poll(struct exc_info *ctx)
+ {
+     s229_poll();
++    if (nwoas_qd_on()) { /* NWOAS S262: concurrent path owns I/O SQ/CQ 1 */
++        nwoas_qd_tick(ctx);
++        return;
++    }
+     if (nwoas_nvme_fp.deferred && nwoas_nvme_fp.cq_pending < nwoas_nvme_fp.cq_size - 1)
+         nwoas_nvme_fastpath_process(ctx, 1);
+ }
+ 
+ #include "nwoas_s229_adapter.inc"
++#include "nwoas_nvmeqd.inc" /* NWOAS S262 */
++static bool nwoas_qd_on(void) { return nwoas_qd.active; }
++static void nwoas_qd_tick(struct exc_info *ctx) { nwoas_qd_service(ctx, NWOAS_QD_CTX_TICK); }
+ 
+ /* action 0=disable, 1=arm, 2=sync policy, 3=query counters, 4=query lifecycle,
+  * 5/6=query NS1/NS2 maximum execution ticks, 7=query backlog/ack counters. */
+@@ -1663,7 +1672,17 @@
+     if(action==20)return s229_admin_fetches;
+     if(action==21)return s229_admin_completions;
+     if(action==22)return s229_front.control.csts | ((u64)s229_front.backend_fault<<32);
++    /* NWOAS S262: 24 = QD config (depth, flags) before the guest starts, 25 = stats
++     * snapshot (ptr, size), 26 = signature | version<<24 | active<<16 | depth. */
++    if (action == 24)
++        return nwoas_qd_config(sq_base, sq_size);
++    if (action == 25)
++        return nwoas_qd_snapshot(sq_base, sq_size);
++    if (action == 26)
++        return (NWOAS_QD_SIG << 32) | (NWOAS_QD_VERSION << 24) | ((u64)nwoas_qd.active << 16) |
++               nwoas_qd.depth;
+     if (action == 0) {
++        nwoas_qd_drain(); /* NWOAS S262: in-flight DMA ends before the queues go away */
+         nwoas_nvme_fp.armed = false;
+         nwoas_nvme_fp.deferred = false;
+         nwoas_nvme_fp.lifecycle_epoch++;
+@@ -1710,6 +1729,8 @@
+                               sizeof(struct nwoas_nvme_guest_cqe)))
+         return 0;
+ 
++    if (nwoas_qd.busy && !nwoas_qd_drain()) /* NWOAS S262 */
++        return 0;
+     if (nwoas_nvme_fp.faulted)
+         return 0;
+     u16 sq_generation = (flags >> 8) & 0xfff;
+@@ -1793,7 +1814,10 @@
+                 nwoas_nvme_diag.max_sq_backlog = backlog;
+             nwoas_nvme_fp.deferred = nwoas_nvme_fp.sq_head != nwoas_nvme_fp.sq_tail;
+             nwoas_pwr_from_doorbell = true;
+-            nwoas_nvme_fastpath_process(ctx, 1);
++            if (nwoas_qd.active) /* NWOAS S262: submit all, do not wait */
++                nwoas_qd_service(ctx, NWOAS_QD_CTX_SQDB);
++            else
++                nwoas_nvme_fastpath_process(ctx, 1);
+             nwoas_pwr_from_doorbell = false;
+         } else {
+             nwoas_nvme_fp.errors++;
+@@ -1812,6 +1836,8 @@
+                 nwoas_nvme_fp.cq_pending -= consumed;
+                 nwoas_nvme_fp.deferred = nwoas_nvme_fp.sq_head != nwoas_nvme_fp.sq_tail;
+                 nwoas_nvme_fastpath_update_irq();
++                if (nwoas_qd.active) /* NWOAS S262: reap + refill (no NS2 host link here) */
++                    nwoas_qd_service(ctx, NWOAS_QD_CTX_CQDB);
+             } else {
+                 nwoas_nvme_fp.errors++;
+             }
+diff -ruN a/src/nvme.c b/src/nvme.c
+--- a/src/nvme.c	2026-11-19 00:23:46
++++ b/src/nvme.c	2026-11-19 00:23:46
+@@ -1,6 +1,7 @@
+ /* SPDX-License-Identifier: MIT */
+ 
+ #include "adt.h"
++#include "aic.h"
+ #include "assert.h"
+ #include "malloc.h"
+ #include "mcc.h"
+@@ -133,6 +134,29 @@
+ 
+ static struct nvme_queue adminq, ioq;
+ 
++/* NWOAS S262 (g262P): concurrent I/O queue engine (NWOAS_NVME_QD), see the block
++ * before nvme_qd_setup().  Inactive (all zero) unless the hypervisor calls
++ * nvme_qd_setup() before the guest starts; while inactive every function below
++ * the marker behaves exactly as in g260O. */
++#define NVME_QD_SYNC_TAG  1  /* synchronous ioq commands while the engine is active */
++#define NVME_QD_FIRST_TAG 2  /* admin keeps tag 0; tags are unique across both queues */
++#define NVME_QD_LAST_TAG  62 /* Linux apple.c: tag-set depth APPLE_ANS_MAX_QUEUE_DEPTH - 1 */
++#define NVME_QD_STASH     64
++static struct {
++    bool active, faulted;
++    u32 depth;
++    u64 alloc;    /* tags owned by the caller (bit = tag) */
++    u64 inflight; /* tags submitted to ANS whose CQE is not consumed yet */
++    u64 *prp;     /* per-tag PRP list pages, 64 x 4 KiB */
++    struct nvme_qd_cqe stash[NVME_QD_STASH];
++    u32 stash_n;
++    u32 irq;      /* AIC line of /arm-io/ans, 0 = none (poll only) */
++    u64 bad_tag, inval_fail, stash_max, sync_cmds, sync_drain_waits;
++} nvme_qd;
++volatile u32 nwoas_nvmeqd_irq_live; /* nonzero = hv_exc_irq hands this AIC line to the HV */
++static bool nvme_qd_exec_sync(struct nvme_command *cmd, u64 *result);
++static void nvme_qd_quiesce(void);
++
+ static bool alloc_queue(struct nvme_queue *q)
+ {
+     memset(q, 0, sizeof(*q));
+@@ -212,6 +236,9 @@
+ 
+ static bool nvme_exec_command(struct nvme_queue *q, struct nvme_command *cmd, u64 *result)
+ {
++    if (q == &ioq && nvme_qd.active) /* NWOAS S262: shared CQ with in-flight async tags */
++        return nvme_qd_exec_sync(cmd, result);
++
+     bool found = false;
+     u64 timeout;
+     u8 tag = 0;
+@@ -489,6 +516,9 @@
+ 
+     struct nvme_command cmd;
+ 
++    if (nvme_qd.active) /* NWOAS S262: IRQ off, wait for in-flight tags, engine off */
++        nvme_qd_quiesce();
++
+     memset(&cmd, 0, sizeof(cmd));
+     cmd.opcode = NVME_ADMIN_CMD_DELETE_SQ;
+     cmd.cdw10 = 1; // sq id
+@@ -758,4 +788,475 @@
+ bool nvme_write_n(u32 nsid, u64 lba, void *buffer, u32 count)
+ {
+     return nvme_rw(true, nsid, lba, buffer, count);
++}
++
++/* ===========================================================================
++ * NWOAS S262 (g262P): concurrent ANS2 I/O for the hypervisor NVMe fast path.
++ *
++ * ANS2 uses a "linear" submission queue: the command for tag T lives in
++ * ioq.cmds[T] / ioq.tcbs[T] and is started by writing T to NVME_DB_LINEAR_IOSQ
++ * (Linux drivers/nvme/host/apple.c, apple_nvme_submit_cmd).  Completions arrive in
++ * the ordinary CQ in any order and name their tag.  Tags must be unique across
++ * the admin and I/O queues (same file: the admin queue gets the first
++ * APPLE_NVME_AQ_DEPTH = 2 tags), so admin keeps tag 0, synchronous I/O commands
++ * use tag 1 and the hypervisor gets tags 2 .. 2+depth-1 (at most 62).
++ *
++ * Every call runs under bhl.  Linux holds one lock around the doorbell write too
++ * (its comment: without it completion interrupts are occasionally missed).
++ *
++ * nvme_qd_rw() applies the same WINTEST write fence and the same guest-page
++ * translation as nvme_rw_guest(); the translated PRP list is a per-tag copy owned
++ * here and is complete before ANS can see the command.  HARDWARE-UNVERIFIED.
++ * =========================================================================== */
++#define NVME_CQ_IRQ_ENABLED BIT(1)
++#define NVME_QD_PRP_ENTRIES (SZ_4K / sizeof(u64))
++
++bool nvme_qd_active(void)
++{
++    return nvme_qd.active;
++}
++
++bool nvme_qd_faulted(void)
++{
++    return nvme_qd.faulted;
++}
++
++static bool nvme_qd_tag_ok(int tag)
++{
++    return nvme_qd.active && tag >= NVME_QD_FIRST_TAG &&
++           tag < NVME_QD_FIRST_TAG + (int)nvme_qd.depth;
++}
++
++static u32 nvme_qd_find_irq(void)
++{
++    int node = adt_path_offset(adt, "/arm-io/ans");
++    u32 len = 0;
++    const u32 *irqs = node < 0 ? NULL : adt_getprop(adt, node, "interrupts", &len);
++    if (!irqs || len != 4 || !irqs[0] || irqs[0] >= 0x1000) {
++        printf("nvme: S262 /arm-io/ans interrupts unusable (len=%u): polling only\n", len);
++        return 0;
++    }
++    return irqs[0];
++}
++
++static bool nvme_qd_recreate_ioq(void)
++{
++    struct nvme_command cmd;
++
++    memset(&cmd, 0, sizeof(cmd));
++    cmd.opcode = NVME_ADMIN_CMD_DELETE_SQ;
++    cmd.cdw10 = 1;
++    if (!nvme_exec_command(&adminq, &cmd, NULL))
++        return false;
++    memset(&cmd, 0, sizeof(cmd));
++    cmd.opcode = NVME_ADMIN_CMD_DELETE_CQ;
++    cmd.cdw10 = 1;
++    if (!nvme_exec_command(&adminq, &cmd, NULL))
++        return false;
++
++    memset(ioq.cqes, 0, NVME_QUEUE_SIZE * sizeof(*ioq.cqes));
++    memset(ioq.cmds, 0, NVME_QUEUE_SIZE * sizeof(*ioq.cmds));
++    memset(ioq.tcbs, 0, NVME_QUEUE_SIZE * sizeof(*ioq.tcbs));
++    ioq.cq_head = 0;
++    ioq.cq_phase = 1;
++    dma_wmb();
++
++    /* Linux apple_nvme_create_cq: PHYS_CONTIG | CQ_IRQ_ENABLED, vector 0. */
++    memset(&cmd, 0, sizeof(cmd));
++    cmd.opcode = NVME_ADMIN_CMD_CREATE_CQ;
++    cmd.prp1 = (u64)ioq.cqes;
++    cmd.cdw10 = 1 | ((NVME_QUEUE_SIZE - 1) << 16);
++    cmd.cdw11 = NVME_QUEUE_CONTIGUOUS | NVME_CQ_IRQ_ENABLED;
++    if (!nvme_exec_command(&adminq, &cmd, NULL))
++        return false;
++    memset(&cmd, 0, sizeof(cmd));
++    cmd.opcode = NVME_ADMIN_CMD_CREATE_SQ;
++    cmd.prp1 = (u64)ioq.cmds;
++    cmd.cdw10 = 1 | ((NVME_QUEUE_SIZE - 1) << 16);
++    cmd.cdw11 = NVME_QUEUE_CONTIGUOUS | (1 << 16);
++    return nvme_exec_command(&adminq, &cmd, NULL);
++}
++
++int nvme_qd_setup(u32 depth, bool want_irq)
++{
++    if (!nvme_initialized || nvme_qd.active || !depth || depth > NVME_QD_MAX_DEPTH)
++        return -1;
++    u64 *prp = memalign(SZ_4K, NVME_QUEUE_SIZE * SZ_4K);
++    if (!prp)
++        return -1;
++    memset(prp, 0, NVME_QUEUE_SIZE * SZ_4K);
++
++    u32 irq = want_irq ? nvme_qd_find_irq() : 0;
++    if (irq && !nvme_qd_recreate_ioq()) {
++        /* The I/O queue state is unknown now: refuse; the launcher must stop. */
++        printf("nvme: S262 I/O queue re-create with IRQ enable FAILED\n");
++        free(prp);
++        return -1;
++    }
++    memset(&nvme_qd, 0, sizeof(nvme_qd));
++    nvme_qd.prp = prp;
++    nvme_qd.depth = depth;
++    nvme_qd.irq = irq;
++    nwoas_nvmeqd_irq_live = 0;
++    nvme_qd.active = true;
++    printf("nvme: S262 concurrent engine on: tags %d..%d, irq=%u (%s)\n", NVME_QD_FIRST_TAG,
++           NVME_QD_FIRST_TAG + depth - 1, irq, irq ? "CQ1 re-created with IEN" : "poll");
++    return irq;
++}
++
++int nvme_qd_alloc(void)
++{
++    if (!nvme_qd.active || nvme_qd.faulted)
++        return -1;
++    for (int t = NVME_QD_FIRST_TAG; t < NVME_QD_FIRST_TAG + (int)nvme_qd.depth; t++)
++        if (!(nvme_qd.alloc & BIT(t))) {
++            nvme_qd.alloc |= BIT(t);
++            return t;
++        }
++    return -1;
++}
++
++void nvme_qd_free(int tag)
++{
++    /* A tag whose CQE was never consumed stays allocated forever (never reused). */
++    if (tag >= NVME_QD_FIRST_TAG && tag <= NVME_QD_LAST_TAG && !(nvme_qd.inflight & BIT(tag)))
++        nvme_qd.alloc &= ~BIT(tag);
++}
++
++/* Same command / NVMMU TCB rules as nvme_exec_command(); does not wait. */
++static void nvme_qd_post(int tag, const struct nvme_command *cmd)
++{
++    struct nvme_command *queue_cmd = &ioq.cmds[tag];
++    struct apple_nvmmu_tcb *tcb = &ioq.tcbs[tag];
++
++    memcpy(queue_cmd, cmd, sizeof(*cmd));
++    queue_cmd->tag = tag;
++    queue_cmd->rsvd = 0;
++
++    memset(tcb, 0, sizeof(*tcb));
++    tcb->opcode = 0;
++    if (!queue_cmd->prp1)
++        tcb->dma_flags = 0;
++    else if (queue_cmd->opcode & 1)
++        tcb->dma_flags = BIT(1); /* host memory -> device */
++    else
++        tcb->dma_flags = BIT(0); /* device -> host memory */
++    tcb->slot_id = tag;
++    tcb->len = queue_cmd->cdw12;
++    tcb->prp1 = queue_cmd->prp1;
++    tcb->prp2 = queue_cmd->prp2;
++
++    nvme_qd.inflight |= BIT(tag);
++    /* make sure ANS2 can see the command and tcb before triggering it */
++    dma_wmb();
++    nvme_poll_syslog();
++    write32(nvme_base + NVME_DB_LINEAR_IOSQ, tag);
++}
++
++int nvme_qd_rw(int tag, bool write, u64 lba, u32 count, u64 prp1, u64 prp2)
++{
++    if (!nvme_qd_tag_ok(tag) || nvme_qd.faulted || !nvme_initialized ||
++        !(nvme_qd.alloc & BIT(tag)) || (nvme_qd.inflight & BIT(tag)))
++        return NVME_QD_FAULT;
++    if (count < 1 || count > NVME_MAX_BLOCKS)
++        return NVME_QD_REFUSED;
++    if (write && !nvme_write_allowed(1, lba, count))
++        return NVME_QD_REFUSED;
++    if (!prp1 || (prp1 & 3))
++        return NVME_QD_REFUSED;
++
++    u64 first = nvme_guest_page_pa(prp1 & ~(SZ_4K - 1));
++    if (!first)
++        return NVME_QD_REFUSED;
++    first |= prp1 & (SZ_4K - 1);
++
++    u64 *list = nvme_qd.prp + (u64)tag * NVME_QD_PRP_ENTRIES;
++    u64 bytes = (u64)count * SZ_4K;
++    u64 first_capacity = SZ_4K - (prp1 & (SZ_4K - 1));
++    u64 first_len = bytes < first_capacity ? bytes : first_capacity;
++    u64 left = bytes - first_len;
++    u64 second = 0;
++    u32 extra = 0;
++    if (left && left <= SZ_4K) {
++        second = nvme_guest_page_pa(prp2);
++        if (!second)
++            return NVME_QD_REFUSED;
++        extra = 1;
++    } else if (left) {
++        u64 list_pa = nvme_guest_page_pa(prp2);
++        if (!list_pa)
++            return NVME_QD_REFUSED;
++        dc_civac_range((void *)list_pa, SZ_4K);
++        u32 list_pages = (left + SZ_4K - 1) / SZ_4K;
++        if (list_pages > NVME_QD_PRP_ENTRIES)
++            return NVME_QD_REFUSED;
++        for (u32 i = 0; i < list_pages; i++) {
++            u64 page = nvme_guest_page_pa(((u64 *)list_pa)[i]);
++            if (!page)
++                return NVME_QD_REFUSED;
++            list[i] = page;
++        }
++        extra = list_pages;
++    }
++
++    /* Same cache maintenance as nvme_rw_guest() (S101/S103). */
++    if (write)
++        dc_cvac_range((void *)first, first_len);
++    else
++        dc_civac_range((void *)first, first_len);
++    left = bytes - first_len;
++    for (u32 i = 0; i < extra; i++) {
++        u64 page = extra == 1 ? second : list[i];
++        u64 len = left < SZ_4K ? left : SZ_4K;
++        if (write)
++            dc_cvac_range((void *)page, len);
++        else
++            dc_civac_range((void *)page, len);
++        left -= len;
++    }
++
++    struct nvme_command cmd;
++    memset(&cmd, 0, sizeof(cmd));
++    cmd.opcode = write ? NVME_CMD_WRITE : NVME_CMD_READ;
++    cmd.nsid = 1;
++    cmd.prp1 = first;
++    if (extra == 1) {
++        cmd.prp2 = second;
++    } else if (extra > 1) {
++        dc_cvac_range(list, SZ_4K);
++        cmd.prp2 = (u64)list;
++    }
++    cmd.cdw10 = lba;
++    cmd.cdw11 = lba >> 32;
++    cmd.cdw12 = count - 1;
++    dma_wmb();
++    nvme_qd_post(tag, &cmd);
++    return NVME_QD_OK;
++}
++
++int nvme_qd_flush(int tag)
++{
++    if (!nvme_qd_tag_ok(tag) || nvme_qd.faulted || !nvme_initialized ||
++        !(nvme_qd.alloc & BIT(tag)) || (nvme_qd.inflight & BIT(tag)))
++        return NVME_QD_FAULT;
++    struct nvme_command cmd;
++    memset(&cmd, 0, sizeof(cmd));
++    cmd.opcode = NVME_CMD_FLUSH;
++    cmd.nsid = 1;
++    nvme_qd_post(tag, &cmd);
++    return NVME_QD_OK;
++}
++
++/* Consume the CQE at the head if the controller posted one.  Does not ring the CQ
++ * doorbell.  out->tag = NVME_QD_BAD_TAG for a completion that names no in-flight tag
++ * (counted, engine faulted: nothing is submitted any more). */
++static bool nvme_qd_consume(struct nvme_qd_cqe *out)
++{
++    struct nvme_completion *entry = &ioq.cqes[ioq.cq_head];
++    if ((*(volatile u16 *)&entry->status & 1) != ioq.cq_phase)
++        return false;
++    dma_rmb();
++    struct nvme_completion cqe;
++    memcpy(&cqe, entry, sizeof(cqe));
++
++    ioq.cq_head += 1;
++    if (ioq.cq_head == NVME_QUEUE_SIZE) {
++        ioq.cq_head = 0;
++        ioq.cq_phase ^= 1;
++    }
++
++    if (cqe.tag >= NVME_QUEUE_SIZE || !(nvme_qd.inflight & BIT(cqe.tag))) {
++        if (nvme_qd.bad_tag++ < 4)
++            printf("nvme: S262 CQE for tag %u not in flight (inflight=0x%lx)\n", cqe.tag,
++                   nvme_qd.inflight);
++        nvme_qd.faulted = true;
++        out->tag = NVME_QD_BAD_TAG;
++        return true;
++    }
++    write32(nvme_base + NVMMU_TCB_INVAL, cqe.tag);
++    if (read32(nvme_base + NVMMU_TCB_STAT) && nvme_qd.inval_fail++ < 4)
++        printf("nvme: NVMMU invalidation for tag %d failed\n", cqe.tag);
++    nvme_qd.inflight &= ~BIT(cqe.tag);
++    out->tag = cqe.tag;
++    out->rsvd = 0;
++    out->status = cqe.status >> 1;
++    out->rsvd2 = 0;
++    out->result = cqe.result;
++    return true;
++}
++
++static void nvme_qd_stash_push(const struct nvme_qd_cqe *c)
++{
++    if (nvme_qd.stash_n >= NVME_QD_STASH) { /* cannot happen: one entry per tag */
++        nvme_qd.faulted = true;
++        return;
++    }
++    nvme_qd.stash[nvme_qd.stash_n++] = *c;
++    if (nvme_qd.stash_n > nvme_qd.stash_max)
++        nvme_qd.stash_max = nvme_qd.stash_n;
++}
++
++u32 nvme_qd_reap(struct nvme_qd_cqe *out, u32 max)
++{
++    u32 n = 0;
++    while (n < max && nvme_qd.stash_n)
++        out[n++] = nvme_qd.stash[--nvme_qd.stash_n];
++    if (!nvme_qd.active)
++        return n;
++    bool any = false;
++    struct nvme_qd_cqe c;
++    while (n < max && nvme_qd_consume(&c)) {
++        any = true;
++        if (c.tag == NVME_QD_BAD_TAG)
++            continue;
++        if (c.tag == NVME_QD_SYNC_TAG) /* late completion of a timed-out sync command */
++            continue;
++        out[n++] = c;
++    }
++    if (any)
++        write32(nvme_base + NVME_DB_IOCQ, ioq.cq_head);
++    return n;
++}
++
++/* Synchronous ioq command while async tags may be in flight.  First waits until
++ * every async tag submitted so far has completed (CQEs stashed for the hypervisor),
++ * so a FLUSH issued here also covers all of them; then runs the command on tag 1. */
++static bool nvme_qd_exec_sync(struct nvme_command *cmd, u64 *result)
++{
++    if (nvme_qd.faulted || (nvme_qd.inflight & BIT(NVME_QD_SYNC_TAG)))
++        return false;
++    nvme_qd.sync_cmds++;
++
++    struct nvme_qd_cqe c;
++    bool any = false;
++    u64 timeout = timeout_calculate(NVME_TIMEOUT);
++    if (nvme_qd.inflight)
++        nvme_qd.sync_drain_waits++;
++    while (nvme_qd.inflight && !nvme_qd.faulted) {
++        if (!nvme_qd_consume(&c)) {
++            nvme_poll_syslog();
++            if (timeout_expired(timeout))
++                break;
++            continue;
++        }
++        any = true;
++        if (c.tag != NVME_QD_BAD_TAG)
++            nvme_qd_stash_push(&c);
++    }
++    if (any)
++        write32(nvme_base + NVME_DB_IOCQ, ioq.cq_head);
++    if (nvme_qd.inflight || nvme_qd.faulted) {
++        printf("nvme: S262 sync command: async tags did not drain (inflight=0x%lx)\n",
++               nvme_qd.inflight);
++        nvme_qd.faulted = true;
++        return false;
++    }
++
++    nvme_qd_post(NVME_QD_SYNC_TAG, cmd);
++    bool found = false;
++    any = false;
++    timeout = timeout_calculate(NVME_TIMEOUT);
++    while (!timeout_expired(timeout)) {
++        if (!nvme_qd_consume(&c)) {
++            nvme_poll_syslog();
++            continue;
++        }
++        any = true;
++        if (c.tag == NVME_QD_SYNC_TAG) {
++            found = true;
++            break;
++        }
++        if (c.tag != NVME_QD_BAD_TAG)
++            nvme_qd_stash_push(&c);
++    }
++    if (any)
++        write32(nvme_base + NVME_DB_IOCQ, ioq.cq_head);
++    if (!found) {
++        /* tag 1 stays in flight forever, so it is never reused */
++        printf("nvme: could not find command completion in CQ\n");
++        nvme_qd.faulted = true;
++        return false;
++    }
++    if (result)
++        *result = c.result;
++    if (c.status) {
++        printf("nvme: command failed with status %d\n", c.status);
++        return false;
++    }
++    return true;
++}
++
++void nvme_qd_mailbox(void)
++{
++    if (nvme_initialized && nvme_qd.active)
++        nvme_poll_syslog();
++}
++
++void nvme_qd_irq_arm(int cpu)
++{
++    if (!nvme_qd.active || !nvme_qd.irq || nwoas_nvmeqd_irq_live || cpu < 0)
++        return;
++    aic_set_affinity(nvme_qd.irq, cpu);
++    nwoas_nvmeqd_irq_live = nvme_qd.irq;
++    sysop("dsb sy");
++    aic_set_mask(nvme_qd.irq, false);
++    printf("nvme: S262 ANS IRQ %u unmasked, target CPU %d\n", nvme_qd.irq, cpu);
++}
++
++void nvme_qd_irq_unmask(void)
++{
++    u32 irq = nwoas_nvmeqd_irq_live;
++    if (irq)
++        aic_set_mask(irq, false);
++}
++
++void nvme_qd_irq_disarm(void)
++{
++    u32 irq = nwoas_nvmeqd_irq_live;
++    nwoas_nvmeqd_irq_live = 0;
++    sysop("dsb sy");
++    if (irq)
++        aic_set_mask(irq, true);
++}
++
++/* nvme_shutdown(): interrupt off, let the async tags finish (stash), engine off. */
++static void nvme_qd_quiesce(void)
++{
++    nvme_qd_irq_disarm();
++    struct nvme_qd_cqe c;
++    bool any = false;
++    u64 timeout = timeout_calculate(NVME_TIMEOUT);
++    while ((nvme_qd.inflight & ~BIT(NVME_QD_SYNC_TAG)) && !timeout_expired(timeout)) {
++        if (!nvme_qd_consume(&c)) {
++            nvme_poll_syslog();
++            continue;
++        }
++        any = true;
++        if (c.tag != NVME_QD_BAD_TAG && c.tag != NVME_QD_SYNC_TAG)
++            nvme_qd_stash_push(&c);
++    }
++    if (any)
++        write32(nvme_base + NVME_DB_IOCQ, ioq.cq_head);
++    printf("nvme: S262 quiesce inflight=0x%lx stash=%u bad_tag=%lu\n", nvme_qd.inflight,
++           nvme_qd.stash_n, nvme_qd.bad_tag);
++    nvme_qd.active = false;
++    if (!nvme_qd.inflight) { /* a stuck tag may still read its PRP list: keep it then */
++        free(nvme_qd.prp);
++        nvme_qd.prp = NULL;
++    }
++}
++
++void nvme_qd_get_info(struct nvme_qd_info *out)
++{
++    out->active = nvme_qd.active;
++    out->depth = nvme_qd.depth;
++    out->irq = nvme_qd.irq | ((u64)nwoas_nvmeqd_irq_live << 32);
++    out->faulted = nvme_qd.faulted;
++    out->inflight_mask = nvme_qd.inflight;
++    out->alloc_mask = nvme_qd.alloc;
++    out->bad_tag = nvme_qd.bad_tag;
++    out->inval_fail = nvme_qd.inval_fail;
++    out->stash_max = nvme_qd.stash_max;
++    out->sync_cmds = nvme_qd.sync_cmds;
++    out->sync_drain_waits = nvme_qd.sync_drain_waits;
+ }
+diff -ruN a/src/nvme.h b/src/nvme.h
+--- a/src/nvme.h	2026-11-19 00:23:46
++++ b/src/nvme.h	2026-11-19 00:23:46
+@@ -23,4 +23,40 @@
+ void nvme_set_guest_map(u64 low_backing, u64 high_min, u64 high_max);
+ u64 nvme_rw_guest(bool write, u64 lba, u32 count, u64 prp1, u64 prp2);
+ 
++/* NWOAS S262 (g262P): concurrent I/O engine on the ANS2 linear submission queue.
++ * Off until nvme_qd_setup(); every call is made under bhl.  HARDWARE-UNVERIFIED. */
++#define NVME_QD_MAX_DEPTH 61 /* tags 2..62 */
++#define NVME_QD_OK        0
++#define NVME_QD_FAULT     (-1) /* engine off/faulted: nothing submitted */
++#define NVME_QD_REFUSED   (-2) /* failed validation before submission (fence / PRP) */
++#define NVME_QD_BAD_TAG   0xff
++struct nvme_qd_cqe {
++    u8 tag;
++    u8 rsvd;
++    u16 status; /* NVMe status field without the phase bit, 0 = success */
++    u32 rsvd2;
++    u64 result;
++};
++struct nvme_qd_info {
++    u64 active, depth, irq, faulted, inflight_mask, alloc_mask;
++    u64 bad_tag, inval_fail, stash_max, sync_cmds, sync_drain_waits;
++};
++extern volatile u32 nwoas_nvmeqd_irq_live; /* AIC line owned by the HV, 0 = none */
++/* Pre-guest only, I/O idle.  want_irq re-creates I/O CQ 1 with interrupts enabled.
++ * Returns the AIC IRQ (>0), 0 = polling only, <0 = error (I/O queue may be unusable). */
++int nvme_qd_setup(u32 depth, bool want_irq);
++bool nvme_qd_active(void);
++bool nvme_qd_faulted(void);
++int nvme_qd_alloc(void);
++void nvme_qd_free(int tag);
++int nvme_qd_rw(int tag, bool write, u64 lba, u32 count, u64 prp1, u64 prp2);
++int nvme_qd_flush(int tag);
++/* Consumed completions (stashed ones first); rings the CQ doorbell once. */
++u32 nvme_qd_reap(struct nvme_qd_cqe *out, u32 max);
++void nvme_qd_mailbox(void);
++void nvme_qd_irq_arm(int cpu);
++void nvme_qd_irq_unmask(void);
++void nvme_qd_irq_disarm(void);
++void nvme_qd_get_info(struct nvme_qd_info *out);
++
+ #endif
+diff -ruN a/src/nwoas_nvmeqd.inc b/src/nwoas_nvmeqd.inc
+--- a/src/nwoas_nvmeqd.inc	1970-01-01 09:00:00
++++ b/src/nwoas_nvmeqd.inc	2026-11-19 00:23:46
+@@ -0,0 +1,569 @@
++/* NWOAS S262 (g262P): concurrent NVMe fast path (launcher switch NWOAS_NVME_QD=<n>).
++ *
++ * Included from hv_vm.c after nwoas_s229_adapter.inc.  Every function runs under
++ * bhl.  Nothing here runs unless the launcher sends fastpath action 24 before the
++ * guest starts; with no action 24 the S149/S229 synchronous path is unchanged.
++ *
++ * Guest view (unchanged): one emulated NVMe controller, I/O SQ/CQ 1, stornvme.
++ * New: a guest SQ entry is copied, checked (same checks as
++ * nwoas_nvme_fastpath_execute) and submitted to ANS on its own tag without
++ * waiting.  Completions are taken from the ANS CQ by the ANS interrupt (AIC line
++ * from the ADT, routed to the NVMe interrupt CPU), by every NVMe doorbell trap
++ * and by the CPU0 tick, and posted to the guest CQ in completion order with one
++ * vIRQ 900 level update per batch.
++ *
++ * Data rules:
++ *  - FLUSH (nsid 1 or all): fetched only when no other command is in flight and
++ *    nothing is fetched until it completes (full barrier).
++ *  - Write with FUA, or any write while the guest disabled the volatile cache:
++ *    the guest CQE is posted only after the write AND a following FLUSH both
++ *    completed on ANS (same result as the synchronous path).  QD_F_STRICT
++ *    additionally runs such writes alone (barrier before and after).
++ *  - Any ANS error, timeout (1 s) or unknown tag faults the fast path for good
++ *    (CSTS.CFS), exactly like a failed synchronous command today.
++ *  - Before the guest I/O queues are disabled, re-armed or reset, all in-flight
++ *    commands are waited for (their DMA targets guest memory).
++ * HARDWARE-UNVERIFIED.  Build success is not boot success.
++ */
++#define NWOAS_QD_F_IRQ    1u /* complete by the ANS interrupt (else tick/doorbell polling only) */
++#define NWOAS_QD_F_STRICT 2u /* FUA / no-cache writes run alone */
++#define NWOAS_QD_F_NOKICK 4u /* do not IPI the NVMe IRQ CPU after posting on another CPU */
++#define NWOAS_QD_F_ALL    7u
++#define NWOAS_QD_SIG      0x53323632ULL /* "S262" */
++#define NWOAS_QD_VERSION  1ULL
++
++enum { NWOAS_QD_FREE = 0, NWOAS_QD_RW, NWOAS_QD_FLUSH, NWOAS_QD_CHAIN };
++enum { NWOAS_QD_CTX_SQDB = 0, NWOAS_QD_CTX_CQDB, NWOAS_QD_CTX_TICK, NWOAS_QD_CTX_IRQ,
++       NWOAS_QD_CTX_DRAIN, NWOAS_QD_CTX_N };
++
++struct nwoas_qd_slot {
++    u8 state;
++    bool write, chain, strict_barrier, from_db;
++    u16 cid;
++    u32 blocks;
++    u64 t_db, t_submit, t_first_submit;
++};
++
++/* Exported by action 25 (all u64, order is the contract with nvmeqd_module.py). */
++struct nwoas_qd_stats {
++    u64 sig_version, depth, flags, irq;
++    u64 submitted, completed, posted, posted_immediate, discarded;
++    u64 reads, writes, flushes, chain_flushes, link_cmds, refused;
++    u64 done_by_ctx[NWOAS_QD_CTX_N];
++    u64 irqs, irq_empty, storm, kicks;
++    u64 reap_calls, reap_batch_max;
++    u64 inflight_max, inflight_sum, inflight_samples;
++    u64 stall_tags, stall_cq, stall_barrier, stall_link;
++    u64 drains, drain_ticks_max, drain_fail;
++    u64 timeouts, faults, dev_errors;
++    u64 dev_ticks_sum, dev_ticks_max, lat_ticks_sum, lat_ticks_max, lat_count;
++    u64 eng_active, eng_depth, eng_irq, eng_faulted, eng_inflight, eng_alloc;
++    u64 eng_bad_tag, eng_inval_fail, eng_stash_max, eng_sync_cmds, eng_sync_drain_waits;
++    u64 busy_now, cntfrq;
++};
++static_assert(sizeof(struct nwoas_qd_stats) == 57 * 8, "nwoas_qd_stats layout");
++
++static struct {
++    bool active, barrier, irq_storm;
++    u32 depth, flags, irq, busy, idle_empty_irqs;
++    struct nwoas_qd_slot slot[64];
++    struct nwoas_qd_stats st;
++} nwoas_qd;
++
++static int nwoas_qd_icpu(void)
++{
++    return hv_pinned_cpu == -1 ? boot_cpu_idx : hv_pinned_cpu;
++}
++
++static void nwoas_qd_fault(void)
++{
++    if (!nwoas_nvme_fp.faulted)
++        printf("NWOAS-S262 NVMe QD fault: busy=%u sq=%u/%u cq_pending=%u\n", nwoas_qd.busy,
++               nwoas_nvme_fp.sq_head, nwoas_nvme_fp.sq_tail, nwoas_nvme_fp.cq_pending);
++    nwoas_nvme_fp.faulted = true;
++    nwoas_nvme_fp.deferred = false;
++    nwoas_nvme_fp.errors++;
++    nwoas_qd.st.faults++;
++}
++
++/* Same CQE format and publication order as nwoas_nvme_fastpath_process(). */
++static bool nwoas_qd_post(u16 cid, u16 status, u32 result)
++{
++    struct nwoas_nvme_guest_cqe cqe;
++    void *dst = nwoas_nvme_guest_ptr(nwoas_nvme_fp.cq_base +
++                                     (u64)nwoas_nvme_fp.cq_tail * sizeof(cqe), sizeof(cqe));
++    if (!dst) {
++        nwoas_qd_fault();
++        return false;
++    }
++    cqe = (struct nwoas_nvme_guest_cqe){
++        .result = result,
++        .reserved = 0,
++        .sq_head = nwoas_nvme_fp.sq_head,
++        .sq_id = 1,
++        .cid = cid,
++        .status = (status << 1) | nwoas_nvme_fp.cq_phase,
++    };
++    memcpy(dst, &cqe, sizeof(cqe) - sizeof(cqe.status));
++    dma_wmb();
++    *(volatile u16 *)((u8 *)dst + sizeof(cqe) - sizeof(cqe.status)) = cqe.status;
++    nwoas_nvme_fp.cq_tail++;
++    nwoas_nvme_fp.cq_pending++;
++    nwoas_nvme_fp.commands++;
++    if (status)
++        nwoas_nvme_fp.errors++;
++    if (nwoas_nvme_fp.cq_tail == nwoas_nvme_fp.cq_size) {
++        nwoas_nvme_fp.cq_tail = 0;
++        nwoas_nvme_fp.cq_phase ^= 1;
++    }
++    nwoas_qd.st.posted++;
++    return true;
++}
++
++static void nwoas_qd_advance_sq(void)
++{
++    nwoas_nvme_fp.sq_head++;
++    if (nwoas_nvme_fp.sq_head == nwoas_nvme_fp.sq_size)
++        nwoas_nvme_fp.sq_head = 0;
++}
++
++static u32 nwoas_qd_backlog(void)
++{
++    u16 size = nwoas_nvme_fp.sq_size;
++    return size ? (nwoas_nvme_fp.sq_tail + size - nwoas_nvme_fp.sq_head) % size : 0;
++}
++
++/* S260 counters (struct nwoas_pwr_nvme) with the same meaning for hvstats_report.py:
++ * depth = commands outstanding (in flight here + not yet fetched) when the CQE is posted. */
++static void nwoas_qd_pwr_done(u32 nsid, u8 opcode, u32 blocks, u64 dev_ticks, u64 t_db,
++                              bool from_db, u32 outstanding)
++{
++    struct nwoas_pwr_nvme *n = &nwoas_pwr_nvme;
++    u64 now = mrs(CNTPCT_EL0);
++    if (from_db)
++        n->doorbell_cmds++;
++    else
++        n->tick_cmds++;
++    if (nsid == 2) {
++        n->ns2_cmds++;
++        return;
++    }
++    if (nsid != 1) {
++        n->other_cmds++;
++        return;
++    }
++    n->ns1_cmds++;
++    n->exec_sum_ticks += dev_ticks;
++    if (opcode == 2)
++        n->read_blocks += blocks;
++    else if (opcode == 1)
++        n->write_blocks += blocks;
++    n->depth_sum += outstanding;
++    n->depth_samples++;
++    if (outstanding > n->depth_max)
++        n->depth_max = outstanding;
++    if (!t_db || t_db > now)
++        return;
++    u64 lat = now - t_db;
++    u64 us = lat * 1000000 / mrs(CNTFRQ_EL0);
++    n->lat_count++;
++    n->lat_sum_ticks += lat;
++    if (lat > n->lat_max_ticks)
++        n->lat_max_ticks = lat;
++    n->lat_hist[us < 20 ? 0 : us < 100 ? 1 : us < 500 ? 2 : us < 2000 ? 3 : us < 10000 ? 4 : 5]++;
++    nwoas_qd.st.lat_count++;
++    nwoas_qd.st.lat_ticks_sum += lat;
++    if (lat > nwoas_qd.st.lat_ticks_max)
++        nwoas_qd.st.lat_ticks_max = lat;
++}
++
++static void nwoas_qd_release(int tag)
++{
++    struct nwoas_qd_slot *s = &nwoas_qd.slot[tag];
++    if (s->strict_barrier || s->state == NWOAS_QD_FLUSH)
++        nwoas_qd.barrier = false;
++    s->state = NWOAS_QD_FREE;
++    nwoas_qd.busy--;
++    nvme_qd_free(tag);
++}
++
++static void nwoas_qd_complete(const struct nvme_qd_cqe *c, int where)
++{
++    int tag = c->tag;
++    if (tag < 0 || tag >= 64 || nwoas_qd.slot[tag].state == NWOAS_QD_FREE) {
++        nwoas_qd_fault(); /* the engine checked in-flight; this is an HV bookkeeping bug */
++        return;
++    }
++    struct nwoas_qd_slot *s = &nwoas_qd.slot[tag];
++    u64 now = mrs(CNTPCT_EL0);
++    u64 dev = now - s->t_submit;
++    nwoas_qd.st.dev_ticks_sum += dev;
++    if (dev > nwoas_qd.st.dev_ticks_max)
++        nwoas_qd.st.dev_ticks_max = dev;
++    nwoas_qd.st.completed++;
++    nwoas_qd.st.done_by_ctx[where < NWOAS_QD_CTX_N ? where : NWOAS_QD_CTX_DRAIN]++;
++
++    if (nwoas_nvme_fp.faulted || !nwoas_nvme_fp.armed) {
++        nwoas_qd.st.discarded++;
++        nwoas_qd_release(tag);
++        return;
++    }
++    if (c->status) {
++        /* Same policy as a failed synchronous command: controller fatal, no retry. */
++        nwoas_qd.st.dev_errors++;
++        printf("NWOAS-S262 ANS tag %d state %u status 0x%x\n", tag, s->state, c->status);
++        nwoas_qd_release(tag);
++        nwoas_qd_fault();
++        return;
++    }
++    if (s->state == NWOAS_QD_RW && s->chain) {
++        /* FUA / write-through: the write is on ANS; now flush it before completing. */
++        if (nvme_qd_flush(tag) != NVME_QD_OK) {
++            nwoas_qd_release(tag);
++            nwoas_qd_fault();
++            return;
++        }
++        s->state = NWOAS_QD_CHAIN;
++        s->t_submit = mrs(CNTPCT_EL0);
++        nwoas_qd.st.chain_flushes++;
++        return;
++    }
++    u32 outstanding = nwoas_qd.busy + nwoas_qd_backlog();
++    u8 opcode = s->state == NWOAS_QD_FLUSH ? 0 : (s->write ? 1 : 2);
++    if (nwoas_qd_post(s->cid, NWOAS_NVME_SC_SUCCESS, 0))
++        nwoas_qd_pwr_done(1, opcode, s->blocks, now - s->t_first_submit, s->t_db, s->from_db,
++                          outstanding);
++    nwoas_qd_release(tag);
++}
++
++static u32 nwoas_qd_reap(int where)
++{
++    struct nvme_qd_cqe c[16];
++    u32 total = 0;
++    nwoas_qd.st.reap_calls++;
++    for (;;) {
++        u32 n = nvme_qd_reap(c, ARRAY_SIZE(c));
++        for (u32 i = 0; i < n; i++)
++            nwoas_qd_complete(&c[i], where);
++        total += n;
++        if (n < ARRAY_SIZE(c))
++            break;
++    }
++    if (nvme_qd_faulted() && !nwoas_nvme_fp.faulted)
++        nwoas_qd_fault();
++    if (total > nwoas_qd.st.reap_batch_max)
++        nwoas_qd.st.reap_batch_max = total;
++    return total;
++}
++
++/* Fetch guest SQ entries and submit them.  NS2 (host link) commands are executed
++ * synchronously, as today, but only from the SQ doorbell trap or the tick. */
++static void nwoas_qd_fetch(struct exc_info *ctx, int where)
++{
++    while (nwoas_nvme_fp.armed && !nwoas_nvme_fp.faulted && !nwoas_nvme_fp.link_busy &&
++           nwoas_nvme_fp.sq_head != nwoas_nvme_fp.sq_tail) {
++        if (nwoas_qd.barrier) {
++            nwoas_qd.st.stall_barrier++;
++            break;
++        }
++        /* Room in the guest CQ for every command already taken plus this one. */
++        if (nwoas_nvme_fp.cq_pending + nwoas_qd.busy + 1u >= nwoas_nvme_fp.cq_size) {
++            nwoas_qd.st.stall_cq++;
++            break;
++        }
++        struct nwoas_nvme_guest_cmd cmd;
++        void *src = nwoas_nvme_guest_ptr(nwoas_nvme_fp.sq_base +
++                                         (u64)nwoas_nvme_fp.sq_head * sizeof(cmd), sizeof(cmd));
++        if (!src) {
++            nwoas_qd_fault();
++            break;
++        }
++        dma_rmb();
++        memcpy(&cmd, src, sizeof(cmd));
++        u64 t_db = nwoas_pwr_sq_ts[nwoas_nvme_fp.sq_head % NWOAS_NVME_MAX_IO_DEPTH];
++        bool from_db = where == NWOAS_QD_CTX_SQDB;
++
++        int status = -1;
++        bool flush = false;
++        if (cmd.flags || cmd.metadata) {
++            status = NWOAS_NVME_SC_INVALID_FIELD;
++        } else if (cmd.opcode == 0 && cmd.nsid == 0xffffffff) {
++            if (cmd.cdw10 || cmd.cdw11 || cmd.cdw12 || cmd.cdw13 || cmd.cdw14 || cmd.cdw15)
++                status = NWOAS_NVME_SC_INVALID_FIELD;
++            else
++                flush = true;
++        } else if (cmd.nsid == 2) {
++            if (where != NWOAS_QD_CTX_SQDB && where != NWOAS_QD_CTX_TICK) {
++                nwoas_qd.st.stall_link++;
++                break;
++            }
++            u32 res = 0;
++            u64 t0 = mrs(CNTPCT_EL0);
++            int r = nwoas_nvme_link_execute(ctx, &cmd, &res);
++            u64 el = mrs(CNTPCT_EL0) - t0;
++            nwoas_nvme_diag.ns2_calls++;
++            if (el > nwoas_nvme_diag.max_ns2_ticks)
++                nwoas_nvme_diag.max_ns2_ticks = el;
++            if (r == NWOAS_NVME_EXEC_CANCELLED || r < 0)
++                break; /* state changed during the host round trip: re-evaluate later */
++            nwoas_qd_advance_sq();
++            nwoas_qd.st.link_cmds++;
++            nwoas_qd.st.posted_immediate++;
++            if (nwoas_qd_post(cmd.cid, (u16)r, res))
++                nwoas_qd_pwr_done(2, cmd.opcode, 0, el, t_db, from_db, 0);
++            continue;
++        } else if (cmd.nsid != 1) {
++            status = NWOAS_NVME_SC_INVALID_NSID;
++        } else if (cmd.opcode == 0) {
++            if (cmd.cdw10 || cmd.cdw11 || cmd.cdw12 || cmd.cdw13 || cmd.cdw14 || cmd.cdw15)
++                status = NWOAS_NVME_SC_INVALID_FIELD;
++            else
++                flush = true;
++        } else if (cmd.opcode != 1 && cmd.opcode != 2) {
++            status = NWOAS_NVME_SC_INVALID_OPCODE;
++        }
++
++        bool write = cmd.opcode == 1;
++        u64 lba = (u64)cmd.cdw10 | ((u64)cmd.cdw11 << 32);
++        u32 count = (cmd.cdw12 & 0xffff) + 1;
++        if (status < 0 && !flush) {
++            if ((cmd.cdw12 & 0x3fff0000) || (write ? (cmd.cdw13 & ~0xffu) : cmd.cdw13) ||
++                cmd.cdw14 || cmd.cdw15)
++                status = NWOAS_NVME_SC_INVALID_FIELD;
++            else if (lba >= NWOAS_NVME_NAMESPACE_LBAS || count > NWOAS_NVME_NAMESPACE_LBAS - lba)
++                status = NWOAS_NVME_SC_LBA_RANGE;
++            else if (write && (lba < NWOAS_NVME_WRITE_FIRST_LBA ||
++                               lba + count - 1 > NWOAS_NVME_WRITE_LAST_LBA))
++                status = NWOAS_NVME_SC_WRITE_RO;
++        }
++        if (status >= 0) { /* answered here, nothing reaches ANS */
++            nwoas_qd_advance_sq();
++            nwoas_qd.st.posted_immediate++;
++            if (nwoas_qd_post(cmd.cid, (u16)status, 0))
++                nwoas_qd_pwr_done(cmd.nsid, cmd.opcode, 0, 0, t_db, from_db, 0);
++            continue;
++        }
++
++        bool chain = !flush && write &&
++                     ((cmd.cdw12 & BIT(30)) || !nwoas_nvme_fp.cache_enabled);
++        bool alone = flush || (chain && (nwoas_qd.flags & NWOAS_QD_F_STRICT));
++        if (alone && nwoas_qd.busy) { /* barrier: wait until everything before it completed */
++            nwoas_qd.st.stall_barrier++;
++            break;
++        }
++        int tag = nvme_qd_alloc();
++        if (tag < 0) {
++            if (nvme_qd_faulted())
++                nwoas_qd_fault();
++            else
++                nwoas_qd.st.stall_tags++;
++            break;
++        }
++        int r = flush ? nvme_qd_flush(tag) :
++                        nvme_qd_rw(tag, write, lba, count, cmd.prp1, cmd.prp2);
++        if (r == NVME_QD_REFUSED) { /* PRP / fence refusal: same answer as nvme_rw_guest */
++            nvme_qd_free(tag);
++            nwoas_qd_advance_sq();
++            nwoas_qd.st.refused++;
++            nwoas_qd.st.posted_immediate++;
++            if (nwoas_qd_post(cmd.cid, NWOAS_NVME_SC_INVALID_FIELD, 0))
++                nwoas_qd_pwr_done(1, cmd.opcode, 0, 0, t_db, from_db, 0);
++            continue;
++        }
++        if (r != NVME_QD_OK) {
++            nvme_qd_free(tag);
++            nwoas_qd_fault();
++            break;
++        }
++        u64 now = mrs(CNTPCT_EL0);
++        nwoas_qd.slot[tag] = (struct nwoas_qd_slot){
++            .state = flush ? NWOAS_QD_FLUSH : NWOAS_QD_RW,
++            .write = write,
++            .chain = chain,
++            .strict_barrier = alone,
++            .from_db = from_db,
++            .cid = cmd.cid,
++            .blocks = flush ? 0 : count,
++            .t_db = t_db,
++            .t_submit = now,
++            .t_first_submit = now,
++        };
++        nwoas_qd.busy++;
++        if (alone)
++            nwoas_qd.barrier = true;
++        nwoas_qd_advance_sq();
++        nwoas_qd.st.submitted++;
++        if (flush)
++            nwoas_qd.st.flushes++;
++        else if (write)
++            nwoas_qd.st.writes++;
++        else
++            nwoas_qd.st.reads++;
++        if (nwoas_qd.busy > nwoas_qd.st.inflight_max)
++            nwoas_qd.st.inflight_max = nwoas_qd.busy;
++        nwoas_qd.st.inflight_sum += nwoas_qd.busy;
++        nwoas_qd.st.inflight_samples++;
++        if ((nwoas_qd.flags & NWOAS_QD_F_IRQ) && !nwoas_qd.irq_storm && !nwoas_nvmeqd_irq_live)
++            nvme_qd_irq_arm(nwoas_qd_icpu());
++    }
++}
++
++static void nwoas_qd_check_timeouts(void)
++{
++    if (!nwoas_qd.busy || nwoas_nvme_fp.faulted)
++        return;
++    u64 now = mrs(CNTPCT_EL0), limit = mrs(CNTFRQ_EL0); /* 1 s, as NVME_TIMEOUT */
++    for (int t = 0; t < 64; t++)
++        if (nwoas_qd.slot[t].state != NWOAS_QD_FREE && now - nwoas_qd.slot[t].t_submit > limit) {
++            nwoas_qd.st.timeouts++;
++            printf("NWOAS-S262 ANS tag %d timed out (state %u)\n", t, nwoas_qd.slot[t].state);
++            nwoas_qd_fault(); /* the tag is never freed: a late DMA cannot meet a reused tag */
++            return;
++        }
++}
++
++/* Raise/lower the vIRQ 900 level once and wake the NVMe IRQ CPU on a rising edge. */
++static void nwoas_qd_finish(u16 pending_before)
++{
++    nwoas_nvme_fp.deferred = false;
++    nwoas_nvme_fastpath_update_irq();
++    int icpu = nwoas_qd_icpu();
++    if (!pending_before && nwoas_nvme_fp.cq_pending && !(nwoas_qd.flags & NWOAS_QD_F_NOKICK) &&
++        icpu >= 0 && (int)smp_id() != icpu) {
++        smp_send_ipi(icpu);
++        nwoas_qd.st.kicks++;
++    }
++}
++
++static void nwoas_qd_service(struct exc_info *ctx, int where)
++{
++    u16 before = nwoas_nvme_fp.cq_pending;
++    nwoas_qd_reap(where);
++    nwoas_qd_fetch(ctx, where);
++    if (where == NWOAS_QD_CTX_TICK) {
++        nwoas_qd_check_timeouts();
++        nvme_qd_mailbox();
++    }
++    nwoas_qd_finish(before);
++}
++
++/* Wait for every in-flight command (posting its completion while the guest CQ is
++ * still the armed one).  Called before the guest queues change. */
++static bool nwoas_qd_drain(void)
++{
++    if (!nwoas_qd.active || !nwoas_qd.busy)
++        return true;
++    u16 before = nwoas_nvme_fp.cq_pending;
++    u64 t0 = mrs(CNTPCT_EL0);
++    nwoas_qd.st.drains++;
++    if (nwoas_nvme_fp.faulted) { /* one pass only: tags of a dead fast path are not reused */
++        nwoas_qd_reap(NWOAS_QD_CTX_DRAIN);
++        nwoas_qd.st.drain_fail += nwoas_qd.busy != 0;
++        return !nwoas_qd.busy;
++    }
++    u64 deadline = timeout_calculate(2000000);
++    while (nwoas_qd.busy) {
++        nwoas_qd_reap(NWOAS_QD_CTX_DRAIN);
++        if (nwoas_nvme_fp.faulted && nwoas_qd.busy) {
++            nwoas_qd_reap(NWOAS_QD_CTX_DRAIN);
++            break;
++        }
++        if (nwoas_qd.busy && timeout_expired(deadline)) {
++            nwoas_qd.st.timeouts++;
++            nwoas_qd_fault();
++            break;
++        }
++    }
++    u64 dt = mrs(CNTPCT_EL0) - t0;
++    if (dt > nwoas_qd.st.drain_ticks_max)
++        nwoas_qd.st.drain_ticks_max = dt;
++    nwoas_qd.st.drain_fail += nwoas_qd.busy != 0;
++    nwoas_qd_finish(before);
++    return !nwoas_qd.busy;
++}
++
++/* hv_exc_irq() -> (hv_exc_entry, bhl) -> here -> hv_exc_exit (vIRQ 900 bridged on the IRQ CPU). */
++void nwoas_nvmeqd_irq(struct exc_info *ctx)
++{
++    nwoas_qd.st.irqs++;
++    if (!nwoas_qd.active) {
++        nvme_qd_irq_disarm();
++        return;
++    }
++    u16 before = nwoas_nvme_fp.cq_pending;
++    u32 n = nwoas_qd_reap(NWOAS_QD_CTX_IRQ);
++    if (n) {
++        nwoas_qd.idle_empty_irqs = 0;
++    } else {
++        nwoas_qd.st.irq_empty++;
++        /* Nothing outstanding and still interrupted: a stuck line.  Stop using the
++         * IRQ for this boot; the doorbell/tick polling keeps working. */
++        if (!nwoas_qd.busy && ++nwoas_qd.idle_empty_irqs >= 32) {
++            nwoas_qd.irq_storm = true;
++            nwoas_qd.st.storm++;
++            nvme_qd_irq_disarm();
++            printf("NWOAS-S262 ANS IRQ looks stuck (32 empty IRQs, nothing in flight): "
++                   "polling only\n");
++        }
++    }
++    nwoas_qd_fetch(ctx, NWOAS_QD_CTX_IRQ);
++    nwoas_qd_finish(before);
++    if (!nwoas_qd.irq_storm)
++        nvme_qd_irq_unmask();
++}
++
++static u64 nwoas_qd_config(u64 depth, u64 flags)
++{
++    if (nwoas_qd.active)
++        return 0;
++    if (!depth)
++        return 1; /* explicit "off": legacy synchronous path */
++    if (depth > NVME_QD_MAX_DEPTH || (flags & ~(u64)NWOAS_QD_F_ALL))
++        return 0;
++    /* Before UEFI or Windows touched the controller, I/O idle. */
++    if (nwoas_nvme_fp.armed || nwoas_nvme_fp.faulted || nwoas_nvme_fp.link_busy ||
++        nwoas_nvme_fp.lifecycle_epoch || nwoas_nvme_fp.commands ||
++        (s229_enabled && (s229_front.control.csts & 1)))
++        return 0;
++    int irq = nvme_qd_setup(depth, flags & NWOAS_QD_F_IRQ);
++    if (irq < 0)
++        return 0;
++    if (!irq)
++        flags &= ~(u64)NWOAS_QD_F_IRQ;
++    memset(&nwoas_qd, 0, sizeof(nwoas_qd));
++    nwoas_qd.depth = depth;
++    nwoas_qd.flags = flags;
++    nwoas_qd.irq = irq;
++    nwoas_qd.active = true;
++    printf("NWOAS-S262 NVMe QD=%lu flags=0x%lx irq=%d armed (CPU %d)\n", depth, flags, irq,
++           nwoas_qd_icpu());
++    return (1ULL << 63) | ((u64)irq << 32) | (depth << 8) | flags;
++}
++
++static u64 nwoas_qd_snapshot(u64 ptr, u64 size)
++{
++    struct nwoas_qd_stats *o = &nwoas_qd.st;
++    if (!ptr || size < sizeof(*o))
++        return 0;
++    struct nvme_qd_info in;
++    nvme_qd_get_info(&in);
++    o->sig_version = (NWOAS_QD_SIG << 32) | NWOAS_QD_VERSION;
++    o->depth = nwoas_qd.depth;
++    o->flags = nwoas_qd.flags | ((u64)nwoas_qd.irq_storm << 8) | ((u64)nwoas_qd.barrier << 9);
++    o->irq = nwoas_qd.irq;
++    o->eng_active = in.active;
++    o->eng_depth = in.depth;
++    o->eng_irq = in.irq;
++    o->eng_faulted = in.faulted;
++    o->eng_inflight = in.inflight_mask;
++    o->eng_alloc = in.alloc_mask;
++    o->eng_bad_tag = in.bad_tag;
++    o->eng_inval_fail = in.inval_fail;
++    o->eng_stash_max = in.stash_max;
++    o->eng_sync_cmds = in.sync_cmds;
++    o->eng_sync_drain_waits = in.sync_drain_waits;
++    o->busy_now = nwoas_qd.busy;
++    o->cntfrq = mrs(CNTFRQ_EL0);
++    memcpy((void *)ptr, o, sizeof(*o));
++    return sizeof(*o);
++}

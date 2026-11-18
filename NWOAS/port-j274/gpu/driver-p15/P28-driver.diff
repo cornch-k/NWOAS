@@ -1,0 +1,947 @@
+diff --git a/drivers/apple-agx/mesa/d3d11/agx_wddm2_ddi.cpp b/drivers/apple-agx/mesa/d3d11/agx_wddm2_ddi.cpp
+index 5d1e175..88ac609 100644
+--- a/drivers/apple-agx/mesa/d3d11/agx_wddm2_ddi.cpp
++++ b/drivers/apple-agx/mesa/d3d11/agx_wddm2_ddi.cpp
+@@ -1329,37 +1329,67 @@ dxgi_receipt(const char *stage, HRESULT hr, UINT a, UINT b)
+    AgxD3d10WindowsDiagnostic(stage, hr, values, 2u);
+ }
+ 
+-/* Blt1 adds a source rectangle; the whole source subresource is Blt. */
++/* Blt1 adds a source rectangle. NWOAS-J274 PATCH P28: a sub-rectangle is
++ * no longer refused; both rectangles come from the runtime and the GPU blit
++ * stretches between them (Stretch) or copies 1:1 clipped (no Stretch). */
+ HRESULT APIENTRY
+ Blt1(DXGI_DDI_ARG_BLT1 *args)
+ {
+    if (!args)
+       return E_INVALIDARG;
+-   D3D10DDI_HRESOURCE hSrc = {(void *)args->hSrcResource};
+-   Resource *src = CastResource(hSrc);
+-   struct pipe_resource *res = src ? src->resource : NULL;
+-   const UINT level = res ? args->SrcSubresource % (res->last_level + 1u) : 0u;
+-   const bool whole = res && args->SrcLeft == 0 && args->SrcTop == 0 &&
+-                      args->SrcRight == u_minify(res->width0, level) &&
+-                      args->SrcBottom == u_minify(res->height0, level);
+-   if (!whole) {
+-      dxgi_receipt("reject-dxgi-blt1-subrect", E_NOTIMPL, args->SrcRight - args->SrcLeft,
+-                   args->SrcBottom - args->SrcTop);
++   Device *device = CastDevice(args->hDevice);
++   Resource *source = CastResource(args->hSrcResource);
++   Resource *destination = CastResource(args->hDstResource);
++   struct pipe_resource *src = source ? source->resource : NULL;
++   struct pipe_resource *dst = destination ? destination->resource : NULL;
++   UINT shape[16] = {args->Flags.Value, args->SrcLeft, args->SrcTop, args->SrcRight,
++      args->SrcBottom, args->DstLeft, args->DstTop, args->DstRight, args->DstBottom,
++      src ? src->width0 : 0u, src ? src->height0 : 0u,
++      dst ? dst->width0 : 0u, dst ? dst->height0 : 0u,
++      (UINT)args->Rotate, (UINT)(source && source->presentation),
++      (UINT)(destination && destination->presentation)};
++   static volatile LONG blt1Receipts;
++   if (InterlockedIncrement(&blt1Receipts) <= 12)
++      AgxD3d10WindowsDiagnostic("measure-dxgi-blt1", S_OK, shape, 16u);
++   if (!device || !src || !dst || source == destination ||
++       source->owner_device != device || destination->owner_device != device ||
++       src->target == PIPE_BUFFER || dst->target == PIPE_BUFFER ||
++       (args->Flags.Value & ~0xfu)) {
++      AgxD3d10WindowsDiagnostic("reject-dxgi-blt1", E_INVALIDARG, shape, 16u);
++      return E_INVALIDARG;
++   }
++   if (args->Rotate != DXGI_DDI_MODE_ROTATION_IDENTITY) {
++      AgxD3d10WindowsDiagnostic("reject-dxgi-blt1-rotate", E_NOTIMPL, shape, 16u);
+       return E_NOTIMPL;
+    }
+-   DXGI_DDI_ARG_BLT blt = {};
+-   blt.hDevice = args->hDevice;
+-   blt.hDstResource = args->hDstResource;
+-   blt.DstSubresource = args->DstSubresource;
+-   blt.DstLeft = args->DstLeft;
+-   blt.DstTop = args->DstTop;
+-   blt.DstRight = args->DstRight;
+-   blt.DstBottom = args->DstBottom;
+-   blt.hSrcResource = args->hSrcResource;
+-   blt.SrcSubresource = args->SrcSubresource;
+-   blt.Flags = args->Flags;
+-   blt.Rotate = args->Rotate;
+-   return dxgi11.pfnBlt(&blt);
++   const UINT srcMips = (UINT)src->last_level + 1u, dstMips = (UINT)dst->last_level + 1u;
++   const UINT srcLevel = args->SrcSubresource % srcMips, dstLevel = args->DstSubresource % dstMips;
++   const UINT srcLayer = args->SrcSubresource / srcMips, dstLayer = args->DstSubresource / dstMips;
++   const UINT srcW = u_minify(src->width0, srcLevel), srcH = u_minify(src->height0, srcLevel);
++   const UINT dstW = u_minify(dst->width0, dstLevel), dstH = u_minify(dst->height0, dstLevel);
++   const UINT sr = MIN2(args->SrcRight, srcW), sb = MIN2(args->SrcBottom, srcH);
++   const UINT dr = MIN2(args->DstRight, dstW), db = MIN2(args->DstBottom, dstH);
++   if (args->SrcLeft >= sr || args->SrcTop >= sb || args->DstLeft >= dr ||
++       args->DstTop >= db || srcLayer >= MAX2(src->array_size, 1u) ||
++       dstLayer >= MAX2(dst->array_size, 1u)) {
++      AgxD3d10WindowsDiagnostic("reject-dxgi-blt1-rect", E_INVALIDARG, shape, 16u);
++      return E_INVALIDARG;
++   }
++   struct pipe_box srcBox = {}, dstBox = {};
++   srcBox.x = (int)args->SrcLeft; srcBox.y = (int)args->SrcTop;
++   srcBox.width = (int)(sr - args->SrcLeft); srcBox.height = (int)(sb - args->SrcTop);
++   dstBox.x = (int)args->DstLeft; dstBox.y = (int)args->DstTop;
++   dstBox.width = (int)(dr - args->DstLeft); dstBox.height = (int)(db - args->DstTop);
++   srcBox.depth = dstBox.depth = 1;
++   if (!(args->Flags.Value & 0x4u)) {
++      srcBox.width = dstBox.width = MIN2(srcBox.width, dstBox.width);
++      srcBox.height = dstBox.height = MIN2(srcBox.height, dstBox.height);
++   }
++   HRESULT hr = AgxD3d10WindowsResourceBlt(device->windows, dst, dstLevel, dstLayer,
++      &dstBox, src, srcLevel, srcLayer, &srcBox);
++   if (FAILED(hr))
++      AgxD3d10WindowsDiagnostic("reject-dxgi-blt1-gpu", hr, shape, 16u);
++   return hr;
+ }
+ 
+ /* Present1 presents one or more surfaces; one surface is Present. EXP1328:
+@@ -1379,10 +1409,11 @@ Present1(DXGI_DDI_ARG_PRESENT1 *args)
+    }
+    if (args->SurfacesToPresent > 1) {
+       Device *device = CastDevice(args->hDevice);
++      /* P28: Blt or Flip plus AllowTearing / AllowFlexibleRefresh /
++       * NoScanoutTransform; every flip interval (as Present). */
+       bool valid = device && args->hDstResource == 0 &&
+-         (args->Flags.Value == 0x1u || args->Flags.Value == 0x2u) &&
+-         (args->FlipInterval == DXGI_DDI_FLIP_INTERVAL_IMMEDIATE ||
+-          args->FlipInterval == DXGI_DDI_FLIP_INTERVAL_ONE);
++         ((args->Flags.Value & 0x3u) == 0x1u || (args->Flags.Value & 0x3u) == 0x2u) &&
++         !(args->Flags.Value & ~0x73u) && (UINT)args->FlipInterval <= 5u;
+       std::vector<AGX_D3D10_WINDOWS_PRESENTATION_RESOURCE *> surfaces;
+       for (UINT i = 0; valid && i < args->SurfacesToPresent; ++i) {
+          Resource *resource = CastResource(args->phSurfacesToPresent[i].hSurface);
+diff --git a/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py b/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
+index eef807b..b05145e 100644
+--- a/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
++++ b/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
+@@ -2916,17 +2916,70 @@ _Present('''),
+       pPresentData && pPresentData->pDXGIContext != NULL};
+    AgxD3d10WindowsDiagnostic("native-present-entry",
+       pPresentData ? S_OK : E_INVALIDARG, presentValues, 6u);
+-   if (!pPresentData || pPresentData->hDstResource != 0 ||
+-       pPresentData->SrcSubResourceIndex != 0 ||
+-       (pPresentData->Flags.Value != 0x1u && pPresentData->Flags.Value != 0x2u) ||
+-       (pPresentData->FlipInterval != DXGI_DDI_FLIP_INTERVAL_IMMEDIATE &&
+-        pPresentData->FlipInterval != DXGI_DDI_FLIP_INTERVAL_ONE))
++   /* NWOAS-J274 PATCH P28: Blt (0x1) or Flip (0x2), with or without
++    * AllowTearing, AllowFlexibleRefresh or NoScanoutTransform (they do not
++    * change what is shown); every DXGI flip interval including
++    * IMMEDIATE_ALLOW_TEARING. Stereo flags stay refused. */
++   const UINT presentKind = pPresentData ? (pPresentData->Flags.Value & 0x3u) : 0u;
++   if (!pPresentData || (presentKind != 0x1u && presentKind != 0x2u) ||
++       (pPresentData->Flags.Value & ~0x73u) ||
++       (UINT)pPresentData->FlipInterval > 5u) {
++      AgxD3d10WindowsDiagnostic("reject-dxgi-present", E_INVALIDARG,
++         presentValues, 6u);
+       return E_INVALIDARG;
++   }
+    struct Device *device = CastDevice(pPresentData->hDevice);
+    Resource *resource = CastResource(pPresentData->hSurfaceToPresent);
+-   if (!device || !resource || resource->owner_device != device ||
+-       !resource->presentation)
++   if (!device || !resource || resource->owner_device != device) {
++      AgxD3d10WindowsDiagnostic("reject-dxgi-present-source", E_INVALIDARG,
++         presentValues, 6u);
++      return E_INVALIDARG;
++   }
++   if (pPresentData->hDstResource != 0 || pPresentData->SrcSubResourceIndex != 0) {
++      /* The runtime names the destination (or a subresource): copy the
++       * whole source there at the destination's own size, then present the
++       * destination. */
++      Resource *target = CastResource(pPresentData->hDstResource);
++      struct pipe_resource *dst = target ? target->resource : NULL;
++      struct pipe_resource *src = resource->resource;
++      const UINT srcMips = src ? (UINT)src->last_level + 1u : 1u;
++      const UINT dstMips = dst ? (UINT)dst->last_level + 1u : 1u;
++      const UINT srcLevel = pPresentData->SrcSubResourceIndex % srcMips;
++      const UINT dstLevel = pPresentData->DstSubResourceIndex % dstMips;
++      UINT shape[10] = {presentValues[0], presentValues[1],
++         pPresentData->SrcSubResourceIndex, pPresentData->DstSubResourceIndex,
++         src ? src->width0 : 0u, src ? src->height0 : 0u,
++         dst ? dst->width0 : 0u, dst ? dst->height0 : 0u,
++         (UINT)(target && target->presentation), (UINT)(resource->presentation != NULL)};
++      AgxD3d10WindowsDiagnostic("measure-dxgi-present-dst", S_OK, shape, 10u);
++      if (!target || target == resource || target->owner_device != device ||
++          !target->presentation || !dst || !src) {
++         AgxD3d10WindowsDiagnostic("reject-dxgi-present-dst", E_INVALIDARG, shape, 10u);
++         return E_INVALIDARG;
++      }
++      struct pipe_box dstBox, srcBox;
++      memset(&dstBox, 0, sizeof(dstBox));
++      memset(&srcBox, 0, sizeof(srcBox));
++      dstBox.width = (int)((dst->width0 >> dstLevel) ? (dst->width0 >> dstLevel) : 1u);
++      dstBox.height = (int)((dst->height0 >> dstLevel) ? (dst->height0 >> dstLevel) : 1u);
++      srcBox.width = (int)((src->width0 >> srcLevel) ? (src->width0 >> srcLevel) : 1u);
++      srcBox.height = (int)((src->height0 >> srcLevel) ? (src->height0 >> srcLevel) : 1u);
++      dstBox.depth = srcBox.depth = 1;
++      HRESULT copied = AgxD3d10WindowsResourceBlt(device->windows, dst,
++         dstLevel, pPresentData->DstSubResourceIndex / dstMips, &dstBox,
++         src, srcLevel, pPresentData->SrcSubResourceIndex / srcMips, &srcBox);
++      if (FAILED(copied)) {
++         AgxD3d10WindowsDiagnostic("reject-dxgi-present-dst-copy", copied, shape, 10u);
++         return copied;
++      }
++      return AgxD3d10WindowsPresentationSubmit(
++         device->windows, target->presentation, pPresentData->pDXGIContext);
++   }
++   if (!resource->presentation) {
++      AgxD3d10WindowsDiagnostic("reject-dxgi-present-source", E_INVALIDARG,
++         presentValues, 6u);
+       return E_INVALIDARG;
++   }
+    return AgxD3d10WindowsPresentationSubmit(
+       device->windows, resource->presentation, pPresentData->pDXGIContext);'''),
+         ('''_GetGammaCaps( DXGI_DDI_ARG_GET_GAMMA_CONTROL_CAPS *GetCaps )
+@@ -3122,22 +3175,68 @@ _Present('''),
+ {
+    LOG_UNSUPPORTED_ENTRYPOINT();''','''_Blt(DXGI_DDI_ARG_BLT *Blt)
+ {
+-   if (!Blt || Blt->DstSubresource || Blt->SrcSubresource ||
+-       Blt->DstLeft || Blt->DstTop || Blt->DstRight != 2560 ||
+-       Blt->DstBottom != 1600 || (Blt->Flags.Value & ~0xfu))
++   /* NWOAS-J274 PATCH P28: the destination rectangle is the runtime's (a
++    * window-sized DXGI buffer, the redirection surface or a primary of the
++    * current mode); nothing here assumes a panel size. Present (0x8) may come
++    * with Stretch (0x4), Convert (0x2) or Resolve (0x1); the GPU blit
++    * stretches, converts BGRA<->RGBA and resolves. Any two resources of this
++    * device qualify, presentation or not. */
++   if (!Blt || (Blt->Flags.Value & ~0xfu))
+       return E_INVALIDARG;
+    Device *device = CastDevice(Blt->hDevice);
+    Resource *destination = CastResource(Blt->hDstResource);
+    Resource *source = CastResource(Blt->hSrcResource);
++   struct pipe_resource *dst = destination ? destination->resource : NULL;
++   struct pipe_resource *src = source ? source->resource : NULL;
++   static volatile LONG bltShapeReceipts;
++   if (InterlockedIncrement(&bltShapeReceipts) <= 12) {
++      UINT shape[16] = {Blt->Flags.Value, Blt->DstLeft, Blt->DstTop,
++         Blt->DstRight, Blt->DstBottom, Blt->DstSubresource, Blt->SrcSubresource,
++         dst ? dst->width0 : 0u, dst ? dst->height0 : 0u,
++         dst ? (UINT)dst->format : 0u, src ? src->width0 : 0u,
++         src ? src->height0 : 0u, src ? (UINT)src->format : 0u,
++         (UINT)(destination && destination->presentation),
++         (UINT)(source && source->presentation), (UINT)Blt->Rotate};
++      AgxD3d10WindowsDiagnostic("measure-dxgi-blt", S_OK, shape, 16u);
++   }
+    if (!device || !destination || !source || destination == source ||
+        destination->owner_device != device || source->owner_device != device ||
+-       !destination->presentation || !source->presentation)
++       !dst || !src || dst->target == PIPE_BUFFER || src->target == PIPE_BUFFER)
+       return E_INVALIDARG;
+-   if (Blt->Flags.Value != 0x8u ||
+-       Blt->Rotate != DXGI_DDI_MODE_ROTATION_IDENTITY)
++   if (Blt->Rotate != DXGI_DDI_MODE_ROTATION_IDENTITY)
+       return E_NOTIMPL;
+-   return AgxD3d10WindowsPresentationBlt(device->windows,
+-      destination->presentation, source->presentation);''')])
++   const UINT dstMips = (UINT)dst->last_level + 1u;
++   const UINT srcMips = (UINT)src->last_level + 1u;
++   const UINT dstLevel = Blt->DstSubresource % dstMips;
++   const UINT dstLayer = Blt->DstSubresource / dstMips;
++   const UINT srcLevel = Blt->SrcSubresource % srcMips;
++   const UINT srcLayer = Blt->SrcSubresource / srcMips;
++   UINT dstWidth = dst->width0 >> dstLevel, dstHeight = dst->height0 >> dstLevel;
++   UINT srcWidth = src->width0 >> srcLevel, srcHeight = src->height0 >> srcLevel;
++   if (!dstWidth) dstWidth = 1u;
++   if (!dstHeight) dstHeight = 1u;
++   if (!srcWidth) srcWidth = 1u;
++   if (!srcHeight) srcHeight = 1u;
++   UINT right = Blt->DstRight < dstWidth ? Blt->DstRight : dstWidth;
++   UINT bottom = Blt->DstBottom < dstHeight ? Blt->DstBottom : dstHeight;
++   if (dstLayer >= (dst->array_size ? dst->array_size : 1u) ||
++       srcLayer >= (src->array_size ? src->array_size : 1u) ||
++       Blt->DstLeft >= right || Blt->DstTop >= bottom)
++      return E_INVALIDARG;
++   struct pipe_box dstBox = {}, srcBox = {};
++   dstBox.x = (int)Blt->DstLeft; dstBox.y = (int)Blt->DstTop;
++   dstBox.width = (int)(right - Blt->DstLeft);
++   dstBox.height = (int)(bottom - Blt->DstTop); dstBox.depth = 1;
++   srcBox.width = (int)srcWidth; srcBox.height = (int)srcHeight; srcBox.depth = 1;
++   /* Without Stretch the copy is 1:1, clipped to the smaller extent. */
++   if (!(Blt->Flags.Value & 0x4u)) {
++      if (srcBox.width < dstBox.width) dstBox.width = srcBox.width;
++      else srcBox.width = dstBox.width;
++      if (srcBox.height < dstBox.height) dstBox.height = srcBox.height;
++      else srcBox.height = dstBox.height;
++   }
++   return AgxD3d10WindowsResourceBlt(device->windows, dst, dstLevel, dstLayer,
++      &dstBox, src, srcLevel, srcLayer, &srcBox);''')])
+     # Trace the existing DXGI boundary as one unit. Return values and argument
+     # guards stay unchanged; the process-local diagnostic preserves last-error.
+     dxgi_path = 'src/gallium/frontends/d3d10umd/DxgiFns.cpp'
+diff --git a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp b/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp
+index 5e34a95..2c099cc 100644
+--- a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp
++++ b/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp
+@@ -1346,6 +1346,51 @@ HRESULT AgxD3d10WindowsQueryResourceResidency(
+   }
+ }
+ 
++/* NWOAS-J274 PATCH P28: no fixed panel size. Every box comes from the
++ * caller (DXGI Blt rectangle, Present destination) or from the resources'
++ * own descriptors, so a mode change or another monitor needs nothing here.
++ * A size change between the boxes is a GPU stretch (linear filter); the
++ * pipe blit also converts BGRA<->RGBA and resolves a multisampled source. */
++static unsigned blt_minify(unsigned size,unsigned level) {
++  size>>=level; return size?size:1u;
++}
++static void blt_box_2d(int w,int h,struct pipe_box *box) {
++  memset(box,0,sizeof(*box));box->width=w;box->height=h;box->depth=1;
++}
++HRESULT AgxD3d10WindowsResourceBlt(
++    AGX_D3D10_WINDOWS_DEVICE *device,
++    struct pipe_resource *dst,UINT dstLevel,UINT dstLayer,
++    const struct pipe_box *dstBox,
++    struct pipe_resource *src,UINT srcLevel,UINT srcLayer,
++    const struct pipe_box *srcBox) {
++  if(!device || device->Stage!=AgxD3d10DeviceReady || !dst || !src ||
++     !dstBox || !srcBox || !device->Context || !device->Context->blit ||
++     dst->target==PIPE_BUFFER || src->target==PIPE_BUFFER ||
++     dstLevel>dst->last_level || srcLevel>src->last_level ||
++     dstBox->width<=0 || dstBox->height<=0 ||
++     srcBox->width<=0 || srcBox->height<=0 ||
++     dstBox->x<0 || dstBox->y<0 || srcBox->x<0 || srcBox->y<0 ||
++     (unsigned)(dstBox->x+dstBox->width)>blt_minify(dst->width0,dstLevel) ||
++     (unsigned)(dstBox->y+dstBox->height)>blt_minify(dst->height0,dstLevel) ||
++     (unsigned)(srcBox->x+srcBox->width)>blt_minify(src->width0,srcLevel) ||
++     (unsigned)(srcBox->y+srcBox->height)>blt_minify(src->height0,srcLevel) ||
++     dst->nr_samples>1u)
++    return E_INVALIDARG;
++  struct pipe_blit_info info={0};
++  info.dst.resource=dst;info.dst.level=dstLevel;info.dst.box=*dstBox;
++  info.dst.box.z=(int16_t)dstLayer;info.dst.box.depth=1;info.dst.format=dst->format;
++  info.src.resource=src;info.src.level=srcLevel;info.src.box=*srcBox;
++  info.src.box.z=(int16_t)srcLayer;info.src.box.depth=1;info.src.format=src->format;
++  info.mask=PIPE_MASK_RGBA;
++  info.filter=(dstBox->width!=srcBox->width || dstBox->height!=srcBox->height)?
++      PIPE_TEX_FILTER_LINEAR:PIPE_TEX_FILTER_NEAREST;
++  device->Context->blit(device->Context,&info);
++  device->Context->flush(device->Context,NULL,0);
++  return AgxD3d10WindowsFlushStatus(device);
++}
++
++/* Whole-resource copy between two presentation resources (CopyResource):
++ * the box is the resources' own size, which CopyResource requires equal. */
+ HRESULT AgxD3d10WindowsPresentationBlt(
+     AGX_D3D10_WINDOWS_DEVICE *device,
+     AGX_D3D10_WINDOWS_PRESENTATION_RESOURCE *destination,
+@@ -1354,23 +1399,19 @@ HRESULT AgxD3d10WindowsPresentationBlt(
+      destination==source || destination->Device!=device || source->Device!=device ||
+      !destination->RenderResource || !source->RenderResource ||
+      destination->Resource.Magic!=ADMISSION_UMD_RESOURCE_MAGIC ||
+-     source->Resource.Magic!=ADMISSION_UMD_RESOURCE_MAGIC ||
+-     !device->Context || !device->Context->blit)
++     source->Resource.Magic!=ADMISSION_UMD_RESOURCE_MAGIC)
+     return E_INVALIDARG;
+   enum pipe_format destinationFormat,sourceFormat;
+   if(!presentation_pipe_format(destination->RenderResource,&destinationFormat) ||
+      !presentation_pipe_format(source->RenderResource,&sourceFormat))
+     return E_INVALIDARG;
+-  struct pipe_blit_info info={0};
+-  info.dst.resource=destination->RenderResource;info.dst.level=0;
+-  info.dst.box.x=0;info.dst.box.y=0;info.dst.box.z=0;
+-  info.dst.box.width=2560;info.dst.box.height=1600;info.dst.box.depth=1;
+-  info.dst.format=destinationFormat;
+-  info.src.resource=source->RenderResource;info.src.level=0;
+-  info.src.box=info.dst.box;info.src.format=sourceFormat;
+-  info.mask=PIPE_MASK_RGBA;info.filter=PIPE_TEX_FILTER_NEAREST;
+-  device->Context->blit(device->Context,&info);
+-  return AgxD3d10WindowsFlushStatus(device);
++  struct pipe_box dstBox,srcBox;
++  blt_box_2d((int)destination->RenderResource->width0,
++             (int)destination->RenderResource->height0,&dstBox);
++  blt_box_2d((int)source->RenderResource->width0,
++             (int)source->RenderResource->height0,&srcBox);
++  return AgxD3d10WindowsResourceBlt(device,destination->RenderResource,0u,0u,
++      &dstBox,source->RenderResource,0u,0u,&srcBox);
+ }
+ 
+ #if defined(ADMISSION_UMD_PIPE_FACTORY_TEST)
+diff --git a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.h b/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.h
+index 50e323b..c32f44a 100644
+--- a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.h
++++ b/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.h
+@@ -156,6 +156,11 @@ HRESULT AgxD3d10WindowsPresentationBlt(
+     AGX_D3D10_WINDOWS_DEVICE *,
+     AGX_D3D10_WINDOWS_PRESENTATION_RESOURCE *,
+     AGX_D3D10_WINDOWS_PRESENTATION_RESOURCE *);
++struct pipe_box;
++HRESULT AgxD3d10WindowsResourceBlt(
++    AGX_D3D10_WINDOWS_DEVICE *,
++    struct pipe_resource *, UINT, UINT, const struct pipe_box *,
++    struct pipe_resource *, UINT, UINT, const struct pipe_box *);
+ #if defined(ADMISSION_UMD_PIPE_FACTORY_TEST)
+ struct _ADMISSION_UMD_DEVICE;
+ struct _ADMISSION_UMD_DEVICE *AgxD3d10WindowsRuntimeForTest(AGX_D3D10_WINDOWS_DEVICE *);
+diff --git a/drivers/apple-agx/render-admission/src/display.c b/drivers/apple-agx/render-admission/src/display.c
+index 8c6088e..9f69acf 100644
+--- a/drivers/apple-agx/render-admission/src/display.c
++++ b/drivers/apple-agx/render-admission/src/display.c
+@@ -2,36 +2,50 @@
+ 
+ C_ASSERT(sizeof(DXGKARG_UPDATEMONITORLINKINFO) == 16);
+ 
+-/* Fixed J313 mode2 measured from the retained DCP owner in EXP495.
+- * Active2560x1600,total2642x1682; fixed16:16 refresh3932151 derives266630kHz
+- * at the reference clock precision. This describes the inherited mode only. */
+-static VOID AdmissionFillPanelSignalInfo(D3DKMDT_VIDEO_SIGNAL_INFO *Signal) {
+-  RtlZeroMemory(Signal, sizeof(*Signal));
+-  Signal->VideoStandard = D3DKMDT_VSS_OTHER;
++/* NWOAS-J274 PATCH P28: the signal of any source size (the native one the
++ * POST display handed over, or a scaled one) is that size on the board's
++ * panel timing: fixed blanking and a fixed frame rate.  Only the timing is a
++ * board property; no active size is.
++ *   J274: CEA-861 1080p60 blanking (280 x 45) at 148500000 / 2475000 Hz.
++ *   J313: the panel timing EXP495 measured from the retained DCP owner
++ *         (82 x 82 blanking, 266630000 / 4443844 Hz).
++ * When a size's total equals the frame-rate denominator (the measured
++ * mode), the signal is that exact mode, bit for bit as before P28. */
+ #if defined(APPLE_AGX_BOARD_J274)
+-  /* NWOAS-J274 PATCH P15: CEA-861 1080p60 (148.5 MHz, 2200x1125). */
+-  Signal->ActiveSize.cx = 1920u;
+-  Signal->ActiveSize.cy = 1080u;
+-  Signal->TotalSize.cx = 2200u;
+-  Signal->TotalSize.cy = 1125u;
+-  Signal->PixelRate = 148500000ULL;
+-  Signal->HSyncFreq.Numerator = 148500000u;
+-  Signal->HSyncFreq.Denominator = 2200u;
+-  Signal->VSyncFreq.Numerator = 148500000u;
+-  Signal->VSyncFreq.Denominator = 2200u * 1125u;
+-  Signal->ScanLineOrdering = D3DDDI_VSSLO_PROGRESSIVE;
++#define ADMISSION_PANEL_HBLANK 280u
++#define ADMISSION_PANEL_VBLANK 45u
++#define ADMISSION_PANEL_RATE_NUM 148500000ULL
++#define ADMISSION_PANEL_RATE_DEN 2475000ULL
+ #else
+-  Signal->ActiveSize.cx = 2560u;
+-  Signal->ActiveSize.cy = 1600u;
+-  Signal->TotalSize.cx = 2642u;
+-  Signal->TotalSize.cy = 1682u;
+-  Signal->PixelRate = 266630000ULL;
+-  Signal->HSyncFreq.Numerator = 266630000u;
+-  Signal->HSyncFreq.Denominator = 2642u;
+-  Signal->VSyncFreq.Numerator = 266630000u;
+-  Signal->VSyncFreq.Denominator = 2642u * 1682u;
+-  Signal->ScanLineOrdering = D3DDDI_VSSLO_PROGRESSIVE;
++#define ADMISSION_PANEL_HBLANK 82u
++#define ADMISSION_PANEL_VBLANK 82u
++#define ADMISSION_PANEL_RATE_NUM 266630000ULL
++#define ADMISSION_PANEL_RATE_DEN 4443844ULL
+ #endif
++static VOID AdmissionFillSignalInfo(D3DKMDT_VIDEO_SIGNAL_INFO *Signal,
++                                    ULONG Width, ULONG Height) {
++  ULONGLONG totalX = (ULONGLONG)Width + ADMISSION_PANEL_HBLANK;
++  ULONGLONG totalY = (ULONGLONG)Height + ADMISSION_PANEL_VBLANK;
++  ULONGLONG hsync;
++  RtlZeroMemory(Signal, sizeof(*Signal));
++  Signal->VideoStandard = D3DKMDT_VSS_OTHER;
++  Signal->ActiveSize.cx = Width;
++  Signal->ActiveSize.cy = Height;
++  Signal->TotalSize.cx = (UINT)totalX;
++  Signal->TotalSize.cy = (UINT)totalY;
++  Signal->VSyncFreq.Numerator = (UINT)ADMISSION_PANEL_RATE_NUM;
++  Signal->VSyncFreq.Denominator = (UINT)ADMISSION_PANEL_RATE_DEN;
++  Signal->ScanLineOrdering = D3DDDI_VSSLO_PROGRESSIVE;
++  if (totalX * totalY == ADMISSION_PANEL_RATE_DEN) {
++    Signal->PixelRate = ADMISSION_PANEL_RATE_NUM;
++    Signal->HSyncFreq.Numerator = (UINT)ADMISSION_PANEL_RATE_NUM;
++    Signal->HSyncFreq.Denominator = (UINT)totalX;
++    return;
++  }
++  hsync = (ADMISSION_PANEL_RATE_NUM * totalY) / ADMISSION_PANEL_RATE_DEN;
++  Signal->HSyncFreq.Numerator = (UINT)hsync;
++  Signal->HSyncFreq.Denominator = 1u;
++  Signal->PixelRate = hsync * totalX;
+ }
+ 
+ _Use_decl_annotations_ NTSTATUS AdmissionDdiUpdateMonitorLinkInfo(
+@@ -261,32 +275,7 @@ static VOID AdmissionDisplayFillScalingSupport(
+  * mode's active size on the panel's blanking and refresh rate. */
+ static VOID AdmissionFillScaledSignalInfo(D3DKMDT_VIDEO_SIGNAL_INFO *Signal,
+                                           ULONG Width, ULONG Height) {
+-  ULONGLONG hsync;
+-  AdmissionFillPanelSignalInfo(Signal);
+-  if (Width == APPLE_AGX_SCANOUT_J313_WIDTH &&
+-      Height == APPLE_AGX_SCANOUT_J313_HEIGHT)
+-    return;
+-  Signal->ActiveSize.cx = Width;
+-  Signal->ActiveSize.cy = Height;
+-#if defined(APPLE_AGX_BOARD_J274)
+-  /* NWOAS-J274 P21: the native signal is CEA-861 1080p60 (148.5 MHz,
+-   * 2200x1125, blanking 280x45).  A scaled size keeps that blanking and the
+-   * exact 148500000 / (2200 * 1125) = 60 Hz VSyncFreq set above, so
+-   * HSyncFreq = 60 * TotalSize.cy and VSyncFreq stay consistent. */
+-  Signal->TotalSize.cx = Width + 280u;
+-  Signal->TotalSize.cy = Height + 45u;
+-  hsync = (148500000ULL * (ULONGLONG)Signal->TotalSize.cy) /
+-          (2200ULL * 1125ULL);
+-#else
+-  Signal->TotalSize.cx = Width + 82u;
+-  Signal->TotalSize.cy = Height + 82u;
+-  /* VSyncFreq stays the panel's exact 266630000 / (2642 * 1682) Hz. */
+-  hsync = (266630000ULL * (ULONGLONG)Signal->TotalSize.cy) /
+-          (2642ULL * 1682ULL);
+-#endif
+-  Signal->HSyncFreq.Numerator = (UINT)hsync;
+-  Signal->HSyncFreq.Denominator = 1u;
+-  Signal->PixelRate = hsync * (ULONGLONG)Signal->TotalSize.cx;
++  AdmissionFillSignalInfo(Signal, Width, Height);
+ }
+ 
+ static BOOLEAN AdmissionDisplayTargetIsNative(ULONG Width, ULONG Height) {
+diff --git a/drivers/apple-agx/render-admission/src/gdi_windows.c b/drivers/apple-agx/render-admission/src/gdi_windows.c
+index 0b42c00..1876586 100644
+--- a/drivers/apple-agx/render-admission/src/gdi_windows.c
++++ b/drivers/apple-agx/render-admission/src/gdi_windows.c
+@@ -113,17 +113,20 @@ _Use_decl_annotations_ NTSTATUS AdmissionVisibleAgxResolveDestination(
+   if (entry->Reserved != 0u || entry->WriteOperation == 0u ||
+       entry->SegmentId != ADMISSION_MEMORY_LOCAL_SEGMENT ||
+       entry->PhysicalAddress.QuadPart <= 0 ||
+-      description->Width != APPLE_AGX_SCANOUT_J313_WIDTH ||
+-      description->Height != APPLE_AGX_SCANOUT_J313_HEIGHT ||
+-      description->Pitch != APPLE_AGX_SCANOUT_J313_STRIDE ||
++      /* P28: the committed source mode's primary (native or scaled). */
++      Adapter->CommittedWidth == 0u || Adapter->CommittedHeight == 0u ||
++      description->Width != Adapter->CommittedWidth ||
++      description->Height != Adapter->CommittedHeight ||
++      description->Pitch != Adapter->CommittedStride ||
+       description->BytesPerPixel != 4u ||
+-      description->Size != APPLE_AGX_SCANOUT_J313_SURFACE_SIZE ||
++      description->Size != (ULONGLONG)Adapter->CommittedStride *
++                               Adapter->CommittedHeight ||
+       description->Format != (UINT)Adapter->CommittedFormat ||
+       !AdmissionAllocationAlign64K(description->Size, &aligned_size) ||
+       !NT_SUCCESS(AdmissionMemoryRuntimeResolveLocal(
+           Adapter, (ULONGLONG)entry->PhysicalAddress.QuadPart,
+           aligned_size, 0u, &view)) ||
+-      view.Bytes < APPLE_AGX_SCANOUT_J313_SURFACE_SIZE ||
++      view.Bytes < description->Size ||
+       view.HostPhysicalAddress > MAXULONGLONG - view.Bytes ||
+       RenderDestination->HostPhysicalAddress >
+           MAXULONGLONG - RenderDestination->Bytes ||
+@@ -132,7 +135,7 @@ _Use_decl_annotations_ NTSTATUS AdmissionVisibleAgxResolveDestination(
+        RenderDestination->HostPhysicalAddress <
+            view.HostPhysicalAddress + view.Bytes))
+     return STATUS_INVALID_ADDRESS;
+-  view.Bytes = APPLE_AGX_SCANOUT_J313_SURFACE_SIZE;
++  view.Bytes = description->Size;
+   *VisibleDestination = view;
+   *AllocationToken = (ULONGLONG)(ULONG_PTR)opened;
+   return STATUS_SUCCESS;
+diff --git a/drivers/apple-agx/render-admission/src/lifecycle.c b/drivers/apple-agx/render-admission/src/lifecycle.c
+index 8bf4e3e..fc98b36 100644
+--- a/drivers/apple-agx/render-admission/src/lifecycle.c
++++ b/drivers/apple-agx/render-admission/src/lifecycle.c
+@@ -440,6 +440,18 @@ _Use_decl_annotations_ NTSTATUS AdmissionDdiStartDevice(
+                 sizeof(context->PostDisplayInformation));
+   status = context->Interface.DxgkCbAcquirePostDisplayOwnership(
+       context->Interface.DeviceHandle, &context->PostDisplayInformation);
++  /* NWOAS-J274 PATCH P28: the native source is the POST display's own
++   * geometry (any monitor m1n1/iBoot brought up), adopted before the route
++   * check and every surface size below.  A geometry DCP cannot scan leaves
++   * it unadopted and the route refuses it as before; no POST mode leaves it
++   * to the broker's QUERY (AppleAgxScanoutQualify). */
++  AppleAgxScanoutNative.Width = 0u;
++  AppleAgxScanoutNative.Height = 0u;
++  AppleAgxScanoutNative.Stride = 0u;
++  AppleAgxScanoutNative.SurfaceBytes = 0ULL;
++  if (NT_SUCCESS(status) && context->PostDisplayInformation.Width != 0u)
++    (void)AppleAgxScanoutNativeAdopt(context->PostDisplayInformation.Width,
++                                     context->PostDisplayInformation.Height);
+   post_display_route = AppleAgxPostDisplayRoute(
+       NT_SUCCESS(status) ? APPLE_AGX_SCANOUT_TRUE : APPLE_AGX_SCANOUT_FALSE,
+       context->PostDisplayInformation.Width,
+diff --git a/drivers/apple-agx/render-admission/src/render_present.c b/drivers/apple-agx/render-admission/src/render_present.c
+index 7ce9e65..0f10979 100644
+--- a/drivers/apple-agx/render-admission/src/render_present.c
++++ b/drivers/apple-agx/render-admission/src/render_present.c
+@@ -14,13 +14,22 @@ static int RectContains(const APPLE_AGX_GDI_RECT *outer,
+       inner->Bottom <= outer->Bottom;
+ }
+ 
++/* NWOAS-J274 PATCH P28: 32-bpp BGRA either with alpha (21, A8R8G8B8) or
++ * without (22, X8R8G8B8). An X8 destination ignores alpha, so any source
++ * fits it; an A8 destination needs an A8 source (an X8 one has undefined
++ * alpha). Sizes come only from the allocations and the rectangles. */
++static int FormatPairValid(unsigned int Source, unsigned int Destination) {
++  return (Destination == 22u && (Source == 21u || Source == 22u)) ||
++         (Destination == 21u && Source == 21u);
++}
++
+ static int GeometryValid(const ADMISSION_PRESENT_BLT_COMMAND *c) {
+   const ADMISSION_ALLOCATION_DESCRIPTION *s = &c->SourceDescription;
+   const ADMISSION_ALLOCATION_DESCRIPTION *d = &c->DestinationDescription;
+   return AdmissionAllocationDescriptionValid(s) &&
+       AdmissionAllocationDescriptionValid(d) &&
+       s->BytesPerPixel == 4u && d->BytesPerPixel == 4u &&
+-      s->Format == 21u && d->Format == 21u && c->ContextToken != 0ULL &&
++      FormatPairValid(s->Format, d->Format) && c->ContextToken != 0ULL &&
+       RectValid(&c->SourceRect) && RectValid(&c->DestinationRect) &&
+       c->SourceRect.Right <= s->Width && c->SourceRect.Bottom <= s->Height &&
+       c->DestinationRect.Right <= d->Width && c->DestinationRect.Bottom <= d->Height &&
+diff --git a/drivers/apple-agx/render-admission/src/scanout_windows.c b/drivers/apple-agx/render-admission/src/scanout_windows.c
+index 543124c..726e82d 100644
+--- a/drivers/apple-agx/render-admission/src/scanout_windows.c
++++ b/drivers/apple-agx/render-admission/src/scanout_windows.c
+@@ -353,7 +353,7 @@ static VOID AdmissionScanoutSoftCopy(ADMISSION_SCANOUT_RUNTIME *R,
+     ULONG nz = 0u, x;
+     for (x = 0u; x < APPLE_AGX_SCANOUT_J313_WIDTH; ++x)
+       if ((src0[x] & 0x00ffffffu) != 0u) ++nz;
+-    AdmissionScanoutSoftBar(R, 16u, (ULONG)(R->SoftCopies * 8u % 1920u) + 8u, 0xffff00ffu);
++    AdmissionScanoutSoftBar(R, 16u, (ULONG)(R->SoftCopies * 8u % APPLE_AGX_SCANOUT_J313_WIDTH) + 8u, 0xffff00ffu);
+     AdmissionScanoutSoftBar(R, 32u, nz, 0xffffff00u);
+   }
+ }
+@@ -2054,7 +2054,7 @@ _Use_decl_annotations_ NTSTATUS AdmissionScanoutQueuePresent(
+     return STATUS_GRAPHICS_INVALID_VIDEO_PRESENT_SOURCE_MODE;
+   }
+   /* rc106: the flipped primary has exactly the committed source geometry
+-   * (2560x1600 unless a scaled source mode is committed). */
++   * (the native source unless a scaled source mode is committed). */
+   surface_bytes = (ULONGLONG)Context->CommittedStride *
+                   Context->CommittedHeight;
+   if (!AdmissionAllocationDescriptionValid(description) ||
+@@ -2083,8 +2083,8 @@ _Use_decl_annotations_ NTSTATUS AdmissionScanoutQueuePresent(
+   if (!NT_SUCCESS(AdmissionMemoryRuntimeScanoutView(Context, &window)) ||
+       window.GuestIpaAddress != runtime->Panel.PoolIpa)
+     return STATUS_INVALID_ADDRESS;
+-  /* EXP2055: a 1920x1080 primary is 7680*1080 = 0x7e9000 bytes, not a
+-   * 64 KiB multiple, and the translation refuses unaligned spans
++  /* EXP2055: a primary's Stride * Height (e.g. 7680 * 1080 = 0x7e9000) need
++   * not be a 64 KiB multiple, and the translation refuses unaligned spans
+    * (0xc0000141 on every flip, so the mode set rolled back).  The
+    * allocation itself is 64 KiB-aligned in size and placement. */
+   address_result = AppleAgxLocalSegmentAddressToGpuVa(
+diff --git a/drivers/apple-agx/render-admission/umd/src/direct_flip_contract.c b/drivers/apple-agx/render-admission/umd/src/direct_flip_contract.c
+index 445d9ab..e18fefd 100644
+--- a/drivers/apple-agx/render-admission/umd/src/direct_flip_contract.c
++++ b/drivers/apple-agx/render-admission/umd/src/direct_flip_contract.c
+@@ -12,13 +12,12 @@ static int AdmissionUmdDirectFlipResourceValid(
+       ExpectedFormat == 0u)
+     return 0;
+   allocation = &Resource->Allocation;
+-  /* rc106: any offered fixed-panel source mode (the native 2560x1600
+-   * primary before it); the pair check below still requires the candidate
+-   * to match the current primary's geometry, so a swapchain of another size
+-   * than the committed mode is never direct-flipped. */
++  /* P28: any linear primary geometry; the pair check below still requires
++   * the candidate to match the current primary's geometry, so a swapchain of
++   * another size than the committed mode is never direct-flipped. */
+   return AdmissionAllocationDescriptionValid(allocation) &&
+                  allocation->Format == ExpectedFormat &&
+-                 AppleAgxFixedPanelPrimaryGeometryOffered(
++                 AppleAgxPrimaryGeometryLinear(
+                      allocation->Width, allocation->Height,
+                      allocation->Pitch, allocation->Size) &&
+                  allocation->BytesPerPixel == 4u &&
+diff --git a/drivers/apple-agx/render-admission/umd/src/umd.c b/drivers/apple-agx/render-admission/umd/src/umd.c
+index c84dad7..7b9a4b6 100644
+--- a/drivers/apple-agx/render-admission/umd/src/umd.c
++++ b/drivers/apple-agx/render-admission/umd/src/umd.c
+@@ -161,13 +161,16 @@ static BOOLEAN AdmissionUmdDescribePrimary(
+       CreateResource->pMipInfoList[0].TexelWidth > 8192u ||
+       CreateResource->pMipInfoList[0].TexelHeight > 8192u ||
+       CreateResource->pMipInfoList[0].TexelDepth != 1u ||
+-      /* rc106: a primary must be an offered fixed-panel source mode (the
+-       * native 2560x1600 one before it); the KMD commits only those. */
++      /* P28: a primary is any linear geometry DCP can scan; the KMD
++       * commits only the source modes it offers for the attached display,
++       * so no size list lives here. */
+       (CreateResource->pPrimaryDesc != NULL &&
+-       AppleAgxFixedPanelModeIndex(
++       !AppleAgxPrimaryGeometryLinear(
+            CreateResource->pMipInfoList[0].TexelWidth,
+-           CreateResource->pMipInfoList[0].TexelHeight) >=
+-           APPLE_AGX_FIXED_PANEL_MODE_COUNT) ||
++           CreateResource->pMipInfoList[0].TexelHeight,
++           CreateResource->pMipInfoList[0].TexelWidth * 4u,
++           (unsigned long long)CreateResource->pMipInfoList[0].TexelWidth * 4u *
++               CreateResource->pMipInfoList[0].TexelHeight)) ||
+       CreateResource->Usage != D3D10_DDI_USAGE_DEFAULT || CreateResource->MapFlags ||
+       (CreateResource->MiscFlags & ~allowedMiscFlags) ||
+       ((CreateResource->MiscFlags &
+@@ -1140,9 +1143,11 @@ HRESULT AdmissionUmdSubmitPresent(ADMISSION_UMD_DEVICE *Device,
+         ((UINT)(flip && flip->Linear==1u)<<7) |
+         ((UINT)(flip && flip->Reserved==0u)<<8) |
+         ((UINT)(allocation && AdmissionAllocationDescriptionValid(allocation))<<9) |
+-        ((UINT)(allocation && allocation->Width==2560u && allocation->Height==1600u)<<10) |
+-        ((UINT)(allocation && allocation->Pitch==10240u &&
+-                allocation->BytesPerPixel==4u && allocation->Size==0xfa0000ULL)<<11) |
++        /* P28: bits 10/11 report the linear primary rule, not a size. */
++        ((UINT)(allocation && allocation->Width!=0u && allocation->Height!=0u)<<10) |
++        ((UINT)(allocation && allocation->Pitch==allocation->Width*4u &&
++                allocation->BytesPerPixel==4u &&
++                allocation->Size>=(ULONGLONG)allocation->Pitch*allocation->Height)<<11) |
+         ((UINT)(allocation && allocation->CpuVisible==0u)<<12) |
+         ((UINT)(allocation &&
+             ((allocation->Format==(UINT)D3DDDIFMT_A8R8G8B8 && flip->Displayable==1u) ||
+diff --git a/drivers/apple-agx/shared/include/apple_agx_fixed_panel_modes.h b/drivers/apple-agx/shared/include/apple_agx_fixed_panel_modes.h
+index e75b974..e9d26ff 100644
+--- a/drivers/apple-agx/shared/include/apple_agx_fixed_panel_modes.h
++++ b/drivers/apple-agx/shared/include/apple_agx_fixed_panel_modes.h
+@@ -1,9 +1,9 @@
+ #ifndef APPLE_AGX_FIXED_PANEL_MODES_H
+ #define APPLE_AGX_FIXED_PANEL_MODES_H
+ 
+-/* rc106: the source modes the fixed 2560x1600 J313 panel offers.  Index 0
+- * is the native mode; the others are scaled into the panel by DCP and are
+- * offered only when the scanout broker advertises CAP_SCALED_SOURCE.
++/* rc106: the source modes the display offers.  Index 0 is the native mode;
++ * the others are scaled into it by DCP and are offered only when the
++ * scanout broker advertises CAP_SCALED_SOURCE.
+  *
+  * Freestanding, no hosted headers: the KMD's VidPN source-mode table
+  * (apple_agx_fixed_panel.c) and the UMD's primary and direct-flip gates
+@@ -15,53 +15,33 @@
+  * dcp_iomfb_present_build_v13_5: stride & 63 must be zero); 1366x768 is
+  * therefore not offered.  Every height is even, so Stride * Height is a
+  * multiple of 128 and the cache-line padded UMD allocation size equals it. */
+-#if defined(APPLE_AGX_BOARD_J274)
+-/* NWOAS-J274 PATCH P15/P21: index 0 is the native source, the POST HDMI
+- * framebuffer (1920x1080).  P21: the smaller sources below are offered only
+- * when the hypervisor's DCP scanout service advertises CAP_SCALED_SOURCE
+- * (the same rc106 rule as J313).  The KMD's software scanout broker (P15,
+- * SoftActive) never advertises it, so that path keeps exactly index 0.
+- * Every entry is no larger than native and obeys the width/height rules
+- * above (apple_agx_fixed_panel_j274_test.c checks every gate). */
+-#define APPLE_AGX_FIXED_PANEL_MODE_COUNT 8u
++/* NWOAS-J274 PATCH P28: no board-specific mode table.  Index 0 is the
++ * native source the POST display handed over (AppleAgxScanoutNative).  The
++ * scaled sources (offered only with CAP_SCALED_SOURCE) are the entries of
++ * the candidate list below that fit inside the native source and differ
++ * from it, in list order; a larger monitor therefore offers more of them,
++ * a smaller one fewer.  The list holds candidates, not any monitor's size:
++ * every one meets the width/height rules above. */
++#define APPLE_AGX_SCALED_MODE_CANDIDATE_COUNT 12u
+ 
+ static const unsigned int
+-    AppleAgxFixedPanelModeSizes[APPLE_AGX_FIXED_PANEL_MODE_COUNT][2] = {
+-        {1920u, 1080u}, {1680u, 1050u}, {1600u, 900u}, {1440u, 900u},
+-        {1280u, 800u},  {1280u, 720u},  {1024u, 768u}, {800u, 600u},
++    AppleAgxScaledModeCandidates[APPLE_AGX_SCALED_MODE_CANDIDATE_COUNT][2] = {
++        {3840u, 2160u}, {2560u, 1600u}, {2048u, 1280u},
++        {1920u, 1200u}, {1920u, 1080u}, {1680u, 1050u}, {1600u, 900u},
++        {1440u, 900u},  {1280u, 800u},  {1280u, 720u},  {1024u, 768u},
++        {800u, 600u},
+ };
+-#else
+-#define APPLE_AGX_FIXED_PANEL_MODE_COUNT 11u
+ 
+-static const unsigned int
+-    AppleAgxFixedPanelModeSizes[APPLE_AGX_FIXED_PANEL_MODE_COUNT][2] = {
+-        {2560u, 1600u}, {2048u, 1280u}, {1920u, 1200u}, {1920u, 1080u},
+-        {1680u, 1050u}, {1600u, 900u},  {1440u, 900u},  {1280u, 800u},
+-        {1280u, 720u},  {1024u, 768u},  {800u, 600u},
+-};
+-#endif
+-
+-/* Index of Width x Height in the table, or APPLE_AGX_FIXED_PANEL_MODE_COUNT
+- * when it is not an offered source mode. */
+-static __inline unsigned int AppleAgxFixedPanelModeIndex(unsigned int Width,
+-                                                         unsigned int Height) {
+-  unsigned int index;
+-  for (index = 0u; index < APPLE_AGX_FIXED_PANEL_MODE_COUNT; ++index) {
+-    if (AppleAgxFixedPanelModeSizes[index][0] == Width &&
+-        AppleAgxFixedPanelModeSizes[index][1] == Height)
+-      return index;
+-  }
+-  return APPLE_AGX_FIXED_PANEL_MODE_COUNT;
+-}
+-
+-/* A linear 32-bpp primary of an offered mode: Pitch == Width * 4 and
+- * Size == Pitch * Height (the native mode: 10240 x 1600 = 0xfa0000).  The
+- * geometry the KMD's shared primary, flip and PRESENT gates require. */
+-static __inline int AppleAgxFixedPanelPrimaryGeometryOffered(
+-    unsigned int Width, unsigned int Height, unsigned int Pitch,
+-    unsigned long long Size) {
+-  return AppleAgxFixedPanelModeIndex(Width, Height) <
+-                 APPLE_AGX_FIXED_PANEL_MODE_COUNT &&
++/* The linear 32-bpp geometry every primary obeys: Pitch == Width * 4 and
++ * Size == Pitch * Height.  The UMD's direct-flip pair check still requires
++ * a candidate to match the current primary, so only the committed mode is
++ * ever direct-flipped. */
++static __inline int AppleAgxPrimaryGeometryLinear(unsigned int Width,
++                                                  unsigned int Height,
++                                                  unsigned int Pitch,
++                                                  unsigned long long Size) {
++  return Width != 0u && Height != 0u && Width <= 8192u && Height <= 8192u &&
++                 (Width & 15u) == 0u && (Height & 1u) == 0u &&
+                  Pitch == Width * 4u &&
+                  Size == (unsigned long long)Pitch * Height
+              ? 1
+diff --git a/drivers/apple-agx/shared/include/apple_agx_scanout.h b/drivers/apple-agx/shared/include/apple_agx_scanout.h
+index 41da8a8..3d5b90b 100644
+--- a/drivers/apple-agx/shared/include/apple_agx_scanout.h
++++ b/drivers/apple-agx/shared/include/apple_agx_scanout.h
+@@ -43,23 +43,32 @@ typedef unsigned long long APPLE_AGX_SCANOUT_U64;
+    APPLE_AGX_SCANOUT_CAP_REPEATED_PRESENT |                                  \
+    APPLE_AGX_SCANOUT_CAP_LATCHED_RECEIPT | APPLE_AGX_SCANOUT_CAP_LATCHED_IRQ)
+ 
+-#if defined(APPLE_AGX_BOARD_J274)
+-/* NWOAS-J274 PATCH P15: the Mac mini has no fixed panel.  The native source
+- * is the HDMI linear framebuffer m1n1 hands over at POST (1920x1080, 32 bpp,
+- * stride 7680; S244 probe on the 13.5 stub).  Any other POST geometry is
+- * refused by the post-display route exactly like a non-J313 panel.
+- * P21: these stay the native source/destination; scaled sources (only with
+- * CAP_SCALED_SOURCE) are fitted into this 1920x1080 rectangle. */
+-#define APPLE_AGX_SCANOUT_J313_WIDTH 1920u
+-#define APPLE_AGX_SCANOUT_J313_HEIGHT 1080u
+-#define APPLE_AGX_SCANOUT_J313_STRIDE 7680u
+-#define APPLE_AGX_SCANOUT_J313_SURFACE_SIZE 0x7e9000ULL
+-#else
+-#define APPLE_AGX_SCANOUT_J313_WIDTH 2560u
+-#define APPLE_AGX_SCANOUT_J313_HEIGHT 1600u
+-#define APPLE_AGX_SCANOUT_J313_STRIDE 10240u
+-#define APPLE_AGX_SCANOUT_J313_SURFACE_SIZE 0xfa0000ULL
+-#endif
++/* NWOAS-J274 PATCH P28: the native source is no longer a build constant.
++ * It is the display the firmware hands over: the POST framebuffer dxgkrnl
++ * returns from DxgkCbAcquirePostDisplayOwnership (J274: the HDMI linear
++ * framebuffer m1n1 leaves, whatever monitor is attached; J313: the internal
++ * panel), or, when dxgkrnl reports no POST mode, the geometry the scanout
++ * broker reports after QUERY.  StartDevice adopts it once
++ * (AppleAgxScanoutNativeAdopt) before anything sizes a surface.  The old
++ * names stay so every user reads the adopted value; before adoption all
++ * four read zero, which every size gate refuses.  Scaled sources (only with
++ * CAP_SCALED_SOURCE) are fitted into this rectangle by DCP. */
++typedef struct _APPLE_AGX_SCANOUT_NATIVE {
++  APPLE_AGX_SCANOUT_U32 Width;
++  APPLE_AGX_SCANOUT_U32 Height;
++  APPLE_AGX_SCANOUT_U32 Stride;
++  APPLE_AGX_SCANOUT_U64 SurfaceBytes;
++} APPLE_AGX_SCANOUT_NATIVE;
++extern APPLE_AGX_SCANOUT_NATIVE AppleAgxScanoutNative;
++/* A linear 32-bpp source DCP can scan: width a multiple of 16 pixels (the
++ * stride meets DCP's 64-byte rule), even height, at most 8192 x 8192.
++ * Returns FALSE and leaves the adopted geometry unchanged otherwise. */
++APPLE_AGX_SCANOUT_BOOL AppleAgxScanoutNativeAdopt(APPLE_AGX_SCANOUT_U32 Width,
++                                                  APPLE_AGX_SCANOUT_U32 Height);
++#define APPLE_AGX_SCANOUT_J313_WIDTH (AppleAgxScanoutNative.Width)
++#define APPLE_AGX_SCANOUT_J313_HEIGHT (AppleAgxScanoutNative.Height)
++#define APPLE_AGX_SCANOUT_J313_STRIDE (AppleAgxScanoutNative.Stride)
++#define APPLE_AGX_SCANOUT_J313_SURFACE_SIZE (AppleAgxScanoutNative.SurfaceBytes)
+ /* M2-f2c: the pool is segment 2 of the receipt-sized reserve; this is its
+  * J313 maximum (a 1 GiB reserve less the private span and backend arena). */
+ #define APPLE_AGX_SCANOUT_J313_POOL_MAX_SIZE 0x3b800000ULL
+diff --git a/drivers/apple-agx/shared/src/apple_agx_fixed_panel.c b/drivers/apple-agx/shared/src/apple_agx_fixed_panel.c
+index 4a7f4ff..45846d8 100644
+--- a/drivers/apple-agx/shared/src/apple_agx_fixed_panel.c
++++ b/drivers/apple-agx/shared/src/apple_agx_fixed_panel.c
+@@ -89,24 +89,57 @@ APPLE_AGX_FIXED_PANEL_RESULT AppleAgxFixedPanelStart(
+   return AppleAgxFixedPanelOk;
+ }
+ 
+-/* rc106: the laptop source modes come from the shared table
+- * (apple_agx_fixed_panel_modes.h), which the UMD's primary and direct-flip
+- * gates use as well; index 0 is the native J313 mode. */
++/* P28: index 0 is the adopted native source; the scaled ones are the
++ * candidates that fit inside it (apple_agx_fixed_panel_modes.h). */
++static APPLE_AGX_SCANOUT_BOOL AppleAgxFixedPanelCandidateFits(
++    APPLE_AGX_SCANOUT_U32 Candidate) {
++  const APPLE_AGX_SCANOUT_U32 w = AppleAgxScaledModeCandidates[Candidate][0];
++  const APPLE_AGX_SCANOUT_U32 h = AppleAgxScaledModeCandidates[Candidate][1];
++  return w <= APPLE_AGX_SCANOUT_J313_WIDTH &&
++                 h <= APPLE_AGX_SCANOUT_J313_HEIGHT &&
++                 (w != APPLE_AGX_SCANOUT_J313_WIDTH ||
++                  h != APPLE_AGX_SCANOUT_J313_HEIGHT)
++             ? APPLE_AGX_SCANOUT_TRUE
++             : APPLE_AGX_SCANOUT_FALSE;
++}
++
+ APPLE_AGX_SCANOUT_U32 AppleAgxFixedPanelSourceModeCount(
+     APPLE_AGX_SCANOUT_BOOL Scaled) {
+-  return Scaled ? APPLE_AGX_FIXED_PANEL_MODE_COUNT : 1u;
++  APPLE_AGX_SCANOUT_U32 count = 0u, candidate;
++  if (APPLE_AGX_SCANOUT_J313_WIDTH == 0u)
++    return 0u;
++  if (!Scaled)
++    return 1u;
++  for (candidate = 0u; candidate < APPLE_AGX_SCALED_MODE_CANDIDATE_COUNT;
++       ++candidate)
++    if (AppleAgxFixedPanelCandidateFits(candidate))
++      ++count;
++  return count + 1u;
+ }
+ 
+ APPLE_AGX_SCANOUT_BOOL AppleAgxFixedPanelSourceModeAt(
+     APPLE_AGX_SCANOUT_U32 Index, APPLE_AGX_SCANOUT_BOOL Scaled,
+     APPLE_AGX_FIXED_PANEL_SOURCE_MODE *Mode) {
+-  APPLE_AGX_SCANOUT_U32 width;
+-  APPLE_AGX_SCANOUT_U32 height;
++  APPLE_AGX_SCANOUT_U32 width = APPLE_AGX_SCANOUT_J313_WIDTH;
++  APPLE_AGX_SCANOUT_U32 height = APPLE_AGX_SCANOUT_J313_HEIGHT;
++  APPLE_AGX_SCANOUT_U32 seen = 0u, candidate;
+   if (Mode == APPLE_AGX_FIXED_PANEL_NULL ||
+       Index >= AppleAgxFixedPanelSourceModeCount(Scaled))
+     return APPLE_AGX_SCANOUT_FALSE;
+-  width = AppleAgxFixedPanelModeSizes[Index][0];
+-  height = AppleAgxFixedPanelModeSizes[Index][1];
++  if (Index != 0u) {
++    for (candidate = 0u; candidate < APPLE_AGX_SCALED_MODE_CANDIDATE_COUNT;
++         ++candidate) {
++      if (!AppleAgxFixedPanelCandidateFits(candidate))
++        continue;
++      if (++seen == Index) {
++        width = AppleAgxScaledModeCandidates[candidate][0];
++        height = AppleAgxScaledModeCandidates[candidate][1];
++        break;
++      }
++    }
++    if (seen != Index)
++      return APPLE_AGX_SCANOUT_FALSE;
++  }
+   Mode->Width = width;
+   Mode->Height = height;
+   Mode->Stride = width * 4u;
+diff --git a/drivers/apple-agx/shared/src/apple_agx_scanout.c b/drivers/apple-agx/shared/src/apple_agx_scanout.c
+index c21af76..80f978c 100644
+--- a/drivers/apple-agx/shared/src/apple_agx_scanout.c
++++ b/drivers/apple-agx/shared/src/apple_agx_scanout.c
+@@ -3,6 +3,23 @@
+ #define APPLE_AGX_SCANOUT_NULL ((void *)0)
+ #define APPLE_AGX_SCANOUT_U64_MAX (~0ULL)
+ 
++
++/* NWOAS-J274 PATCH P28: see apple_agx_scanout.h. */
++APPLE_AGX_SCANOUT_NATIVE AppleAgxScanoutNative = {0u, 0u, 0u, 0ULL};
++
++APPLE_AGX_SCANOUT_BOOL AppleAgxScanoutNativeAdopt(APPLE_AGX_SCANOUT_U32 Width,
++                                                  APPLE_AGX_SCANOUT_U32 Height) {
++  if (Width == 0u || Height == 0u || Width > 8192u || Height > 8192u ||
++      (Width & 15u) != 0u || (Height & 1u) != 0u)
++    return APPLE_AGX_SCANOUT_FALSE;
++  AppleAgxScanoutNative.Width = Width;
++  AppleAgxScanoutNative.Height = Height;
++  AppleAgxScanoutNative.Stride = Width * 4u;
++  AppleAgxScanoutNative.SurfaceBytes =
++      (APPLE_AGX_SCANOUT_U64)Width * 4u * Height;
++  return APPLE_AGX_SCANOUT_TRUE;
++}
++
+ static APPLE_AGX_SCANOUT_U32 AppleAgxScanoutAddress(
+     APPLE_AGX_SCANOUT_U32 Register) {
+   return APPLE_AGX_SCANOUT_MMIO_OFFSET + Register;
+@@ -222,6 +239,24 @@ APPLE_AGX_SCANOUT_RESULT AppleAgxScanoutQualify(
+   if ((capabilities & APPLE_AGX_SCANOUT_REQUIRED_CAPABILITIES) !=
+       APPLE_AGX_SCANOUT_REQUIRED_CAPABILITIES)
+     return AppleAgxScanoutMissingCapabilities;
++  /* P28: no POST mode was handed over; the broker's current geometry is
++   * the native source. */
++  if (AppleAgxScanoutNative.Width == 0u) {
++    APPLE_AGX_SCANOUT_U32 width = 0u, height = 0u;
++    if (!AppleAgxScanoutRead32(Client, APPLE_AGX_SCANOUT_REG_WIDTH, &width) ||
++        !AppleAgxScanoutRead32(Client, APPLE_AGX_SCANOUT_REG_HEIGHT, &height))
++      return AppleAgxScanoutTransportFailed;
++    if (!AppleAgxScanoutNativeAdopt(width, height))
++      return AppleAgxScanoutInvalidArgument;
++  }
++  if (Client->PresentWidth == 0u) {
++    Client->PresentWidth = APPLE_AGX_SCANOUT_J313_WIDTH;
++    Client->PresentHeight = APPLE_AGX_SCANOUT_J313_HEIGHT;
++    Client->PresentStride = APPLE_AGX_SCANOUT_J313_STRIDE;
++    Client->PresentSurfaceBytes = APPLE_AGX_SCANOUT_J313_SURFACE_SIZE;
++    Client->PresentDestSize = APPLE_AGX_SCANOUT_J313_WIDTH |
++                              (APPLE_AGX_SCANOUT_J313_HEIGHT << 16u);
++  }
+   Client->AbiVersion = version;
+   Client->Capabilities = capabilities;
+   Client->Qualified = APPLE_AGX_SCANOUT_TRUE;

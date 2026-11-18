@@ -1,0 +1,145 @@
+--- a/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py (2760 P24)
++++ b/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py (2761 P25)
+@@ -3778,6 +3778,9 @@
+ extern "C" VOID AgxD3d10WindowsDiagnostic(PCSTR Stage, HRESULT Status,
+                               const UINT *Values, UINT Count);
+ extern "C" BOOL AgxD3d10WindowsDiagnosticSwitch(const char *Name);
++/* NWOAS-J274 PATCH P25 (agx_d3d10_windows.cpp) */
++extern "C" VOID AgxD3d10WindowsShaderRecord(UINT Type, UINT Ir, const UINT *Code, BOOL Ok,
++                                            UINT ErrorOpcode, UINT ErrorOffset);
+ 
+ /* D3D-H3: with APPLE_AGX_D3D_SHADER_NIR=1 in the process environment the
+  * pipe shader state comes from the DXBC -> NIR translator
+@@ -3837,9 +3840,9 @@
+ {
+    struct pipe_shader_state state = shader->state;
+    const bool translator = AgxD3d10TranslatorOnly(code);
++   struct dxbc_nir_error error = {};
+    if (code && !state.stream_output.num_outputs &&
+        (translator || AgxD3d10WindowsDiagnosticSwitch("APPLE_AGX_D3D_SHADER_NIR"))) {
+-      struct dxbc_nir_error error = {};
+       /* FL 11_1: UAV registers u0..u63, placed by the shader's map */
+       struct dxbc_nir_uav_slots *slots =
+          (struct dxbc_nir_uav_slots *)malloc(sizeof(struct dxbc_nir_uav_slots));
+@@ -3859,8 +3862,11 @@
+          state.ir.nir = nir;
+       }
+    }
+-   if (state.type != PIPE_SHADER_IR_NIR && !state.tokens)
++   if (state.type != PIPE_SHADER_IR_NIR && !state.tokens) {
++      /* NWOAS-J274 PATCH P25: a shader neither path could take */
++      AgxD3d10WindowsShaderRecord((UINT)shader->type, 2u, code, FALSE, error.opcode, error.offset);
+       return NULL;
++   }
+    if (AgxD3d10WindowsDiagnosticSwitch("APPLE_AGX_D3D_SHADER_TRACE")) {
+       /* EXP1313: a ps_4_0 corpus shader crashes in tgsi_to_nir on an FL 11_0
+        * device only; record the DXBC and TGSI the frontend hands over. */
+@@ -3876,11 +3882,17 @@
+                         code_hash, tgsi_count, tgsi_hash};
+       AgxD3d10WindowsDiagnostic("measure-shader-state", S_OK, values, 7u);
+    }
++   void *handle;
+    switch (shader->type) {
+-   case MESA_SHADER_VERTEX: return pipe->create_vs_state(pipe, &state);
+-   case MESA_SHADER_GEOMETRY: return pipe->create_gs_state(pipe, &state);
+-   default: return pipe->create_fs_state(pipe, &state);
++   case MESA_SHADER_VERTEX: handle = pipe->create_vs_state(pipe, &state); break;
++   case MESA_SHADER_GEOMETRY: handle = pipe->create_gs_state(pipe, &state); break;
++   default: handle = pipe->create_fs_state(pipe, &state); break;
+    }
++   /* NWOAS-J274 PATCH P25: every D3D10/11 shader: stage, path (1 NIR
++    * translator, 0 TGSI), version token, DWORDs, FNV hash, created? */
++   AgxD3d10WindowsShaderRecord((UINT)shader->type, state.type == PIPE_SHADER_IR_NIR ? 1u : 0u, code,
++                               handle != NULL, error.opcode, error.offset);
++   return handle;
+ }
+ 
+ void *
+--- a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp (2760 P24)
++++ b/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp (2761 P25)
+@@ -44,6 +44,44 @@
+ VOID AgxD3d10WindowsDiagnostic(PCSTR Stage,HRESULT Status,
+                                const UINT *Values,UINT Count) {
+   AdmissionUmdDiagnostic(Stage,Status,Values,Count);
++}
++
++/* NWOAS-J274 PATCH P25: one receipt per D3D10/11 shader the frontend creates
++ * (always written when the UMD trace is on): measure-d3d11-shader {stage,
++ * path (0 TGSI, 1 DXBC->NIR translator, 2 none), version token, DWORDs, FNV-1a
++ * hash of the tokens, created, translator error opcode, error offset};
++ * reject-d3d11-shader with the same values when the shader was not created.
++ * APPLE_AGX_D3D_SHADER_DUMP=1 also writes the tokens (the runtime's shader
++ * code, version token first) to APPLE_AGX_D3D_SHADER_DUMP_DIR, default
++ * C:\NWOAS\gpucov\dxbc, as <stage>-<hash>.bin; at most 200 files per process,
++ * an existing file is kept. */
++VOID AgxD3d10WindowsShaderRecord(UINT Type,UINT Ir,const UINT *Code,BOOL Ok,
++                                 UINT ErrorOpcode,UINT ErrorOffset) {
++  static volatile LONG dumped;
++  DWORD saved=GetLastError();
++  const UINT count=Code ? (Code[1] < 65536u ? Code[1] : 65536u) : 0u;
++  UINT hash=2166136261u;
++  for(UINT i=0;i<count;++i) hash=(hash^Code[i])*16777619u;
++  const UINT values[8]={Type,Ir,Code?Code[0]:0u,count,hash,Ok?1u:0u,ErrorOpcode,ErrorOffset};
++  AdmissionUmdDiagnostic(Ok?"measure-d3d11-shader":"reject-d3d11-shader",Ok?S_OK:E_FAIL,values,8u);
++  char flag[2]={};
++  if(Code && count>=2u &&
++     GetEnvironmentVariableA("APPLE_AGX_D3D_SHADER_DUMP",flag,sizeof(flag))==1u && flag[0]=='1' &&
++     InterlockedIncrement(&dumped)<=200) {
++    char dir[MAX_PATH]={},path[MAX_PATH]={};
++    DWORD n=GetEnvironmentVariableA("APPLE_AGX_D3D_SHADER_DUMP_DIR",dir,sizeof(dir));
++    if(!n || n>=sizeof(dir)) strcpy_s(dir,sizeof(dir),"C:\\NWOAS\\gpucov\\dxbc");
++    (void)CreateDirectoryA(dir,NULL);
++    if(_snprintf_s(path,sizeof(path),_TRUNCATE,"%s\\%u-%08x.bin",dir,Type,hash)>0) {
++      HANDLE f=CreateFileA(path,GENERIC_WRITE,0,NULL,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,NULL);
++      if(f!=INVALID_HANDLE_VALUE) {
++        DWORD written=0;
++        (void)WriteFile(f,Code,count*4u,&written,NULL);
++        CloseHandle(f);
++      }
++    }
++  }
++  SetLastError(saved);
+ }
+ 
+ VOID AgxD3d10WindowsPresentMeasure(UINT Kind,HRESULT Status,
+--- a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.h (2760 P24)
++++ b/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.h (2761 P25)
+@@ -39,6 +39,9 @@
+                               const UINT *Values, UINT Count);
+ VOID AgxD3d10WindowsPresentMeasure(UINT Kind, HRESULT Status,
+                                   const UINT *Values, UINT Count);
++/* NWOAS-J274 PATCH P25 */
++VOID AgxD3d10WindowsShaderRecord(UINT Type, UINT Ir, const UINT *Code, BOOL Ok,
++                                 UINT ErrorOpcode, UINT ErrorOffset);
+ VOID AgxD3d10WindowsDiagnosticSetError(
+     PCSTR Function, UINT Line, HRESULT Status);
+ BOOL AgxD3d10WindowsDiagnosticRefusal(HRESULT Status);
+--- a/drivers/apple-agx/mesa/d3d11/agx_d3d11_ddi.cpp (2760 P24)
++++ b/drivers/apple-agx/mesa/d3d11/agx_d3d11_ddi.cpp (2761 P25)
+@@ -48,6 +48,8 @@
+ extern "C" VOID AgxD3d10WindowsDiagnostic(PCSTR Stage, HRESULT Status,
+                                           const UINT *Values, UINT Count);
+ extern "C" BOOL AgxD3d10WindowsDiagnosticSwitch(const char *Name);
++extern "C" VOID AgxD3d10WindowsShaderRecord(UINT Type, UINT Ir, const UINT *Code, BOOL Ok,
++                                            UINT ErrorOpcode, UINT ErrorOffset); /* P25 */
+ 
+ /* EXP1310 receipt-only (APPLE_AGX_D3D11_COUNTER_TRACE=1): CopyStructureCount
+  * copied 0 after an initial count of 42 and 256 after 86 compact appends.
+@@ -999,6 +1001,8 @@
+                                             0, 0, &error);
+    UINT values[4] = {(UINT)MESA_SHADER_COMPUTE, nir ? 1u : 0u, error.opcode, error.offset};
+    AgxD3d10WindowsDiagnostic("measure-shader-nir", nir ? S_OK : E_NOTIMPL, values, 4u);
++   AgxD3d10WindowsShaderRecord((UINT)MESA_SHADER_COMPUTE, nir ? 1u : 2u, code, nir != NULL,
++                               error.opcode, error.offset); /* NWOAS-J274 PATCH P25 */
+    if (!nir) {
+       SetError(hDevice, E_NOTIMPL);
+       return;
+@@ -1443,6 +1447,8 @@
+                                             registers, positions, &error);
+    UINT values[4] = {(UINT)stage, nir ? 1u : 0u, error.opcode, error.offset};
+    AgxD3d10WindowsDiagnostic("measure-shader-nir", nir ? S_OK : E_NOTIMPL, values, 4u);
++   AgxD3d10WindowsShaderRecord((UINT)stage, nir ? 1u : 2u, code, nir != NULL,
++                               error.opcode, error.offset); /* NWOAS-J274 PATCH P25 */
+    if (!nir) {
+       SetError(hDevice, E_NOTIMPL);
+       return;

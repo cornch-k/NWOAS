@@ -1,0 +1,87 @@
+diff --git a/drivers/apple-agx/render-admission/src/allocation_windows.c b/drivers/apple-agx/render-admission/src/allocation_windows.c
+index 5a2fbae..5df0595 100644
+--- a/drivers/apple-agx/render-admission/src/allocation_windows.c
++++ b/drivers/apple-agx/render-admission/src/allocation_windows.c
+@@ -269,6 +269,7 @@ static NTSTATUS AdmissionGetStandardAllocationDriverDataImpl(
+     DXGKARG_GETSTANDARDALLOCATIONDRIVERDATA *StandardAllocation) {
+   D3DKMDT_GDISURFACEDATA *surface = NULL;
+   D3DKMDT_SHADOWSURFACEDATA *shadow = NULL;
++  D3DKMDT_STAGINGSURFACEDATA *staging = NULL;
+   ADMISSION_ALLOCATION_DESCRIPTION description;
+   ULONG bytesPerPixel;
+   UINT suppliedBytes;
+@@ -280,7 +281,9 @@ static NTSTATUS AdmissionGetStandardAllocationDriverDataImpl(
+        StandardAllocation->StandardAllocationType !=
+            D3DKMDT_STANDARDALLOCATION_SHAREDPRIMARYSURFACE &&
+        StandardAllocation->StandardAllocationType !=
+-           D3DKMDT_STANDARDALLOCATION_SHADOWSURFACE) ||
++           D3DKMDT_STANDARDALLOCATION_SHADOWSURFACE &&
++       StandardAllocation->StandardAllocationType !=
++           D3DKMDT_STANDARDALLOCATION_STAGINGSURFACE) ||
+       StandardAllocation->PhysicalAdapterIndex != 0u ||
+       StandardAllocation->pResourcePrivateDriverData != NULL)
+     return STATUS_INVALID_PARAMETER;
+@@ -323,6 +326,27 @@ static NTSTATUS AdmissionGetStandardAllocationDriverDataImpl(
+             (UINT)D3DKMDT_GDISURFACE_STAGING_CPUVISIBLE,
+             (UINT)shadow->Format, 1u, &description))
+       return STATUS_INVALID_PARAMETER;
++  } else if (StandardAllocation->StandardAllocationType ==
++             D3DKMDT_STANDARDALLOCATION_STAGINGSURFACE) {
++    /* NWOAS-J274 PATCH P30: dxgkrnl's staging surface (the CPU side of a
++     * windowed blt-model present into a GDI redirection bitmap, cursor and
++     * screen reads). It has only a size; it is a linear 32-bpp CPU-visible
++     * surface of the committed source format, laid out exactly like the
++     * shadow surface above. Every request was refused before P30 (2765
++     * Wom1StdAllocRing: 108 x c000000d), so those presents never arrived. */
++    D3DDDIFORMAT stagingFormat =
++        ((ADMISSION_CONTEXT *)Adapter)->CommittedFormat;
++    if (stagingFormat == D3DDDIFMT_UNKNOWN ||
++        !AdmissionScanoutFormatSupported((ADMISSION_CONTEXT *)Adapter,
++                                         stagingFormat))
++      stagingFormat = D3DDDIFMT_A8R8G8B8;
++    staging = StandardAllocation->pCreateStagingSurfaceData;
++    if (staging == NULL || staging->Width == 0u || staging->Height == 0u ||
++        !AdmissionAllocationDescribe(
++            staging->Width, staging->Height, 4u,
++            (UINT)D3DKMDT_GDISURFACE_STAGING_CPUVISIBLE,
++            (UINT)stagingFormat, 1u, &description))
++      return STATUS_INVALID_PARAMETER;
+   } else {
+     surface = StandardAllocation->pCreateGdiSurfaceData;
+     if (surface == NULL || surface->Flags.Value != 0u ||
+@@ -339,6 +363,8 @@ static NTSTATUS AdmissionGetStandardAllocationDriverDataImpl(
+     surface->Pitch = description.Pitch;
+   if (shadow != NULL)
+     shadow->Pitch = description.Pitch;
++  if (staging != NULL)
++    staging->Pitch = description.Pitch;
+   RtlCopyMemory(StandardAllocation->pAllocationPrivateDriverData,
+                 &description, sizeof(description));
+   return STATUS_SUCCESS;
+diff --git a/drivers/apple-agx/render-admission/src/receipts.c b/drivers/apple-agx/render-admission/src/receipts.c
+index 5396a21..a1a5f19 100644
+--- a/drivers/apple-agx/render-admission/src/receipts.c
++++ b/drivers/apple-agx/render-admission/src/receipts.c
+@@ -3422,6 +3422,12 @@ _Use_decl_annotations_ NTSTATUS AdmissionTraceDdiGetStandardAllocationDriverData
+         entry[4] = (ULONG)Args->pCreateShadowSurfaceData->Format;
+       }
+       break;
++    case D3DKMDT_STANDARDALLOCATION_STAGINGSURFACE:
++      if (Args->pCreateStagingSurfaceData != NULL) {
++        entry[2] = Args->pCreateStagingSurfaceData->Width;
++        entry[3] = Args->pCreateStagingSurfaceData->Height;
++      }
++      break;
+     case D3DKMDT_STANDARDALLOCATION_GDISURFACE:
+       if (Args->pCreateGdiSurfaceData != NULL) {
+         entry[2] = Args->pCreateGdiSurfaceData->Width;
+@@ -3444,6 +3450,9 @@ _Use_decl_annotations_ NTSTATUS AdmissionTraceDdiGetStandardAllocationDriverData
+     else if (Args->StandardAllocationType == D3DKMDT_STANDARDALLOCATION_SHADOWSURFACE &&
+              Args->pCreateShadowSurfaceData != NULL)
+       entry[7] = Args->pCreateShadowSurfaceData->Pitch;
++    else if (Args->StandardAllocationType == D3DKMDT_STANDARDALLOCATION_STAGINGSURFACE &&
++             Args->pCreateStagingSurfaceData != NULL)
++      entry[7] = Args->pCreateStagingSurfaceData->Pitch;
+   }
+   AdmissionDdiRingRecord(&AdmissionStdAllocRing,
+       context != NULL ? context->PhysicalDeviceObject : NULL,

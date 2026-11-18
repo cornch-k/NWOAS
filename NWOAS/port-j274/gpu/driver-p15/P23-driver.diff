@@ -1,0 +1,65 @@
+--- a/drivers/apple-agx/shared/include/apple_agx_win32_device_info.h (2758 P22)
++++ b/drivers/apple-agx/shared/include/apple_agx_win32_device_info.h (2759 P23)
+@@ -55,9 +55,12 @@
+  * head of the render's 3D ring entry (the 3D still waits). Published only
+  * behind its own KMD switch; the parser refuses the flag without it. */
+ #define AGX_WIN32_DEVICE_FEATURE_RENDER_TA_INDEPENDENT 0x4u
++/* NWOAS-J274 PATCH P23: the KMD has a pool segment (segment 3). Without it
++ * no allocation can ever satisfy a pool-only placement proof. */
++#define AGX_WIN32_DEVICE_FEATURE_POOL_SEGMENT 0x8u
+ #define AGX_WIN32_DEVICE_FEATURES_KNOWN \
+   (AGX_WIN32_DEVICE_FEATURE_SOFT_FAULTS | AGX_WIN32_DEVICE_FEATURE_INDEPENDENT_SUBQUEUE | \
+-   AGX_WIN32_DEVICE_FEATURE_RENDER_TA_INDEPENDENT)
++   AGX_WIN32_DEVICE_FEATURE_RENDER_TA_INDEPENDENT | AGX_WIN32_DEVICE_FEATURE_POOL_SEGMENT)
+ 
+ typedef struct _AGX_WIN32_BUFFER_CLASS_INFO {
+   APPLE_AGX_U32 ClassId;
+--- a/drivers/apple-agx/render-admission/src/lifecycle.c (2758 P22)
++++ b/drivers/apple-agx/render-admission/src/lifecycle.c (2759 P23)
+@@ -746,6 +746,14 @@
+     /* OV5 step 2: Wom1Ov5TaWaiver = 1 with the 3D-queue Barrier path. */
+     if (InterlockedCompareExchange(&context->GpuRenderTaIndependent, 0, 0) != 0)
+       info->Features |= AGX_WIN32_DEVICE_FEATURE_RENDER_TA_INDEPENDENT;
++#if defined(APPLE_AGX_GPUVA_G3_QUALIFICATION)
++    /* NWOAS-J274 PATCH P23: tell the UMD whether segment 3 exists. */
++    {
++      ADMISSION_SCANOUT_MEMORY_VIEW pool;
++      if (AdmissionMemoryPoolView(context, &pool))
++        info->Features |= AGX_WIN32_DEVICE_FEATURE_POOL_SEGMENT;
++    }
++#endif
+     status = STATUS_SUCCESS;
+     break;
+   }
+--- a/drivers/apple-agx/mesa/winsys/agx_d3d12_windows.cpp (2758 P22)
++++ b/drivers/apple-agx/mesa/winsys/agx_d3d12_windows.cpp (2759 P23)
+@@ -1122,9 +1122,29 @@
+      * restores residency, locks and proves the full pool placement before
+      * publishing a pointer; its lock stays pinned until the native BO unmaps.
+      * Exact 0 restores private staging for comparison or memory pressure. */
++#if defined(APPLE_AGX_BOARD_J274)
++    /* NWOAS-J274 PATCH P23: the canonical map proves every page is in the
++     * pool (POOL_ONLY query). Without a pool segment (J274 launchers run
++     * NWOAS_AGX_POOL_IPA=0) that proof can never pass: the first CPU map of a
++     * native BO failed (reject-cpu-pool-map), the Asahi backend was marked
++     * failed (reject-batch kind 4, agx_win32_asahi_bo.c native_map) and the
++     * D3D12 owner was lost, so every heap took the 16 MiB fallback path
++     * (measure-d3d12-heap-refused 3). Default on only with a pool; exact 1
++     * forces it on, exact 0 off. */
++    {
++      const DWORD n = GetEnvironmentVariableA("APPLE_AGX_D3D12_CPU_POOL_MAP", cpu_pool_map,
++                                              sizeof(cpu_pool_map));
++      const BOOL has_pool =
++          (owner->Runtime.Screen.Info.Features & AGX_WIN32_DEVICE_FEATURE_POOL_SEGMENT) != 0u;
++      owner->Runtime.DirectCpuPool = n == 1 && cpu_pool_map[0] == '1' ? TRUE
++                                   : n == 1 && cpu_pool_map[0] == '0' ? FALSE
++                                   : has_pool;
++    }
++#else
+     owner->Runtime.DirectCpuPool =
+         !(GetEnvironmentVariableA("APPLE_AGX_D3D12_CPU_POOL_MAP", cpu_pool_map,
+                                  sizeof(cpu_pool_map)) == 1 && cpu_pool_map[0] == '0');
++#endif
+     char native_staging[2] = {};
+     owner->Runtime.NativeStagingDisabled =
+         GetEnvironmentVariableA("APPLE_AGX_D3D12_NATIVE_STAGING", native_staging,

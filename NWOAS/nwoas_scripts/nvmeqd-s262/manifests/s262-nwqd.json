@@ -1,0 +1,11 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "NWQD.EXE",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/nvmeqd-s262/NWQD.EXE",
+   "bytes": 30720,
+   "sha256": "05c34ed3c6541c3acfac01195bfd8fc62fd3eedd2b36f323e323a37afbb4f603"
+  }
+ ]
+}

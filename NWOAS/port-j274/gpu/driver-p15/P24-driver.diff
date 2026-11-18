@@ -1,0 +1,147 @@
+--- a/drivers/apple-agx/render-admission/umd/src/umd_runtime_device.c (2759 P23)
++++ b/drivers/apple-agx/render-admission/umd/src/umd_runtime_device.c (2760 P24)
+@@ -88,6 +88,33 @@
+   return path != NULL;
+ }
+ 
++/* NWOAS-J274 PATCH P24: opt-in capability trace. APPLE_AGX_UMD_TRACE_CAPS=1
++ * (with APPLE_AGX_UMD_TRACE_FILE) records what an application asks the
++ * driver at start-up: D3D12 GetCaps types with the answer's first words,
++ * D3D12 CheckFormatSupport / multisample levels, D3D10/11 GetCaps and the
++ * D3D11 CreateDevice interface and flags. Lines start "measure-caps-" so the
++ * refusals-only filter keeps them; at most 4000 lines per process. */
++static INIT_ONCE AdmissionUmdCapsOnce = INIT_ONCE_STATIC_INIT;
++static BOOL AdmissionUmdCapsOn;
++static volatile LONG AdmissionUmdCapsLines;
++static BOOL CALLBACK AdmissionUmdCapsLoad(PINIT_ONCE Once, PVOID Parameter, PVOID *Context) {
++  WCHAR value[2];
++  UNREFERENCED_PARAMETER(Once);
++  UNREFERENCED_PARAMETER(Parameter);
++  UNREFERENCED_PARAMETER(Context);
++  AdmissionUmdCapsOn =
++      GetEnvironmentVariableW(L"APPLE_AGX_UMD_TRACE_CAPS", value, 2) == 1u && value[0] == L'1';
++  return TRUE;
++}
++BOOL AdmissionUmdCapsTrace(VOID) {
++  DWORD saved = GetLastError();
++  BOOL on;
++  (void)InitOnceExecuteOnce(&AdmissionUmdCapsOnce, AdmissionUmdCapsLoad, NULL, NULL);
++  on = AdmissionUmdCapsOn && InterlockedIncrement(&AdmissionUmdCapsLines) <= 4000;
++  SetLastError(saved);
++  return on;
++}
++
+ /* EXP959 exhausted the normal startup budget before DWM's first failed
+  * deallocation. Keep the failure receipt independent and bounded. */
+ static BOOL AdmissionUmdDiagnosticPermit(
+--- a/drivers/apple-agx/render-admission/umd/src/umd_internal.h (2759 P23)
++++ b/drivers/apple-agx/render-admission/umd/src/umd_internal.h (2760 P24)
+@@ -460,6 +460,7 @@
+                                 const UINT *Values, UINT Count);
+ BOOL AdmissionUmdDiagnosticEnabled(VOID);
+ BOOL AdmissionUmdMeasureEnabled(VOID);
++BOOL AdmissionUmdCapsTrace(VOID); /* P24 */
+ /* Write the buffered trace lines now (EXP1109). */
+ VOID AdmissionUmdDiagnosticFlush(VOID);
+ VOID AdmissionUmdSetError(ADMISSION_UMD_DEVICE *Device, HRESULT Error);
+--- a/drivers/apple-agx/render-admission/umd/src/umd.c (2759 P23)
++++ b/drivers/apple-agx/render-admission/umd/src/umd.c (2760 P24)
+@@ -569,10 +569,51 @@
+   return TRUE;
+ }
+ 
++#if defined(APPLE_AGX_UMD_NATIVE_FRONTEND)
++/* NWOAS-J274 PATCH P24: D3D10/11 capability trace (APPLE_AGX_UMD_TRACE_CAPS=1).
++ * Wraps the Mesa frontend's GetCaps and CreateDevice; behaviour unchanged. */
++static PFND3D10_2DDI_GETCAPS AdmissionUmdMesaGetCaps;
++static PFND3D10DDI_CREATEDEVICE AdmissionUmdMesaCreateDevice;
++static HRESULT APIENTRY AdmissionUmdTraceGetCaps(D3D10DDI_HADAPTER Adapter,
++                                                 const D3D10_2DDIARG_GETCAPS *Caps) {
++  HRESULT hr = AdmissionUmdMesaGetCaps(Adapter, Caps);
++  if (AdmissionUmdCapsTrace()) {
++    UINT v[6] = {Caps ? (UINT)Caps->Type : 0u, Caps ? Caps->DataSize : 0u};
++    if (SUCCEEDED(hr) && Caps && Caps->pData)
++      for (UINT i = 0; i < 4u && (i + 1u) * 4u <= Caps->DataSize; ++i)
++        v[2 + i] = ((const UINT *)Caps->pData)[i];
++    AdmissionUmdDiagnostic("measure-caps-d3d11", hr, v, 6u);
++  }
++  return hr;
++}
++static HRESULT APIENTRY AdmissionUmdTraceCreateDevice(D3D10DDI_HADAPTER Adapter,
++                                                      D3D10DDIARG_CREATEDEVICE *Args) {
++  HRESULT hr = AdmissionUmdMesaCreateDevice(Adapter, Args);
++  if (AdmissionUmdCapsTrace()) {
++    const UINT v[3] = {Args ? Args->Interface : 0u, Args ? Args->Version : 0u, Args ? Args->Flags : 0u};
++    AdmissionUmdDiagnostic("measure-caps-d3d11-device", hr, v, 3u);
++  }
++  return hr;
++}
++#endif
++
+ HRESULT APIENTRY OpenAdapter10_2(
+     D3D10DDIARG_OPENADAPTER *OpenAdapter) {
+ #if defined(APPLE_AGX_UMD_NATIVE_FRONTEND)
+-  return MesaD3d10OpenAdapter10_2(OpenAdapter);
++  HRESULT hr = MesaD3d10OpenAdapter10_2(OpenAdapter);
++  if (SUCCEEDED(hr) && OpenAdapter && OpenAdapter->pAdapterFuncs_2 && AdmissionUmdCapsTrace()) {
++    if (OpenAdapter->pAdapterFuncs_2->pfnGetCaps != AdmissionUmdTraceGetCaps) {
++      AdmissionUmdMesaGetCaps = OpenAdapter->pAdapterFuncs_2->pfnGetCaps;
++      AdmissionUmdMesaCreateDevice = OpenAdapter->pAdapterFuncs_2->pfnCreateDevice;
++    }
++    if (AdmissionUmdMesaGetCaps) OpenAdapter->pAdapterFuncs_2->pfnGetCaps = AdmissionUmdTraceGetCaps;
++    if (AdmissionUmdMesaCreateDevice) OpenAdapter->pAdapterFuncs_2->pfnCreateDevice = AdmissionUmdTraceCreateDevice;
++    {
++      const UINT v[2] = {OpenAdapter->Interface, OpenAdapter->Version};
++      AdmissionUmdDiagnostic("measure-caps-d3d11-adapter", hr, v, 2u);
++    }
++  }
++  return hr;
+ #else
+   ADMISSION_UMD_ADAPTER *adapter;
+   D3D10_2DDI_ADAPTERFUNCS functions;
+--- a/drivers/apple-agx/d3d12/agx_d3d12_ddi.cpp (2759 P23)
++++ b/drivers/apple-agx/d3d12/agx_d3d12_ddi.cpp (2760 P24)
+@@ -58,6 +58,7 @@
+ /* the UMD trace logger (umd_runtime_device.c; C linkage through umd_internal.h) */
+ extern "C" VOID AdmissionUmdDiagnostic(PCSTR Stage, HRESULT Status, const UINT *Values, UINT Count);
+ extern "C" BOOL AdmissionUmdMeasureEnabled(VOID);
++extern "C" BOOL AdmissionUmdCapsTrace(VOID); /* NWOAS-J274 PATCH P24 */
+ #include "../mesa/winsys/agx_win32_wait.h"
+ #include "../mesa/winsys/agx_win32_shader_stats.h"
+ 
+@@ -605,6 +606,13 @@
+     }
+     const UINT receipt[] = {arg ? static_cast<UINT>(arg->Type) : 0, arg ? arg->DataSize : 0};
+     AdmissionUmdDiagnostic("d3d12-caps", hr, receipt, 2);
++    if (AdmissionUmdCapsTrace()) { /* NWOAS-J274 PATCH P24: type, size, answer words */
++        UINT v[10] = {receipt[0], receipt[1]};
++        if (SUCCEEDED(hr) && arg && arg->pData)
++            for (UINT i = 0; i < 8 && (i + 1) * 4 <= arg->DataSize; ++i)
++                v[2 + i] = static_cast<const UINT *>(arg->pData)[i];
++        AdmissionUmdDiagnostic("measure-caps-d3d12", hr, v, 10);
++    }
+     return hr;
+ }
+ /* C1: the driver device the runtime allocates (CalcPrivateDeviceSize). */
+@@ -981,6 +989,10 @@
+ #else
+     (void)format;
+ #endif
++    if (AdmissionUmdCapsTrace()) { /* NWOAS-J274 PATCH P24 */
++        const UINT v[2] = {static_cast<UINT>(format), *support};
++        AdmissionUmdDiagnostic("measure-caps-d3d12-format", S_OK, v, 2);
++    }
+ }
+ static VOID APIENTRY CheckMultisampleQualityLevels(D3D12DDI_HDEVICE, DXGI_FORMAT format, UINT samples,
+                                                    D3D12DDI_MULTISAMPLE_QUALITY_LEVEL_FLAGS flags,
+@@ -997,6 +1009,10 @@
+     (void)flags;
+     *levels = samples == 1 ? 1u : 0u;
+ #endif
++    if (AdmissionUmdCapsTrace()) { /* NWOAS-J274 PATCH P24 */
++        const UINT v[4] = {static_cast<UINT>(format), samples, static_cast<UINT>(flags), *levels};
++        AdmissionUmdDiagnostic("measure-caps-d3d12-msaa", S_OK, v, 4);
++    }
+ }
+ static VOID APIENTRY QueryNodeMap(D3D12DDI_HDEVICE, UINT adapters, UINT *map) {
+     for (UINT i = 0; map && i < adapters; ++i) map[i] = 0; /* physical adapter i -> node 0 */

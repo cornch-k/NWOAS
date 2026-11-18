@@ -95,7 +95,8 @@ NTSTATUS NwoaEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit)
         WDF_TIMER_CONFIG tc;
         WDF_OBJECT_ATTRIBUTES ta;
         NwoaReadConfig(Dev);
-        WDF_TIMER_CONFIG_INIT_PERIODIC(&tc, NwoaEvtPollTimer, Dev->Cfg.PollIntervalMs);
+        WDF_TIMER_CONFIG_INIT(&tc, NwoaEvtPollTimer);         // one-shot, re-armed with an adaptive interval
+        tc.UseHighResolutionTimer = WdfTrue;
         tc.AutomaticSerialization = FALSE;
         WDF_OBJECT_ATTRIBUTES_INIT(&ta);
         ta.ParentObject = device;
@@ -108,8 +109,11 @@ NTSTATUS NwoaEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit)
 
 static void StartPoll(PNWOA_DEVICE Dev)
 {
-    LONG ms = (LONG)Dev->Cfg.PollIntervalMs;
-    WdfTimerStart(Dev->PollTimer, WDF_REL_TIMEOUT_IN_MS(ms));
+    Dev->LastActivity = (LONG64)KeQueryInterruptTime();
+    Dev->RingsUpTime = KeQueryInterruptTime();
+    InterlockedExchange(&Dev->PollIdle, 0);
+    InterlockedExchange(&Dev->PollRunning, 1);
+    WdfTimerStart(Dev->PollTimer, WDF_REL_TIMEOUT_IN_MS(Dev->Cfg.PollIntervalMs));
 }
 
 NTSTATUS NwoaBringUp(PNWOA_DEVICE Dev)
@@ -151,6 +155,8 @@ NTSTATUS NwoaBringUp(PNWOA_DEVICE Dev)
     if (!NT_SUCCESS(st)) { NwoaSetStage(Dev, "fail_rings", st); return st; }
     NwoaSetStage(Dev, "rings_up", STATUS_SUCCESS);
     StartPoll(Dev);
+    InterlockedExchange(&Dev->IrqMode, Dev->Interrupt ? 1 : 0);
+    Dev->IsrUnclaimedRow = 0;
     NwoaIntrEnable(Dev, TRUE);
     st = NwoaFirmwareConfigure(Dev);
     NwoaDiagCounters(Dev);
@@ -162,22 +168,25 @@ NTSTATUS NwoaBringUp(PNWOA_DEVICE Dev)
 
 void NwoaShutdown(PNWOA_DEVICE Dev)
 {
+    InterlockedExchange(&Dev->PollRunning, 0);
     if (Dev->RingsUp && !Dev->Dead) {
         Dev->Connected = FALSE;
-        (void)NwoaSetInt(Dev, NB_C_DISASSOC, 0);
+        NwoaHostDisassoc(Dev, DIS_SHUTDOWN);
         NwoaFlowringDelete(Dev);
         (void)NwoaSetInt(Dev, NB_C_DOWN, 1);
     }
-    if (Dev->PollTimer)
+    if (Dev->PollTimer) {
         WdfTimerStop(Dev->PollTimer, TRUE);
+        WdfTimerStop(Dev->PollTimer, TRUE);   // a callback running during the first stop may have re-armed it
+    }
     NwoaRingsStop(Dev);                       // mailbox mask off, bus master off (before freeing DMA)
     if (Dev->Work)
         WdfWorkItemFlush(Dev->Work);          // jobs now fail fast (RingsUp FALSE); none may touch DMA after this
+    NwoaWifiPowerDown(Dev);
     // No CR4 halt here: wifi_up.py never touched the cores while the firmware ran (it powered
     // the port off), and S259 _PS3 cuts the power.  Bus master off (above) already stops DMA.
     NwoaDmaFree(Dev);
-    NwoaFreeFiles(Dev);
-    Dev->FwUp = FALSE;
+    Dev->FwUp = FALSE;                        // files stay cached (freed in ReleaseHardware)
 }
 
 NTSTATUS NwoaEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRESLIST Trans)
@@ -186,7 +195,7 @@ NTSTATUS NwoaEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRESLIST
     NTSTATUS st;
     NwoaReadConfig(Dev);
     NwoaSetStage(Dev, "prepare", STATUS_PENDING);
-    NwoaDiagSz(Dev, L"NwoaDriverBuild", "nwoa4378 0.8 (wifi-s258h, EAPOL from E_EAPOL_MSG, assoc_info 512)");
+    NwoaDiagSz(Dev, L"NwoaDriverBuild", "nwoa4378 1.0.1.2 (wifi-s258k: disconnect evidence log, roam task, link quality updates, fw roam_off)");
     st = NwoaMapResources(Dev, Raw, Trans);
     if (!NT_SUCCESS(st)) { NwoaSetStage(Dev, "fail_resources", st); return st; }
     st = NwoaConfigInit(Dev);
@@ -208,6 +217,7 @@ NTSTATUS NwoaEvtReleaseHardware(WDFDEVICE Device, WDFCMRESLIST Trans)
     UNREFERENCED_PARAMETER(Trans);
     PNWOA_DEVICE Dev = NwoaGetDevice(Device);
     NwoaShutdown(Dev);
+    NwoaFreeFiles(Dev);
     NwoaUnmapResources(Dev);
     Dev->Interrupt = NULL;                    // created in PrepareHardware, deleted by the framework
     Dev->HaveIntRes = FALSE;
@@ -219,6 +229,7 @@ NTSTATUS NwoaEvtD0Entry(WDFDEVICE Device, WDF_POWER_DEVICE_STATE Previous)
 {
     PNWOA_DEVICE Dev = NwoaGetDevice(Device);
     UNREFERENCED_PARAMETER(Previous);
+    InterlockedIncrement(&Dev->CntD0Entry);
     if (!Dev->FirstD0Done) {
         Dev->FirstD0Done = TRUE;              // PrepareHardware already brought the chip up
         return STATUS_SUCCESS;
@@ -235,6 +246,7 @@ NTSTATUS NwoaEvtD0Entry(WDFDEVICE Device, WDF_POWER_DEVICE_STATE Previous)
 NTSTATUS NwoaEvtD0Exit(WDFDEVICE Device, WDF_POWER_DEVICE_STATE Target)
 {
     PNWOA_DEVICE Dev = NwoaGetDevice(Device);
+    InterlockedIncrement(&Dev->CntD0Exit);
     NwoaDiagCounters(Dev);
     if (Target != WdfPowerDeviceD3Final)
         NwoaShutdown(Dev);

@@ -1,0 +1,45 @@
+NWSTAT-SET wfi=0
+S260 IDLE cpu=0 busy_pct=2.0 dpc_pct=0.0 intr_pct=1.0 interrupts_per_s=25887
+S260 IDLE cpu=1 busy_pct=4.6 dpc_pct=0.0 intr_pct=4.6 interrupts_per_s=25277
+S260 IDLE cpu=2 busy_pct=2.0 dpc_pct=0.0 intr_pct=2.0 interrupts_per_s=16268
+S260 IDLE cpu=3 busy_pct=2.0 dpc_pct=0.0 intr_pct=2.0 interrupts_per_s=14214
+S260 IDLE cpu=4 busy_pct=0.5 dpc_pct=0.0 intr_pct=0.5 interrupts_per_s=4623
+S260 IDLE cpu=5 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=5406
+S260 IDLE cpu=6 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=2236
+S260 IDLE cpu=7 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=34
+S260 IDLE seconds_measured_ms=3000 cpus=8 interrupts_per_s_total=93949
+NWSTAT-MARK wfioff-begin
+S260 IDLE cpu=0 busy_pct=4.4 dpc_pct=0.1 intr_pct=4.2 interrupts_per_s=25043
+S260 IDLE cpu=1 busy_pct=3.8 dpc_pct=0.0 intr_pct=3.7 interrupts_per_s=23885
+S260 IDLE cpu=2 busy_pct=2.7 dpc_pct=0.0 intr_pct=2.7 interrupts_per_s=16041
+S260 IDLE cpu=3 busy_pct=3.4 dpc_pct=0.0 intr_pct=3.2 interrupts_per_s=15874
+S260 IDLE cpu=4 busy_pct=0.7 dpc_pct=0.0 intr_pct=0.6 interrupts_per_s=6546
+S260 IDLE cpu=5 busy_pct=0.9 dpc_pct=0.0 intr_pct=0.9 interrupts_per_s=6410
+S260 IDLE cpu=6 busy_pct=0.3 dpc_pct=0.0 intr_pct=0.2 interrupts_per_s=2902
+S260 IDLE cpu=7 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=33
+S260 IDLE seconds_measured_ms=30000 cpus=8 interrupts_per_s_total=96737
+NWSTAT-MARK wfioff-end
+S260 TIMER sleep1 n=1000 mean_us=1953 p50_us=1999 p99_us=2021 max_us=4101 min_us=1003
+NWSTAT-SET wfi=1
+S260 IDLE cpu=0 busy_pct=2.6 dpc_pct=0.0 intr_pct=1.5 interrupts_per_s=12216
+S260 IDLE cpu=1 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=243
+S260 IDLE cpu=2 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=221
+S260 IDLE cpu=3 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=143
+S260 IDLE cpu=4 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=170
+S260 IDLE cpu=5 busy_pct=0.5 dpc_pct=0.0 intr_pct=0.5 interrupts_per_s=210
+S260 IDLE cpu=6 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=40
+S260 IDLE cpu=7 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=1
+S260 IDLE seconds_measured_ms=3000 cpus=8 interrupts_per_s_total=13246
+NWSTAT-MARK wfion-begin
+S260 IDLE cpu=0 busy_pct=7.6 dpc_pct=0.3 intr_pct=2.2 interrupts_per_s=10786
+S260 IDLE cpu=1 busy_pct=5.6 dpc_pct=0.0 intr_pct=0.1 interrupts_per_s=193
+S260 IDLE cpu=2 busy_pct=2.6 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=120
+S260 IDLE cpu=3 busy_pct=2.4 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=84
+S260 IDLE cpu=4 busy_pct=0.9 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=57
+S260 IDLE cpu=5 busy_pct=0.4 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=20
+S260 IDLE cpu=6 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=1
+S260 IDLE cpu=7 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=1
+S260 IDLE seconds_measured_ms=30000 cpus=8 interrupts_per_s_total=11265
+NWSTAT-MARK wfion-end
+S260 TIMER sleep1 n=1000 mean_us=1940 p50_us=1999 p99_us=2170 max_us=5180 min_us=1004
+S260 H3 DONE

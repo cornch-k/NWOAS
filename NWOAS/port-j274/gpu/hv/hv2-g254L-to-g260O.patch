@@ -1,0 +1,1138 @@
+diff -ruN a/Makefile b/Makefile
+--- a/Makefile	2026-11-18 17:23:59
++++ b/Makefile	2026-11-18 16:36:19
+@@ -135,6 +135,7 @@
+ 	heapblock.o \
+ 	nwoas_frontend/model.o nwoas_frontend/admin_payload.o nwoas_frontend/admin_state.o nwoas_frontend/admin_ring.o nwoas_frontend/frontend.o \
+ 	hv.o hv_vm.o hv_exc.o hv_vuart.o hv_wdt.o hv_asm.o hv_aic.o hv_virtio.o hv_psci.o hv_vgic.o \
++	nwoas_pwr.o \
+ 	i2c.o \
+ 	iodev.o \
+ 	iova.o \
+File a/data/bootlogo_128.png is a unknown type while file b/data/bootlogo_128.png is a unknown type
+File a/data/bootlogo_256.png is a unknown type while file b/data/bootlogo_256.png is a unknown type
+File a/data/bootlogo_48.png is a unknown type while file b/data/bootlogo_48.png is a unknown type
+diff -ruN a/src/hv.c b/src/hv.c
+--- a/src/hv.c	2026-11-18 17:23:59
++++ b/src/hv.c	2026-11-18 16:34:51
+@@ -13,6 +13,7 @@
+ #include "utils.h"
+ #include "adt.h"
+ #include "xnuboot.h"
++#include "nwoas_pwr.h" /* NWOAS S260 */
+ 
+ /* NWOAS gpu-hv2: AGX mediation (make NWOAS_AGX=1 only; default: not compiled).
+  * hv_init() runs the read-only ADT probe; hv_start() installs the broker only if
+@@ -204,6 +205,7 @@
+     hv_vgicv3_init_list_registers();
+ #endif
+ 
++    nwoas_pwr_guest_starting(); /* NWOAS S260: SLC enable is refused from here on */
+     hv_arm_tick(false);
+     hv_pinned_cpu = -1;
+     hv_want_cpu = -1;
+@@ -461,8 +463,9 @@
+ 
+ void hv_arm_tick(bool secondary)
+ {
+-    if (secondary)
+-        msr(CNTP_TVAL_EL0, hv_secondary_tick_interval);
++    if (secondary) /* NWOAS S260 C-2: slow only while both guest timer routes are open */
++        msr(CNTP_TVAL_EL0,
++            nwoas_pwr_secondary_interval(hv_secondary_tick_interval, hv_tick_interval));
+     else
+         msr(CNTP_TVAL_EL0, hv_tick_interval);
+     msr(CNTP_CTL_EL0, CNTx_CTL_ENABLE);
+@@ -479,6 +482,7 @@
+ {
+     extern void nwoas_nvme_fastpath_poll(struct exc_info *ctx);
+     hv_wdt_pet();
++    nwoas_pwr_tick(); /* NWOAS S260: tick count; optional periodic summary (off by default) */
+     // NOTE: a tick-based guest-PC profiler was tried here (wfidiag7) but printf in hv_tick,
+     // even rate-limited, desynced the uart proxy and made the HV drop to its shell early
+     // (run18 artifact: "Entering hypervisor shell" + a spurious early stall). Reverted.
+diff -ruN a/src/hv_exc.c b/src/hv_exc.c
+--- a/src/hv_exc.c	2026-11-18 17:23:59
++++ b/src/hv_exc.c	2026-11-18 17:21:30
+@@ -13,6 +13,7 @@
+ #include "aic.h"
+ #include "aic_regs.h"
+ #include "adt.h"
++#include "nwoas_pwr.h" /* NWOAS S260 */
+ 
+ // NWOAS: quiet mode. Silences the heavy per-SMC / periodic diagnostic dumps (guest PC-ring,
+ // PSCI-SMC verbose, UEFI/bmgfw UART re-dumps, VGATE timer-gate trace). The direct tether is USB
+@@ -93,6 +94,7 @@
+         hv_rendezvous();
+ 
+     u64 entry_time = mrs(CNTPCT_EL0);
++    NWOAS_PWR_INC(proxy_calls);
+ 
+     ctx->elr_phys = hv_translate(ctx->elr, false, false, NULL);
+     ctx->far_phys = hv_translate(ctx->far, false, false, NULL);
+@@ -108,6 +110,7 @@
+     hv_wdt_suspend();
+     int ret = uartproxy_run(&start);
+     hv_wdt_resume();
++    nwoas_pwr_proxy_ticks += mrs(CNTPCT_EL0) - entry_time; /* NWOAS S260 (bhl held) */
+ 
+     switch (ret) {
+         case EXC_RET_HANDLED:
+@@ -354,8 +357,10 @@
+     u32 cpu = smp_id();
+     if (cpu >= 8)
+         return;
+-    if (hv_vgic_virq_outstanding(vintid))   // already pending/active: nothing to do
++    if (hv_vgic_virq_outstanding(vintid)) {  // already pending/active: nothing to do
++        NWOAS_PWR_INC(timer_dedup);
+         return;
++    }
+     u64 now = mrs(CNTPCT_EL0);
+     // NWOAS stage-8+: the ~62ms cap exists only to stop the level-asserted timer from
+     // re-expiring faster than the slow tethered hv can service it during winload/UEFI
+@@ -385,6 +390,10 @@
+     nwoas_watch_hid(now);
+     u64 min_gap = kernel_phase ? (mrs(CNTFRQ_EL0) >> 10)   /* ~1ms  (Windows kernel) */
+                                : (mrs(CNTFRQ_EL0) >> 4);    /* ~62ms (winload/UEFI)  */
++    /* NWOAS S260 C-4: opt-in kernel-phase override (NWOAS_PWR_F_TIMER_GAP); the
++     * winload/UEFI 62 ms livelock guard is never changed. */
++    if (kernel_phase && (nwoas_pwr_flags & NWOAS_PWR_F_TIMER_GAP))
++        min_gap = nwoas_pwr_timer_gap_ticks;
+     // NWOAS-TINJ diag (observational, throttled): expose whether CNTV(18) delivery is being
+     // starved by the rate-limit. kphase_now vs sticky reveals flapping; gated=1 means skipped.
+ #if NWOAS_HOTPATH_LOG
+@@ -396,9 +405,12 @@
+                    (now - last_inject[idx][cpu]) < min_gap);
+     }
+ #endif
+-    if ((now - last_inject[idx][cpu]) < min_gap)
++    if ((now - last_inject[idx][cpu]) < min_gap) {
++        NWOAS_PWR_INC(timer_gated);
+         return;
++    }
+     last_inject[idx][cpu] = now;
++    NWOAS_PWR_INC(timer_inj);
+     if (hv_vgic3_get_free_lr() != -1) {
+         hv_vgic3_inject_irq(vintid, hv_vgic3_get_priority(vintid), false, true, false, 0);
+     } else {
+@@ -478,13 +490,19 @@
+ static volatile bool nwoas_nvme_irq_fast_level;
+ void nwoas_nvme_set_irq(u64 level)
+ {
++    bool was = nwoas_nvme_irq_host_level || nwoas_nvme_irq_fast_level;
+     nwoas_nvme_irq_host_level = !!level;
+     sysop("dsb sy");
++    if (level && !was)
++        nwoas_pwr_kick_irq_cpu(); /* NWOAS S260: no-op unless C-1 WFI sleep is on */
+ }
+ void nwoas_nvme_set_fast_irq(u64 level)
+ {
++    bool was = nwoas_nvme_irq_host_level || nwoas_nvme_irq_fast_level;
+     nwoas_nvme_irq_fast_level = !!level;
+     sysop("dsb sy");
++    if (level && !was)
++        nwoas_pwr_kick_irq_cpu(); /* NWOAS S260: no-op unless C-1 WFI sleep is on */
+ }
+ static void hv_bridge_nvme_irq(void)
+ {
+@@ -945,8 +963,72 @@
+         hv_write_hcr(hcr | HCR_VF);
+     }
+ #endif
++    nwoas_pwr_after_update_fiq(); /* NWOAS S260 C-2: no-op unless the slow secondary tick is on */
+ }
+ 
++/* NWOAS S260 C-1: may this CPU really sleep for a trapped guest WFI?
++ * Called on the bhl-free WFI fast path right after hv_update_fiq().  Returns 0 to
++ * sleep, 1 = an interrupt is already deliverable/pending, 2 = a guest timer route is
++ * masked (fired but injected/outstanding/rate-limited, so its expiry would not wake
++ * EL2 by itself). */
++static int nwoas_wfi_sleep_check(void)
++{
++    if (mrs(ISR_EL1) & (0x80 | 0x40)) /* physical IRQ/FIQ already pending at EL2 */
++        return 1;
++    if (PERCPU(ipi_pending) || PERCPU(pmc_pending))
++        return 1;
++#ifdef ENABLE_VGIC_MODULE
++    /* S260 fix 2: the NVMe IRQ is bridged only here (interruptible CPU).  While its
++     * level is up but not yet injected (e.g. the 50 us re-assert gap), keep the old
++     * busy NOP-advance so hv_update_fiq() retries at once instead of after a tick. */
++    {
++        int icpu = hv_pinned_cpu == -1 ? boot_cpu_idx : hv_pinned_cpu;
++        if ((int)smp_id() == icpu && (nwoas_nvme_irq_host_level || nwoas_nvme_irq_fast_level) &&
++            hv_vgic3_spi_enabled(900) && !hv_vgic_virq_outstanding(900))
++            return 4;
++    }
++    u64 used = ~mrs(ICH_ELRSR_EL2) & 0xffULL;
++    for (int lr = 0; lr < 8; lr++)
++        if ((used & BIT(lr)) && (hv_vgic3_read_lr(lr) & ICH_LR_STATE_PENDING))
++            return 1;
++    if (PERCPU(irq_queue).head != PERCPU(irq_queue).tail ||
++        PERCPU(sgi_queue).head != PERCPU(sgi_queue).tail ||
++        PERCPU(timer_queue).head != PERCPU(timer_queue).tail)
++        return 1;
++#endif
++    u64 both = VM_TMR_FIQ_ENA_ENA_V | VM_TMR_FIQ_ENA_ENA_P;
++    if ((mrs(SYS_IMP_APL_VM_TMR_FIQ_ENA_EL2) & both) != both)
++        return 2;
++    return 0;
++}
++
++/* NWOAS S260 C-1: backup wake.  If an enabled, unmasked guest timer expires before
++ * this CPU's next HV tick, move the HV tick (EL2 physical timer) to that deadline, so
++ * the guest timer is never later than today even if its FIQ route did not wake an
++ * EL2 wfi [hypothesis: on M1 it does, the reference project relies on it]. */
++static void nwoas_wfi_arm_wake(void)
++{
++    u64 hv_cval = mrs(CNTP_CVAL_EL0);
++    u64 best = hv_cval;
++    u64 vctl = mrs(CNTV_CTL_EL02);
++    if ((vctl & (CNTx_CTL_ENABLE | CNTx_CTL_IMASK)) == CNTx_CTL_ENABLE) {
++        u64 c = mrs(CNTV_CVAL_EL02);
++        u64 d = c + mrs(CNTVOFF_EL2);
++        if (d >= c && d < best)
++            best = d;
++    }
++    u64 pctl = mrs(CNTP_CTL_EL02);
++    if ((pctl & (CNTx_CTL_ENABLE | CNTx_CTL_IMASK)) == CNTx_CTL_ENABLE) {
++        u64 d = mrs(CNTP_CVAL_EL02);
++        if (d < best)
++            best = d;
++    }
++    if (best < hv_cval) {
++        msr(CNTP_CVAL_EL0, best);
++        NWOAS_PWR_INC(wake_armed);
++    }
++}
++
+ #define SYSREG_MAP(sr, to)                                                                         \
+     case SYSREG_ISS(sr):                                                                           \
+         if (is_read)                                                                               \
+@@ -1167,6 +1249,7 @@
+                     };
+                     virq_queue_push(&PERCPU_N(cpu, sgi_queue), &pending);
+                     smp_send_ipi(cpu);
++                    NWOAS_PWR_INC(ipi_sent);
+                 }
+             }
+             return true;
+@@ -1835,9 +1918,15 @@
+         sysop("msr daifclr, 4");
+ 
+     __atomic_and_fetch(&hv_cpus_in_guest, ~BIT(smp_id()), __ATOMIC_ACQUIRE);
++    u64 nwoas_lock_t0 = mrs(CNTPCT_EL0);
+     spin_lock(&bhl);
+     hv_wdt_breadcrumb('X');
+     exc_entry_time = mrs(CNTPCT_EL0);
++    {   /* NWOAS S260: lock wait accounting (own slot, no atomics needed) */
++        struct nwoas_pwr_cpu *pc = nwoas_pwr_me();
++        pc->bhl_wait_ticks += exc_entry_time - nwoas_lock_t0;
++        pc->slow_entries++;
++    }
+     /* disable PMU counters in the hypervisor */
+     u64 pmcr0 = mrs(SYS_IMP_APL_PMCR0);
+     PERCPU(exc_entry_pmcr0_cnt) = pmcr0 & PMCR0_CNT_MASK;
+@@ -1870,9 +1959,18 @@
+ void hv_exc_sync(struct exc_info *ctx)
+ {
+     hv_wdt_breadcrumb('S');
++    NWOAS_PWR_INC(sync);
+     hv_get_context(ctx);
+     bool handled = false;
+     u32 ec = FIELD_GET(ESR_EC, ctx->esr);
++    if (ec == ESR_EC_DABORT_LOWER)
++        NWOAS_PWR_INC(sync_dabort);
++    else if (ec == ESR_EC_MSR || ec == ESR_EC_IMPDEF)
++        NWOAS_PWR_INC(sync_msr);
++    else if (ec == ESR_EC_SMC)
++        NWOAS_PWR_INC(sync_smc);
++    else if (ec == ESR_EC_HVC)
++        NWOAS_PWR_INC(sync_hvc);
+ 
+     /* NWOAS D45: common bugcheck one-shot probe. HVC is a call-like exception,
+      * so ELR normally already names the following instruction.  The helper
+@@ -2010,6 +2108,67 @@
+                        lr_occ, lr0_vintid);
+ #endif
+             }
++            /* NWOAS S260 C-1 (NWOAS_PWR_F_WFI_SLEEP, default off = old NOP-advance):
++             * like windows-on-m1 hv_exc.c, sleep in EL2 while nothing is deliverable.
++             * Wake sources: HV tick, guest timer FIQ route (+ backup wake above),
++             * device IRQ, IPI/rendezvous.  The common block below then advances ELR and
++             * re-runs hv_update_fiq() to close the wait-to-return race. */
++            if (is_wfe) {
++                NWOAS_PWR_INC(wfe_traps);
++            } else {
++                NWOAS_PWR_INC(wfi_traps);
++                if (nwoas_pwr_flags & NWOAS_PWR_F_WFI_SLEEP) {
++                    hv_update_fiq();
++                    int why = nwoas_wfi_sleep_check();
++                    /* S260 fix (hardware 2026-11-18 16:56, all four P-cores reset during the
++                     * first EL2 wfi: regs zeroed, EL2 data abort FAR 0x10): hv.c sets
++                     * CYC_OVRD WFI_MODE(0) for the guest, which lets the core take the deep,
++                     * state-LOSING power transition on wfi.  windows-on-m1 hv.c keeps mode 2
++                     * ("core up", state retained) for the same reason.  Force mode 2 around
++                     * this wfi only and restore the previous value, so nothing the guest can
++                     * read changes.  Without CYC_OVRD the HV never sleeps. */
++                    if (why == 0 && !cpu_features->cyc_ovrd)
++                        why = 3;
++                    if (why == 0) {
++                        nwoas_wfi_arm_wake();
++                        u64 cyc = mrs(SYS_IMP_APL_CYC_OVRD);
++                        u64 up = (cyc & ~CYC_OVRD_WFI_MODE_MASK) | CYC_OVRD_WFI_MODE(2);
++                        if (up != cyc) {
++                            msr(SYS_IMP_APL_CYC_OVRD, up);
++                            sysop("isb");
++                        }
++                        u64 t0 = mrs(CNTPCT_EL0);
++                        sysop("dsb sy");
++                        sysop("wfi");
++                        u64 t1 = mrs(CNTPCT_EL0);
++                        if (up != cyc) {
++                            msr(SYS_IMP_APL_CYC_OVRD, cyc);
++                            sysop("isb");
++                        }
++                        struct nwoas_pwr_cpu *pc = nwoas_pwr_me();
++                        pc->wfi_sleep_ticks += t1 - t0;
++                        pc->wfi_sleeps++;
++                        /* wake cause (first match), read-only */
++                        if (mrs(SYS_IMP_APL_IPI_SR_EL1) & IPI_SR_PENDING)
++                            pc->wake_ipi++;
++                        else if (mrs(CNTP_CTL_EL0) == (CNTx_CTL_ISTATUS | CNTx_CTL_ENABLE))
++                            pc->wake_tick++;
++                        else if ((mrs(CNTV_CTL_EL02) & CNTx_CTL_ISTATUS) ||
++                                 (mrs(CNTP_CTL_EL02) & CNTx_CTL_ISTATUS))
++                            pc->wake_vtimer++;
++                        else if (mrs(ISR_EL1) & 0x80)
++                            pc->wake_irq++;
++                        else
++                            pc->wake_other++;
++                    } else if (why == 4) {
++                        NWOAS_PWR_INC(wfi_skip_nvme);
++                    } else if (why == 1) {
++                        NWOAS_PWR_INC(wfi_skip_pending);
++                    } else {
++                        NWOAS_PWR_INC(wfi_skip_route);
++                    }
++                }
++            }
+             handled = true;
+             break;
+         }
+@@ -2081,6 +2240,7 @@
+ 
+ void hv_exc_irq(struct exc_info *ctx)
+ {
++    NWOAS_PWR_INC(irq);
+     // NWOAS stage-8 guest-PC sampler: on every physical FIQ to EL2, ctx->elr is the guest
+     // PC where the guest was interrupted. The pc-ring only records TRAPPING (MMIO) PCs, so
+     // it is dominated by the background UEFI USB timers (XhciDxe 0xbdf...) and cannot see
+@@ -2323,6 +2483,7 @@
+     bool nwoas_do_dump = false;
+ 
+     hv_maybe_exit();
++    NWOAS_PWR_INC(fiq);
+ 
+     //
+     // TODO: deliver the FIQ to the guest as an IRQ if vGIC is enabled.
+@@ -2331,6 +2492,7 @@
+     if (mrs(CNTP_CTL_EL0) == (CNTx_CTL_ISTATUS | CNTx_CTL_ENABLE)) {
+         msr(CNTP_CTL_EL0, CNTx_CTL_ISTATUS | CNTx_CTL_IMASK | CNTx_CTL_ENABLE);
+         tick = true;
++        NWOAS_PWR_INC(fiq_tick);
+     }
+ 
+     // NWOAS stage-8 tick profiler: moved into hv_tick() (safe slow-path context) -- doing
+@@ -2344,6 +2506,7 @@
+ 
+     if (smp_id() != interruptible_cpu && !(mrs(ISR_EL1) & 0x40) && hv_want_cpu == -1) {
+         // Non-interruptible CPU and it was just a timer tick (or spurious), so just update FIQs
++        NWOAS_PWR_INC(fiq_fast);
+         hv_update_fiq();
+         hv_arm_tick(true);
+         return;
+@@ -2427,6 +2590,7 @@
+     }
+ 
+     if (mrs(SYS_IMP_APL_IPI_SR_EL1) & IPI_SR_PENDING) {
++        NWOAS_PWR_INC(ipi_rx);
+ #ifdef ENABLE_VGIC_MODULE
+         while(hv_vgic3_get_free_lr() != -1){//another CPU sent an IPI, check the sgi_queue
+             virq_t pending;
+diff -ruN a/src/hv_psci.c b/src/hv_psci.c
+--- a/src/hv_psci.c	2026-11-18 17:23:59
++++ b/src/hv_psci.c	2026-11-18 16:34:59
+@@ -17,6 +17,7 @@
+ */
+ 
+ #include "hv.h"
++#include "nwoas_pwr.h" /* NWOAS S260 */
+ #include "hv_psci.h"
+ #include "assert.h"
+ #include "exception.h"
+@@ -1523,8 +1524,9 @@
+ void hv_psci_reset_system(void) {
+    iodev_console_flush();
+    //
+-   // TODO: replace this placeholder reboot with a poweroff.
++   // NWOAS S260 S-1: optional ANS flush + clean shutdown first (NWOAS_PWR_F_NVME_SHUT).
+    //
++   nwoas_pwr_system_down(false);
+    reboot();
+ }
+ 
+@@ -1537,6 +1539,11 @@
+ // N/A
+ //
+ void hv_psci_turn_off_system(void) {
++   //
++   // NWOAS S260: optional ANS clean shutdown and SMC MBSE power-off
++   // (NWOAS_PWR_F_NVME_SHUT / NWOAS_PWR_F_SMC_OFF).  Falls back to the old reboot.
++   //
++   nwoas_pwr_system_down(true);
+    flush_and_reboot();
+ }
+ 
+diff -ruN a/src/hv_vm.c b/src/hv_vm.c
+--- a/src/hv_vm.c	2026-11-18 17:23:59
++++ b/src/hv_vm.c	2026-11-18 16:36:09
+@@ -3,6 +3,7 @@
+ // #define DEBUG
+ 
+ #include "hv.h"
++#include "nwoas_pwr.h" /* NWOAS S260 */
+ #include "assert.h"
+ #include "cpu_regs.h"
+ #include "exception.h"
+@@ -1506,6 +1507,52 @@
+     return NWOAS_NVME_SC_SUCCESS;
+ }
+ 
++/* NWOAS S260 phase 0: per-SQ-slot doorbell time and the source of the current
++ * processing call (doorbell trap or CPU0 tick).  Boot-local, under bhl. */
++static u64 nwoas_pwr_sq_ts[NWOAS_NVME_MAX_IO_DEPTH];
++static bool nwoas_pwr_from_doorbell;
++
++static void nwoas_pwr_nvme_done(const struct nwoas_nvme_guest_cmd *cmd, u64 elapsed)
++{
++    struct nwoas_pwr_nvme *n = &nwoas_pwr_nvme;
++    u64 now = mrs(CNTPCT_EL0);
++    if (nwoas_pwr_from_doorbell)
++        n->doorbell_cmds++;
++    else
++        n->tick_cmds++;
++    if (cmd->nsid == 2) {
++        n->ns2_cmds++;
++        return;
++    }
++    if (cmd->nsid != 1) {
++        n->other_cmds++;
++        return;
++    }
++    n->ns1_cmds++;
++    n->exec_sum_ticks += elapsed;
++    u32 blocks = (cmd->cdw12 & 0xffff) + 1;
++    if (cmd->opcode == 2)
++        n->read_blocks += blocks;
++    else if (cmd->opcode == 1)
++        n->write_blocks += blocks;
++    u16 size = nwoas_nvme_fp.sq_size;
++    u64 depth = size ? (nwoas_nvme_fp.sq_tail + size - nwoas_nvme_fp.sq_head) % size : 0;
++    n->depth_sum += depth;
++    n->depth_samples++;
++    if (depth > n->depth_max)
++        n->depth_max = depth;
++    u64 ts = nwoas_pwr_sq_ts[nwoas_nvme_fp.sq_head % NWOAS_NVME_MAX_IO_DEPTH];
++    if (!ts || ts > now)
++        return;
++    u64 lat = now - ts;
++    u64 us = lat * 1000000 / mrs(CNTFRQ_EL0);
++    n->lat_count++;
++    n->lat_sum_ticks += lat;
++    if (lat > n->lat_max_ticks)
++        n->lat_max_ticks = lat;
++    n->lat_hist[us < 20 ? 0 : us < 100 ? 1 : us < 500 ? 2 : us < 2000 ? 3 : us < 10000 ? 4 : 5]++;
++}
++
+ static void nwoas_nvme_fastpath_process(struct exc_info *ctx, u32 budget)
+ {
+     if (!nwoas_nvme_fp.armed || nwoas_nvme_fp.faulted || nwoas_nvme_fp.link_busy)
+@@ -1558,6 +1605,7 @@
+             break;
+         }
+         u16 status = result;
++        nwoas_pwr_nvme_done(&cmd, elapsed); /* NWOAS S260: counters only */
+         nwoas_nvme_fp.sq_head++;
+         if (nwoas_nvme_fp.sq_head == nwoas_nvme_fp.sq_size)
+             nwoas_nvme_fp.sq_head = 0;
+@@ -1734,13 +1782,19 @@
+     }
+     if (off == 0x1008) {
+         if (*val < nwoas_nvme_fp.sq_size) {
++            u64 db_now = mrs(CNTPCT_EL0); /* NWOAS S260: doorbell time per new SQ slot */
++            for (u16 i = nwoas_nvme_fp.sq_tail, k = 0; i != *val && k < nwoas_nvme_fp.sq_size;
++                 i = (i + 1) % nwoas_nvme_fp.sq_size, k++)
++                nwoas_pwr_sq_ts[i % NWOAS_NVME_MAX_IO_DEPTH] = db_now;
+             nwoas_nvme_fp.sq_tail = *val;
+             u32 backlog = (nwoas_nvme_fp.sq_tail + nwoas_nvme_fp.sq_size -
+                            nwoas_nvme_fp.sq_head) % nwoas_nvme_fp.sq_size;
+             if (backlog > nwoas_nvme_diag.max_sq_backlog)
+                 nwoas_nvme_diag.max_sq_backlog = backlog;
+             nwoas_nvme_fp.deferred = nwoas_nvme_fp.sq_head != nwoas_nvme_fp.sq_tail;
++            nwoas_pwr_from_doorbell = true;
+             nwoas_nvme_fastpath_process(ctx, 1);
++            nwoas_pwr_from_doorbell = false;
+         } else {
+             nwoas_nvme_fp.errors++;
+         }
+diff -ruN a/src/mcc.c b/src/mcc.c
+--- a/src/mcc.c	2026-11-18 17:23:59
++++ b/src/mcc.c	2026-11-18 16:33:06
+@@ -176,6 +176,26 @@
+     return ret;
+ }
+ 
++/* NWOAS S260: read-only SLC state for measurement.  out[2*i] = PLANE_CACHE_ENABLE,
++ * out[2*i+1] = PLANE_CACHE_STATUS for every MCC plane (T8103: 1 MCC x 4 planes).
++ * Returns the number of words written, or -1 when the MCC was not initialised. */
++int mcc_cache_status(u32 *out, int max_words)
++{
++    int n = 0;
++
++    if (!mcc_initialized)
++        return -1;
++    for (int mcc = 0; mcc < mcc_count; mcc++) {
++        for (int plane = 0; plane < mcc_regs[mcc].plane_count; plane++) {
++            if (n + 2 > max_words)
++                return n;
++            out[n++] = plane_read32(mcc, plane, PLANE_CACHE_ENABLE);
++            out[n++] = plane_read32(mcc, plane, PLANE_CACHE_STATUS);
++        }
++    }
++    return n;
++}
++
+ int mcc_unmap_carveouts(void)
+ {
+     if (!mcc_initialized)
+diff -ruN a/src/mcc.h b/src/mcc.h
+--- a/src/mcc.h	2026-11-18 17:23:59
++++ b/src/mcc.h	2026-11-18 16:33:06
+@@ -16,5 +16,6 @@
+ int mcc_init(void);
+ int mcc_unmap_carveouts(void);
+ int mcc_enable_cache(void);
++int mcc_cache_status(u32 *out, int max_words); /* NWOAS S260, read-only */
+ 
+ #endif
+diff -ruN a/src/nwoas_pwr.c b/src/nwoas_pwr.c
+--- a/src/nwoas_pwr.c	1970-01-01 09:00:00
++++ b/src/nwoas_pwr.c	2026-11-18 17:21:30
+@@ -0,0 +1,330 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * NWOAS S260: phase-0 measurement + phase-1 small hypervisor fixes.
++ * See nwoas_pwr.h.  Everything here is inert until P_HV_NWOAS_PWR CONFIG.
++ * HARDWARE-UNVERIFIED.
++ */
++#include "nwoas_pwr.h"
++#include "cpu_regs.h"
++#include "hv.h"
++#include "iodev.h"
++#include "mcc.h"
++#include "nvme.h"
++#include "smc.h"
++#include "smp.h"
++#include "string.h"
++#include "utils.h"
++
++extern spinlock_t bhl;
++extern u64 hv_tick_interval;
++extern int hv_pinned_cpu;
++
++volatile u32 nwoas_pwr_flags;
++u64 nwoas_pwr_sec_interval;
++u64 nwoas_pwr_timer_gap_ticks;
++struct nwoas_pwr_cpu nwoas_pwr_cpu[NWOAS_PWR_NCPU];
++struct nwoas_pwr_cpu nwoas_pwr_cpu_spare;
++struct nwoas_pwr_nvme nwoas_pwr_nvme;
++u64 nwoas_pwr_hv_ticks;
++u64 nwoas_pwr_proxy_ticks;
++
++static bool nwoas_pwr_started;
++static u32 nwoas_pwr_sec_hz;
++static u64 nwoas_pwr_print_ticks, nwoas_pwr_next_print, nwoas_pwr_prints;
++static u64 nwoas_pwr_smc_reads, nwoas_pwr_smc_errors;
++static struct nwoas_pwr_snapshot nwoas_pwr_last; /* previous periodic print (deltas) */
++
++#define NWOAS_PWR_MAX_PRINTS 4000
++#define NWOAS_SMC_KEY(a, b, c, d)                                                                  \
++    (((u32)(a) << 24) | ((u32)(b) << 16) | ((u32)(c) << 8) | (u32)(d))
++
++void nwoas_pwr_guest_starting(void)
++{
++    nwoas_pwr_started = true;
++}
++
++static u64 nwoas_pwr_configure(u64 flags, u64 sec_hz, u64 gap_us, u64 print_s)
++{
++    u64 frq = mrs(CNTFRQ_EL0);
++
++    if (flags & ~(u64)NWOAS_PWR_F_ALL)
++        return 0;
++    if (flags & NWOAS_PWR_F_SEC_TICK) {
++        if (!sec_hz)
++            sec_hz = 100;
++        if (sec_hz < 10 || sec_hz > 5000)
++            return 0;
++    }
++    if ((flags & NWOAS_PWR_F_TIMER_GAP) && gap_us > 62500)
++        return 0;
++    if (print_s > 3600)
++        return 0;
++
++    nwoas_pwr_sec_hz = (flags & NWOAS_PWR_F_SEC_TICK) ? sec_hz : 0;
++    nwoas_pwr_sec_interval = nwoas_pwr_sec_hz ? frq / nwoas_pwr_sec_hz : 0;
++    nwoas_pwr_timer_gap_ticks = frq * gap_us / 1000000;
++    nwoas_pwr_print_ticks = print_s * frq;
++    nwoas_pwr_next_print = 0;
++    sysop("dmb ish");
++    nwoas_pwr_flags = (u32)flags; /* published last; readers only test bits */
++    sysop("dsb ish");
++    printf("NWOAS-PWR: config flags=0x%lx sec_tick_hz=%lu timer_gap_us=%lu print_s=%lu "
++           "started=%d\n",
++           flags, (u64)nwoas_pwr_sec_hz, gap_us, print_s, nwoas_pwr_started);
++    return (1ULL << 32) | flags;
++}
++
++static void nwoas_pwr_fill(struct nwoas_pwr_snapshot *s)
++{
++    memset(s, 0, sizeof(*s));
++    s->magic = NWOAS_PWR_MAGIC;
++    s->version = NWOAS_PWR_VERSION;
++    s->size = sizeof(*s);
++    s->ncpu = NWOAS_PWR_NCPU;
++    s->cntpct = mrs(CNTPCT_EL0);
++    s->cntfrq = mrs(CNTFRQ_EL0);
++    s->flags = nwoas_pwr_flags;
++    s->sec_tick_interval = nwoas_pwr_sec_interval;
++    s->timer_gap_ticks = nwoas_pwr_timer_gap_ticks;
++    s->hv_tick_interval = hv_tick_interval;
++    s->hv_ticks = nwoas_pwr_hv_ticks;
++    s->prints = nwoas_pwr_prints;
++    s->smc_reads = nwoas_pwr_smc_reads;
++    s->smc_errors = nwoas_pwr_smc_errors;
++    s->proxy_ticks = nwoas_pwr_proxy_ticks;
++    memcpy(s->cpu, nwoas_pwr_cpu, sizeof(s->cpu));
++    memcpy(&s->nvme, &nwoas_pwr_nvme, sizeof(s->nvme));
++}
++
++/* Read-only SMC key reads.  Same start/stop pattern as m1n1 dcp.c and the S259
++ * Wi-Fi module (init -> commands -> smc_shutdown), bounded by a 200 ms deadline
++ * per wait.  Each out[i] = value (bits 31:0, raw little-endian key bytes) |
++ * status << 32 (0 = ok). */
++static u64 nwoas_pwr_smc_read(const u32 *keys, u64 count, u64 *out)
++{
++    if (!(nwoas_pwr_flags & NWOAS_PWR_F_SMC_SENSE) || !count || count > 8 || !keys || !out)
++        return 0;
++    u64 ok = 0;
++    smc_set_deadline_us(200000);
++    smc_dev_t *smc = smc_init();
++    if (!smc) {
++        nwoas_pwr_smc_errors++;
++        smc_set_deadline_us(0);
++        for (u64 i = 0; i < count; i++)
++            out[i] = 0xffffffffULL << 32;
++        return 0;
++    }
++    for (u64 i = 0; i < count; i++) {
++        u32 v = 0;
++        int rc = smc_read_key(smc, keys[i], &v, 4);
++        out[i] = (u64)v | ((u64)(u32)rc << 32);
++        if (rc)
++            nwoas_pwr_smc_errors++;
++        else
++            ok++;
++    }
++    smc_shutdown(smc);
++    smc_set_deadline_us(0);
++    nwoas_pwr_smc_reads++;
++    return ok;
++}
++
++u64 nwoas_pwr_proxy(u64 op, u64 a0, u64 a1, u64 a2, u64 a3)
++{
++    switch (op) {
++        case NWOAS_PWR_OP_QUERY:
++            return ((u64)NWOAS_PWR_MAGIC << 32) | NWOAS_PWR_VERSION;
++        case NWOAS_PWR_OP_CONFIG:
++            return nwoas_pwr_configure(a0, a1, a2, a3);
++        case NWOAS_PWR_OP_SNAPSHOT: {
++            static struct nwoas_pwr_snapshot snap;
++            if (!a0 || a1 < sizeof(snap))
++                return 0;
++            nwoas_pwr_fill(&snap);
++            memcpy((void *)a0, &snap, sizeof(snap));
++            return sizeof(snap);
++        }
++        case NWOAS_PWR_OP_SMC_READ:
++            return nwoas_pwr_smc_read((const u32 *)a0, a1, (u64 *)a2);
++        case NWOAS_PWR_OP_SLC: {
++            if (!a0)
++                return 0;
++            if (nwoas_pwr_started)
++                return (u64)-2; /* only before the guest runs */
++            int rc = mcc_enable_cache();
++            printf("NWOAS-PWR: mcc_enable_cache() = %d\n", rc);
++            return (u64)(s64)rc;
++        }
++        case NWOAS_PWR_OP_MCC_STAT:
++            if (!a0 || a1 < 2 || a1 > 64)
++                return (u64)-1;
++            return (u64)(s64)mcc_cache_status((u32 *)a0, (int)a1);
++        default:
++            return (u64)-1;
++    }
++}
++
++/* C-2: interval for hv_arm_tick(true).  The slow interval is used only while both
++ * guest timer FIQ routes are open, i.e. a guest timer expiry raises its own FIQ.
++ * While a route is masked (a timer fired and was injected, deduplicated or
++ * rate-limited) the HV must re-run hv_update_fiq() soon, exactly as the 5 kHz tick
++ * does today, so the fast interval is kept. */
++u64 nwoas_pwr_secondary_interval(u64 default_interval, u64 fast_interval)
++{
++    if (!(nwoas_pwr_flags & NWOAS_PWR_F_SEC_TICK) || !nwoas_pwr_sec_interval)
++        return default_interval;
++    u64 ena = mrs(SYS_IMP_APL_VM_TMR_FIQ_ENA_EL2);
++    u64 both = VM_TMR_FIQ_ENA_ENA_V | VM_TMR_FIQ_ENA_ENA_P;
++    if ((ena & both) != both)
++        return fast_interval;
++    return nwoas_pwr_sec_interval;
++}
++
++/* Called at the end of hv_update_fiq(): on a secondary with the slow tick, pull an
++ * already-armed slow tick in to the fast interval when hv_update_fiq() just masked a
++ * timer route (covers the slow path, where hv_arm_tick() ran before hv_update_fiq()). */
++void nwoas_pwr_after_update_fiq(void)
++{
++    if (!(nwoas_pwr_flags & NWOAS_PWR_F_SEC_TICK))
++        return;
++    int icpu = hv_pinned_cpu == -1 ? boot_cpu_idx : hv_pinned_cpu;
++    if (smp_id() == icpu)
++        return;
++    u64 ena = mrs(SYS_IMP_APL_VM_TMR_FIQ_ENA_EL2);
++    u64 both = VM_TMR_FIQ_ENA_ENA_V | VM_TMR_FIQ_ENA_ENA_P;
++    if ((ena & both) == both)
++        return;
++    u64 now = mrs(CNTPCT_EL0);
++    u64 want = now + hv_tick_interval;
++    if (mrs(CNTP_CVAL_EL0) > want) {
++        msr(CNTP_CVAL_EL0, want);
++        NWOAS_PWR_INC(tick_shortened);
++    }
++}
++
++/* S260 fix 2: the NVMe IRQ bridge (hv_bridge_nvme_irq) injects only on the
++ * interruptible CPU, from hv_update_fiq().  With C-1 that CPU may be asleep in EL2
++ * wfi until its next 200 us tick, which added ~25 us per random read on hardware
++ * (qd8 11455 -> 8712 IOPS).  On a rising level raised by another CPU, wake it. */
++void nwoas_pwr_kick_irq_cpu(void)
++{
++    if (!(nwoas_pwr_flags & NWOAS_PWR_F_WFI_SLEEP))
++        return;
++    int icpu = hv_pinned_cpu == -1 ? boot_cpu_idx : hv_pinned_cpu;
++    if (icpu < 0 || smp_id() == icpu)
++        return;
++    smp_send_ipi(icpu);
++    NWOAS_PWR_INC(nvme_kicks);
++}
++
++static u64 nwoas_pwr_sum(const struct nwoas_pwr_snapshot *s, int field)
++{
++    u64 v = 0;
++    for (int i = 0; i < NWOAS_PWR_NCPU; i++)
++        v += ((const u64 *)&s->cpu[i])[field];
++    return v;
++}
++
++#define F(name) ((int)(__builtin_offsetof(struct nwoas_pwr_cpu, name) / 8))
++
++/* hv_tick() on the interruptible CPU (bhl held). */
++void nwoas_pwr_tick(void)
++{
++    nwoas_pwr_hv_ticks++;
++    if (!(nwoas_pwr_flags & NWOAS_PWR_F_PRINT) || !nwoas_pwr_print_ticks)
++        return;
++    u64 now = mrs(CNTPCT_EL0);
++    if (now < nwoas_pwr_next_print)
++        return;
++    nwoas_pwr_next_print = now + nwoas_pwr_print_ticks;
++    if (nwoas_pwr_prints >= NWOAS_PWR_MAX_PRINTS)
++        return;
++
++    static struct nwoas_pwr_snapshot cur;
++    nwoas_pwr_fill(&cur);
++    struct nwoas_pwr_snapshot *o = &nwoas_pwr_last;
++    if (o->magic == NWOAS_PWR_MAGIC && cur.cntpct > o->cntpct) {
++        u64 dt = cur.cntpct - o->cntpct;
++        u32 pm[NWOAS_PWR_NCPU];
++        for (int i = 0; i < NWOAS_PWR_NCPU; i++)
++            pm[i] = (u32)((cur.cpu[i].wfi_sleep_ticks - o->cpu[i].wfi_sleep_ticks) * 1000 / dt);
++        u64 lc = cur.nvme.lat_count - o->nvme.lat_count;
++        u64 lsum = cur.nvme.lat_sum_ticks - o->nvme.lat_sum_ticks;
++        printf("NWOAS-PWR: dt_ms=%lu wfi=%lu sleeps=%lu sleep_pm=%u,%u,%u,%u,%u,%u,%u,%u "
++               "fiq=%lu tick=%lu irq=%lu sync=%lu tinj=%lu tgate=%lu nvme=%lu lat_us=%lu "
++               "hvt=%lu\n",
++               dt * 1000 / cur.cntfrq,
++               nwoas_pwr_sum(&cur, F(wfi_traps)) - nwoas_pwr_sum(o, F(wfi_traps)),
++               nwoas_pwr_sum(&cur, F(wfi_sleeps)) - nwoas_pwr_sum(o, F(wfi_sleeps)), pm[0],
++               pm[1], pm[2], pm[3], pm[4], pm[5], pm[6], pm[7],
++               nwoas_pwr_sum(&cur, F(fiq)) - nwoas_pwr_sum(o, F(fiq)),
++               nwoas_pwr_sum(&cur, F(fiq_tick)) - nwoas_pwr_sum(o, F(fiq_tick)),
++               nwoas_pwr_sum(&cur, F(irq)) - nwoas_pwr_sum(o, F(irq)),
++               nwoas_pwr_sum(&cur, F(sync)) - nwoas_pwr_sum(o, F(sync)),
++               nwoas_pwr_sum(&cur, F(timer_inj)) - nwoas_pwr_sum(o, F(timer_inj)),
++               nwoas_pwr_sum(&cur, F(timer_gated)) - nwoas_pwr_sum(o, F(timer_gated)), lc,
++               lc ? lsum * 1000000 / cur.cntfrq / lc : 0, cur.hv_ticks - o->hv_ticks);
++        nwoas_pwr_prints++;
++    }
++    memcpy(o, &cur, sizeof(cur));
++}
++
++/* bhl is recursive for its owner; another owner normally releases it within one
++ * slow-path exit.  Bound the wait so a wedged CPU cannot stop the reset. */
++static bool nwoas_pwr_take_bhl(void)
++{
++    u64 deadline = timeout_calculate(200000);
++    while (!timeout_expired(deadline)) {
++        s64 owner = __atomic_load_n(&bhl.lock, __ATOMIC_ACQUIRE);
++        if (owner == -1 || owner == smp_id()) {
++            spin_lock(&bhl);
++            return true;
++        }
++    }
++    return false;
++}
++
++void nwoas_pwr_system_down(bool off)
++{
++    u32 f = nwoas_pwr_flags;
++    printf("NWOAS-PWR: PSCI %s cpu=%d flags=0x%x\n", off ? "SYSTEM_OFF" : "SYSTEM_RESET",
++           smp_id(), f);
++    if (!(f & (NWOAS_PWR_F_NVME_SHUT | NWOAS_PWR_F_SMC_OFF)) ||
++        (!off && !(f & NWOAS_PWR_F_NVME_SHUT))) {
++        iodev_console_flush();
++        return;
++    }
++    hv_wdt_suspend();
++    bool locked = nwoas_pwr_take_bhl();
++
++    if (f & NWOAS_PWR_F_NVME_SHUT) {
++        u64 t0 = mrs(CNTPCT_EL0);
++        bool flushed = nvme_flush(1);
++        nvme_shutdown();
++        printf("NWOAS-PWR: ANS flush=%d shutdown in %lu us (bhl=%d)\n", flushed,
++               (mrs(CNTPCT_EL0) - t0) * 1000000 / mrs(CNTFRQ_EL0), locked);
++    }
++
++    if (off && (f & NWOAS_PWR_F_SMC_OFF)) {
++        const u32 mbse = NWOAS_SMC_KEY('M', 'B', 'S', 'E');
++        smc_set_deadline_us(500000);
++        smc_dev_t *smc = smc_init();
++        if (!smc) {
++            printf("NWOAS-PWR: SMC init failed, falling back to reboot\n");
++        } else {
++            /* Linux macsmc-reboot order: MBSE=offw (power-off warning, LED off on the
++             * Mac mini), then MBSE=off1.  Linux also sets a PMU nvmem shutdown_flag
++             * bit before off1 ("without this, the device will just reboot"); that
++             * SPMI write is NOT done here (roadmap: observe first). */
++            int rw = smc_write_u32(smc, mbse, NWOAS_SMC_KEY('o', 'f', 'f', 'w'));
++            printf("NWOAS-PWR: SMC MBSE=offw rc=%d; sending MBSE=off1\n", rw);
++            iodev_console_flush();
++            int r1 = smc_write_u32(smc, mbse, NWOAS_SMC_KEY('o', 'f', 'f', '1'));
++            mdelay(2000);
++            printf("NWOAS-PWR: still running 2 s after MBSE=off1 (rc=%d); rebooting\n", r1);
++            smc_shutdown(smc);
++        }
++        smc_set_deadline_us(0);
++    }
++    iodev_console_flush();
++}
+diff -ruN a/src/nwoas_pwr.h b/src/nwoas_pwr.h
+--- a/src/nwoas_pwr.h	1970-01-01 09:00:00
++++ b/src/nwoas_pwr.h	2026-11-18 17:21:30
+@@ -0,0 +1,145 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * NWOAS S260: power / idle measurement and the small phase-1 hypervisor fixes
++ * (ROADMAP-2026-11-17.md phase 0 + phase 1).
++ *
++ * Every behaviour change is OFF until the launcher module power-s260/power_module.py
++ * sends P_HV_NWOAS_PWR op CONFIG before the guest starts.  With no CONFIG the only
++ * difference to g254L is a handful of per-CPU counter increments.
++ *
++ * HARDWARE-UNVERIFIED.  Build success is not boot success.
++ */
++#ifndef NWOAS_PWR_H
++#define NWOAS_PWR_H
++
++#ifdef NWOAS_PWR_HOST_TEST
++#include <stdint.h>
++typedef uint64_t u64;
++typedef uint32_t u32;
++#define NWOAS_PWR_ALIGNED64 __attribute__((aligned(64)))
++#else
++#include "types.h"
++#include "utils.h"
++#define NWOAS_PWR_ALIGNED64 ALIGNED(64)
++#endif
++
++#define NWOAS_PWR_MAGIC   0x5057524eU /* "NRWP" */
++#define NWOAS_PWR_VERSION 1U
++#define NWOAS_PWR_NCPU    8
++
++/* P_HV_NWOAS_PWR (proxy 0xc3a) operations: args[0] = op */
++#define NWOAS_PWR_OP_QUERY    0 /* -> (MAGIC << 32) | VERSION */
++#define NWOAS_PWR_OP_CONFIG   1 /* (flags, sec_tick_hz, timer_gap_us, print_period_s) -> accepted flags | 1<<63 */
++#define NWOAS_PWR_OP_SNAPSHOT 2 /* (ptr, size) -> bytes copied */
++#define NWOAS_PWR_OP_SMC_READ 3 /* (keys_ptr, count<=8, out_ptr) -> number of keys read OK (needs F_SMC_SENSE) */
++#define NWOAS_PWR_OP_SLC      4 /* (enable) -> mcc_enable_cache() rc (enable=1, before guest start only) */
++#define NWOAS_PWR_OP_MCC_STAT 5 /* (out_ptr, max) -> number of u32 plane cache status words */
++
++/* CONFIG flags (each one is a separate A/B switch) */
++#define NWOAS_PWR_F_WFI_SLEEP  (1U << 0) /* C-1: idle guest WFI -> EL2 wfi */
++#define NWOAS_PWR_F_SEC_TICK   (1U << 1) /* C-2: slow secondary HV tick (adaptive) */
++#define NWOAS_PWR_F_TIMER_GAP  (1U << 2) /* C-4: kernel-phase timer PPI min gap override */
++#define NWOAS_PWR_F_NVME_SHUT  (1U << 3) /* S-1: ANS flush + clean shutdown before reset/off */
++#define NWOAS_PWR_F_SMC_OFF    (1U << 4) /* PSCI SYSTEM_OFF -> SMC MBSE offw/off1, reboot fallback */
++#define NWOAS_PWR_F_SMC_SENSE  (1U << 5) /* allow OP_SMC_READ (read-only SMC keys) */
++#define NWOAS_PWR_F_PRINT      (1U << 6) /* periodic one-line summary from the CPU0 tick */
++#define NWOAS_PWR_F_ALL        0x7fU
++
++struct nwoas_pwr_cpu {
++    u64 wfi_traps;        /* guest WFI trapped (TWI) */
++    u64 wfe_traps;        /* guest WFE trapped (TWE is not set, expect 0) */
++    u64 wfi_sleeps;       /* EL2 wfi executed */
++    u64 wfi_sleep_ticks;  /* CNTPCT ticks spent in EL2 wfi */
++    u64 wfi_skip_pending; /* not slept: vIRQ pending in an LR / queue / physical IRQ */
++    u64 wfi_skip_route;   /* not slept: a guest timer FIQ route was masked (gated/outstanding) */
++    u64 fiq;              /* hv_exc_fiq entries */
++    u64 fiq_tick;         /* ... of which the HV tick timer fired */
++    u64 fiq_fast;         /* ... handled on the non-interruptible fast path */
++    u64 irq;              /* hv_exc_irq entries */
++    u64 sync;             /* hv_exc_sync entries (all classes) */
++    u64 timer_inj;        /* guest timer PPI 17/18 injected or queued */
++    u64 timer_gated;      /* skipped by the min-gap rate limit */
++    u64 timer_dedup;      /* skipped: already pending/active */
++    u64 tick_shortened;   /* secondary slow tick re-armed fast (route masked) */
++    u64 wake_armed;       /* HV tick moved earlier to a guest timer deadline before wfi */
++    u64 sync_dabort;      /* hv_exc_sync by class: data abort (MMIO) */
++    u64 sync_msr;         /* ... trapped system register */
++    u64 sync_smc;         /* ... SMC (PSCI) */
++    u64 sync_hvc;         /* ... HVC */
++    u64 bhl_wait_ticks;   /* CNTPCT ticks waiting for the global HV lock (slow paths) */
++    u64 slow_entries;     /* hv_exc_entry() calls (bhl taken) */
++    u64 ipi_sent;         /* guest SGIs forwarded as physical IPIs */
++    u64 proxy_calls;      /* host (Python) proxy round trips started on this CPU */
++    u64 ipi_rx;           /* physical fast IPIs seen in hv_exc_fiq on this CPU */
++    u64 wake_ipi;         /* EL2 wfi ended with a fast IPI pending */
++    u64 wake_tick;        /* ... with the HV tick timer fired */
++    u64 wake_vtimer;      /* ... with a guest timer fired */
++    u64 wake_irq;         /* ... with a physical IRQ pending (device / AIC) */
++    u64 wake_other;       /* ... none of the above visible */
++    u64 nvme_kicks;       /* IPIs sent from this CPU to wake the NVMe IRQ CPU */
++    u64 wfi_skip_nvme;    /* not slept: NVMe IRQ level pending on the delivering CPU */
++} NWOAS_PWR_ALIGNED64;
++
++struct nwoas_pwr_nvme {
++    u64 ns1_cmds, ns2_cmds, other_cmds;
++    u64 doorbell_cmds;  /* executed from the SQ doorbell trap */
++    u64 tick_cmds;      /* executed later from the CPU0 tick (deferred) */
++    u64 lat_count, lat_sum_ticks, lat_max_ticks; /* SQ doorbell -> CQE posted, NS1 only */
++    u64 lat_hist[6];    /* <20us <100us <500us <2ms <10ms >=10ms */
++    u64 exec_sum_ticks; /* NS1 time inside nvme_rw_guest/flush */
++    u64 depth_sum, depth_samples, depth_max; /* SQ entries outstanding when a CQE is posted */
++    u64 read_blocks, write_blocks;            /* 4 KiB blocks, NS1 */
++};
++
++struct nwoas_pwr_snapshot {
++    u32 magic, version;
++    u32 size, ncpu;
++    u64 cntpct, cntfrq;
++    u64 flags, sec_tick_interval, timer_gap_ticks, hv_tick_interval;
++    u64 hv_ticks;       /* hv_tick() calls on the interruptible CPU */
++    u64 prints;         /* periodic summary lines printed */
++    u64 smc_reads, smc_errors;
++    u64 proxy_ticks;    /* total CNTPCT ticks spent in host proxy round trips (stolen time) */
++    u64 reserved[3];
++    struct nwoas_pwr_cpu cpu[NWOAS_PWR_NCPU];
++    struct nwoas_pwr_nvme nvme;
++    u64 tail_pad[4]; /* keeps the size a multiple of 64 without implicit padding */
++};
++
++#ifndef NWOAS_PWR_HOST_TEST
++_Static_assert(sizeof(struct nwoas_pwr_cpu) == 256, "nwoas_pwr_cpu layout");
++_Static_assert(sizeof(struct nwoas_pwr_nvme) == 20 * 8, "nwoas_pwr_nvme layout");
++_Static_assert(sizeof(struct nwoas_pwr_snapshot) == 128 + 8 * 256 + 20 * 8 + 32,
++               "nwoas_pwr_snapshot layout");
++
++extern volatile u32 nwoas_pwr_flags;
++extern u64 nwoas_pwr_sec_interval;
++extern u64 nwoas_pwr_timer_gap_ticks;
++extern struct nwoas_pwr_cpu nwoas_pwr_cpu[NWOAS_PWR_NCPU];
++extern struct nwoas_pwr_nvme nwoas_pwr_nvme;
++extern u64 nwoas_pwr_hv_ticks;
++extern u64 nwoas_pwr_proxy_ticks;
++
++extern struct nwoas_pwr_cpu nwoas_pwr_cpu_spare;
++
++/* Never NULL, never out of bounds: a CPU index outside 0..7 (not expected on J274)
++ * counts into a spare slot instead of aliasing another CPU's counters. */
++static inline struct nwoas_pwr_cpu *nwoas_pwr_me(void)
++{
++    u64 id = mrs(TPIDR_EL2);
++    return id < NWOAS_PWR_NCPU ? &nwoas_pwr_cpu[id] : &nwoas_pwr_cpu_spare;
++}
++#define NWOAS_PWR_INC(field) (nwoas_pwr_me()->field++)
++
++u64 nwoas_pwr_proxy(u64 op, u64 a0, u64 a1, u64 a2, u64 a3);
++void nwoas_pwr_guest_starting(void);
++u64 nwoas_pwr_secondary_interval(u64 default_interval, u64 fast_interval);
++void nwoas_pwr_after_update_fiq(void);
++void nwoas_pwr_tick(void);
++void nwoas_pwr_kick_irq_cpu(void);
++/* PSCI SYSTEM_RESET (off=false) / SYSTEM_OFF (off=true).  Returns only if the
++ * caller must fall back to its reboot path. */
++void nwoas_pwr_system_down(bool off);
++#endif
++
++#endif
+diff -ruN a/src/proxy.c b/src/proxy.c
+--- a/src/proxy.c	2026-11-18 17:23:59
++++ b/src/proxy.c	2026-11-18 16:36:19
+@@ -511,6 +511,12 @@
+                 request->args[4], request->args[5]);
+             break;
+         }
++        case P_HV_NWOAS_PWR: {
++            extern u64 nwoas_pwr_proxy(u64 op, u64 a0, u64 a1, u64 a2, u64 a3);
++            reply->retval = nwoas_pwr_proxy(request->args[0], request->args[1], request->args[2],
++                                            request->args[3], request->args[4]);
++            break;
++        }
+ #ifdef NWOAS_AGX
+         case P_HV_NWOAS_AGX_CONFIG:
+             reply->retval = nwoas_agx_configure((const void *)request->args[0], request->args[1]);
+diff -ruN a/src/proxy.h b/src/proxy.h
+--- a/src/proxy.h	2026-11-18 17:23:59
++++ b/src/proxy.h	2026-11-18 16:36:19
+@@ -154,6 +154,7 @@
+ 
+     P_HV_NWOAS_NVME_IRQ = 0xc30,
+     P_HV_NWOAS_NVME_FASTPATH,
++    P_HV_NWOAS_PWR = 0xc3a, /* NWOAS S260: (op, a0..a3), src/nwoas_pwr.h */
+ #ifdef NWOAS_AGX
+     P_HV_NWOAS_AGX_CONFIG = 0xc38, /* NWOAS gpu-hv2: args (ptr, size) of struct nwoas_agx_config */
+ #endif
+diff -ruN a/src/smc.c b/src/smc.c
+--- a/src/smc.c	2026-11-18 17:23:59
++++ b/src/smc.c	2026-11-18 16:32:46
+@@ -57,13 +57,25 @@
+     }
+ }
+ 
++/* NWOAS S260: optional wait bound for the read-only sensor path and the power-off path.
++ * 0 (default, also for dcp.c) keeps the original unbounded wait. */
++static u64 smc_deadline;
++
++void smc_set_deadline_us(u32 usec)
++{
++    smc_deadline = usec ? timeout_calculate(usec) : 0;
++}
++
++#define SMC_ERR_TIMEOUT (-110)
++
+ static int smc_work(smc_dev_t *smc)
+ {
+     int ret;
+     struct rtkit_message msg;
+ 
+     while ((ret = rtkit_recv(smc->rtkit, &msg)) == 0)
+-        ;
++        if (smc_deadline && timeout_expired(smc_deadline))
++            return SMC_ERR_TIMEOUT;
+ 
+     if (ret < 0) {
+         printf("SMC: rtkit_recv failed!\n");
+@@ -90,7 +102,7 @@
+     rtkit_send(smc->rtkit, &msg);
+ }
+ 
+-static int smc_cmd(smc_dev_t *smc, u64 message)
++static int smc_cmd_result(smc_dev_t *smc, u64 message, u64 *result_out)
+ {
+     u8 id = smc->msgid++ & 0xF;
+     assert(!smc->outstanding[id]);
+@@ -100,9 +112,15 @@
+ 
+     smc_send(smc, message);
+     while (smc->outstanding[id])
+-        smc_work(smc);
++        if (smc_work(smc) == SMC_ERR_TIMEOUT) { /* NWOAS S260: only with a deadline set */
++            printf("SMC: smc_cmd[0x%x] timed out\n", id);
++            smc->outstanding[id] = false;
++            return SMC_ERR_TIMEOUT;
++        }
+ 
+     u64 result = smc->ret[id];
++    if (result_out)
++        *result_out = result;
+     u32 ret = FIELD_GET(SMC_RESULT_RESULT, result);
+     if (ret) {
+         printf("SMC: smc_cmd[0x%x] failed: %u\n", id, ret);
+@@ -112,6 +130,11 @@
+     return 0;
+ }
+ 
++static int smc_cmd(smc_dev_t *smc, u64 message)
++{
++    return smc_cmd_result(smc, message, NULL);
++}
++
+ void smc_shutdown(smc_dev_t *smc)
+ {
+     rtkit_quiesce(smc->rtkit);
+@@ -180,3 +203,20 @@
+     return smc_cmd(smc, msg);
+ }
+ 
++/* NWOAS S260: read-only key read (same message layout as proxyclient m1n1/fw/smc.py
++ * SMCReadKey: TYPE 7:0, SIZE 23:16, KEY 63:32; result VALUE 63:32 for size <= 4). */
++int smc_read_key(smc_dev_t *smc, u32 key, void *buf, u32 size)
++{
++    if (!size || size > 4)
++        return -1;
++    u64 msg = FIELD_PREP(SMC_MSG_TYPE, SMC_READ_KEY);
++    msg |= FIELD_PREP(SMC_WRITE_KEY_SIZE, size);
++    msg |= FIELD_PREP(SMC_WRITE_KEY_KEY, key);
++    u64 result = 0;
++    int ret = smc_cmd_result(smc, msg, &result);
++    if (ret)
++        return ret;
++    u32 value = FIELD_GET(SMC_RESULT_VALUE, result);
++    memcpy(buf, &value, size);
++    return 0;
++}
+diff -ruN a/src/smc.h b/src/smc.h
+--- a/src/smc.h	2026-11-18 17:23:59
++++ b/src/smc.h	2026-11-18 16:32:46
+@@ -10,6 +10,8 @@
+ typedef struct smc_dev smc_dev_t;
+ 
+ int smc_write_u32(smc_dev_t *smc, u32 key, u32 value);
++int smc_read_key(smc_dev_t *smc, u32 key, void *buf, u32 size); /* NWOAS S260, size <= 4 */
++void smc_set_deadline_us(u32 usec);                               /* NWOAS S260, 0 = unbounded */
+ 
+ smc_dev_t *smc_init(void);
+ void smc_shutdown(smc_dev_t *smc);

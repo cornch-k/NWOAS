@@ -1,0 +1,131 @@
+--- a/drivers/apple-agx/mesa/d3d11/agx_wddm2_ddi.cpp (2762 P26)
++++ b/drivers/apple-agx/mesa/d3d11/agx_wddm2_ddi.cpp (2763 P27)
+@@ -941,16 +941,38 @@
+ decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnDrawIndexedInstanced) o_draw_indexed_instanced;
+ 
+ UINT Lo(const void *p) { return (UINT)(UINT_PTR)p; }
++
++bool Flag(const char *name)
++{
++   char flag[2] = {};
++   DWORD saved = GetLastError();
++   const bool on = GetEnvironmentVariableA(name, flag, sizeof(flag)) == 1 && flag[0] == '1';
++   SetLastError(saved);
++   return on;
++}
+ 
++/* NWOAS-J274 PATCH P27: per-process A/B switches that change the state an
++ * application asks for, to find which state makes its draws invisible:
++ * APPLE_AGX_D3D11_CULL_NONE, _FLIP_FRONT, _SCISSOR_OFF, _BLEND_OFF (=1). */
++enum { KnobCullNone = 1, KnobFlipFront = 2, KnobScissorOff = 4, KnobBlendOff = 8 };
++UINT Knobs()
++{
++   static volatile LONG cached = -1;
++   LONG v = InterlockedCompareExchange(&cached, -1, -1);
++   if (v < 0) {
++      v = (Flag("APPLE_AGX_D3D11_CULL_NONE") ? KnobCullNone : 0) | (Flag("APPLE_AGX_D3D11_FLIP_FRONT") ? KnobFlipFront : 0) |
++          (Flag("APPLE_AGX_D3D11_SCISSOR_OFF") ? KnobScissorOff : 0) | (Flag("APPLE_AGX_D3D11_BLEND_OFF") ? KnobBlendOff : 0);
++      InterlockedExchange(&cached, v);
++   }
++   return (UINT)v;
++}
++
+ bool Enabled()
+ {
+    static volatile LONG cached = -1;
+    LONG v = InterlockedCompareExchange(&cached, -1, -1);
+    if (v < 0) {
+-      char flag[2] = {};
+-      DWORD saved = GetLastError();
+-      v = GetEnvironmentVariableA("APPLE_AGX_D3D_DRAW_STATE", flag, sizeof(flag)) == 1 && flag[0] == '1';
+-      SetLastError(saved);
++      v = Flag("APPLE_AGX_D3D_DRAW_STATE") ? 1 : 0;
+       InterlockedExchange(&cached, v);
+    }
+    return v == 1;
+@@ -1028,8 +1050,18 @@
+ void APIENTRY CreateBlend(D3D10DDI_HDEVICE h, const D3D11_1_DDI_BLEND_DESC *d, D3D10DDI_HBLENDSTATE s,
+                           D3D10DDI_HRTBLENDSTATE rt)
+ {
++   D3D11_1_DDI_BLEND_DESC changed;
++   if (d && (Knobs() & KnobBlendOff)) {
++      changed = *d;
++      for (UINT i = 0; i < 8; ++i) {
++         changed.RenderTarget[i].BlendEnable = FALSE;
++         changed.RenderTarget[i].LogicOpEnable = FALSE;
++         changed.RenderTarget[i].RenderTargetWriteMask = 0xf;
++      }
++      d = &changed;
++   }
+    o_create_blend(h, d, s, rt);
+-   if (!d) return;
++   if (!d || !Enabled()) return;
+    UINT masks = 0;
+    for (UINT i = 1; i < 8; ++i) masks |= (UINT)(d->RenderTarget[i].RenderTargetWriteMask & 0xfu) << (4 * (i - 1));
+    const D3D11_1_DDI_RENDER_TARGET_BLEND_DESC &r = d->RenderTarget[0];
+@@ -1043,8 +1075,17 @@
+ void APIENTRY CreateRaster(D3D10DDI_HDEVICE h, const D3DWDDM2_0DDI_RASTERIZER_DESC *d,
+                            D3D10DDI_HRASTERIZERSTATE s, D3D10DDI_HRTRASTERIZERSTATE rt)
+ {
++   D3DWDDM2_0DDI_RASTERIZER_DESC changed;
++   const UINT knobs = Knobs();
++   if (d && (knobs & (KnobCullNone | KnobFlipFront | KnobScissorOff))) {
++      changed = *d;
++      if (knobs & KnobCullNone) changed.CullMode = D3D10_DDI_CULL_NONE;
++      if (knobs & KnobFlipFront) changed.FrontCounterClockwise = !changed.FrontCounterClockwise;
++      if (knobs & KnobScissorOff) changed.ScissorEnable = FALSE;
++      d = &changed;
++   }
+    o_create_raster(h, d, s, rt);
+-   if (!d) return;
++   if (!d || !Enabled()) return;
+    const UINT v[11] = {Lo(s.pDrvPrivate), (UINT)d->FillMode, (UINT)d->CullMode, (UINT)d->FrontCounterClockwise,
+                        (UINT)d->DepthBias, (UINT)d->DepthClipEnable, (UINT)d->ScissorEnable,
+                        (UINT)d->MultisampleEnable, (UINT)d->AntialiasedLineEnable, d->ForcedSampleCount,
+@@ -1056,7 +1097,7 @@
+                         D3D10DDI_HRTDEPTHSTENCILSTATE rt)
+ {
+    o_create_dsa(h, d, s, rt);
+-   if (!d) return;
++   if (!d || !Enabled()) return;
+    const UINT v[13] = {Lo(s.pDrvPrivate), (UINT)d->DepthEnable, (UINT)d->DepthWriteMask, (UINT)d->DepthFunc,
+                        (UINT)d->StencilEnable, (UINT)d->FrontEnable, (UINT)d->BackEnable, d->StencilReadMask,
+                        d->StencilWriteMask, (UINT)d->FrontFace.StencilFailOp, (UINT)d->FrontFace.StencilDepthFailOp,
+@@ -1068,14 +1109,14 @@
+                        const D3D11_1DDIARG_STAGE_IO_SIGNATURES *sig)
+ {
+    o_create_vs(h, code, s, rt, sig);
+-   ShaderSig(0u, code, s, sig);
++   if (Enabled()) ShaderSig(0u, code, s, sig);
+ }
+ 
+ void APIENTRY CreatePs(D3D10DDI_HDEVICE h, const UINT *code, D3D10DDI_HSHADER s, D3D10DDI_HRTSHADER rt,
+                        const D3D11_1DDIARG_STAGE_IO_SIGNATURES *sig)
+ {
+    o_create_ps(h, code, s, rt, sig);
+-   ShaderSig(4u, code, s, sig);
++   if (Enabled()) ShaderSig(4u, code, s, sig);
+ }
+ 
+ void APIENTRY SetBlend(D3D10DDI_HDEVICE h, D3D10DDI_HBLENDSTATE s, const FLOAT factor[4], UINT mask)
+@@ -1138,6 +1179,7 @@
+ 
+ void Log(D3D10DDI_HDEVICE h, UINT kind, UINT count, UINT instances)
+ {
++   if (!Enabled()) return;
+    const LONG seq = InterlockedIncrement(&draws);
+    if (seq > 1500 && seq % 50) return;
+    DevState *d = Find(h);
+@@ -1180,7 +1222,11 @@
+ 
+ void Install(D3DWDDM2_0DDI_DEVICEFUNCS *f)
+ {
+-   if (!Enabled() || f->pfnDraw == Draw) return;
++   if ((!Enabled() && !Knobs()) || f->pfnDraw == Draw) return;
++   if (Knobs()) {
++      const UINT v[1] = {Knobs()};
++      AgxD3d10WindowsDiagnostic("measure-d3d11-knobs", S_OK, v, 1u);
++   }
+    o_create_blend = f->pfnCreateBlendState; f->pfnCreateBlendState = CreateBlend;
+    o_create_raster = f->pfnCreateRasterizerState; f->pfnCreateRasterizerState = CreateRaster;
+    o_create_dsa = f->pfnCreateDepthStencilState; f->pfnCreateDepthStencilState = CreateDsa;

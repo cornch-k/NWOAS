@@ -31,6 +31,33 @@ DEV=/dev/cu.usbmodemC07HL05SQ6NY1
 VUART=/dev/cu.usbmodemC07HL05SQ6NY3
 PY="$M1N1/.venv-hv/bin/python3"
 HV="/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/hv/out-hv2/m1n1-g254L-agx-hv2-hpdwatch.bin"
+HV_SIZE=2293760 HV_SHA=61e2e2ef93382ef26c5ae8416e7564bed99c2fff9c2d2d371b58ade6d037fdad
+# S260 (opt-in, HARDWARE-UNVERIFIED; switches: header of power-s260/power_module.py). Unset = the S259 stack unchanged.
+#   NWOAS_S260_HV=1   m1n1-g260O = g254L + HV counters + switchable phase-1 fixes
+#                     (port-j274/gpu/hv/hv2-g254L-to-g260O.patch) and -m power-s260/power_module.py LAST.
+#                     The fixes themselves stay off unless their NWOAS_PWR_* variables are set.
+#   NWOAS_S260_MADT=1 payload = S259 + MADT EfficiencyClass 1 on CPU4-7 (nwoas_scripts/fw-power-s260).
+S260="$ROOT/nwoas_scripts/power-s260"
+PWRMOD=()
+if [ "${NWOAS_S260_HV:-0}" = 1 ]; then
+    HV="/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/hv/out-hv2/m1n1-g260O-agx-hv2-power.bin"
+    HV_SIZE=2310144 HV_SHA=ed5e8c72850741f5e648863b5e8c2a481498d078103ff219a4c62242c249a457
+    PWRMOD=(-m "$S260/power_module.py")
+fi
+# S262 (opt-in, HARDWARE-UNVERIFIED; nwoas_scripts/nvmeqd-s262/README.md). Unset = the stack above unchanged.
+#   NWOAS_S262_HV=1   m1n1-g262P = g260O + concurrent NVMe path (port-j274/gpu/hv/hv2-g260O-to-g262P.patch),
+#                     -m power-s260/power_module.py then -m nvmeqd-s262/nvmeqd_module.py LAST (all NWOAS_PWR_*
+#                     switches work as with S260).  Wins over NWOAS_S260_HV=1.
+#   NWOAS_NVME_QD=<n> 1..61 commands in flight; unset/0 = the g260O one-at-a-time path (A/B on one binary).
+#                     NWOAS_NVME_QD_IRQ=0 (polling only), NWOAS_NVME_QD_STRICT=1 (FUA writes alone), NWOAS_NVME_QD_KICK=0.
+S262="$ROOT/nwoas_scripts/nvmeqd-s262"
+if [ "${NWOAS_S262_HV:-0}" = 1 ]; then
+    HV="/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/hv/out-hv2/m1n1-g262P-agx-hv2-nvmeqd.bin"
+    HV_SIZE=2326528 HV_SHA=c89fc27402f4f576dbd8f5f3590869bab540c12c722bd3abc846fc09efab6069
+    PWRMOD=(-m "$S260/power_module.py" -m "$S262/nvmeqd_module.py")
+elif [ -n "${NWOAS_NVME_QD:-}" ] && [ "${NWOAS_NVME_QD}" != 0 ]; then
+    echo 'STOP: NWOAS_NVME_QD needs NWOAS_S262_HV=1 (the g260O/g254L HV has no concurrent NVMe path)'; exit 1
+fi
 AGXMOD="$ROOT/port-j274/gpu/hv/tools-hv2/agx_hv2_module.py"
 export NWOAS_AGX_MODE=mediate
 # 1 GiB AGX local reserve (g249D; was 384 MiB) (identity guest RAM, region-id-24; README-hv2.md); Mu reserves it in PEI.
@@ -41,6 +68,11 @@ export NWOAS_AGX_SCANOUT_INTID=889 NWOAS_AGX_POOL_IPA=0
 # S251: the HV answers the scanout window (DCP iBoot async swap), port-j274/gpu/hv/README-dcp-s251.md
 export NWOAS_AGX_DCP_SERVICE=1
 PAYLOAD="/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/fw-wifi-s259/out/s259/m1n1-payload-s259-wifi.bin"
+PAYLOAD_SHA=fbc4406b0103cf028be5be2eb8ec60844af8952d9c845405338d48cb64e50497
+if [ "${NWOAS_S260_MADT:-0}" = 1 ]; then
+    PAYLOAD="/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/fw-power-s260/out/s260/m1n1-payload-s260-madt.bin"
+    PAYLOAD_SHA=7108d491e9439435803a48c86201bbf73cc8973f72c4fbfa6cc4e2d5eb650845
+fi
 WIFI="$ROOT/nwoas_scripts/wifi-s259"
 export NWOAS_WIFI="${NWOAS_WIFI:-1}"
 LOG=$(mktemp "$ROOT/nwoas_scripts/logs/agxmed1g-s249-$(date '+%Y%m%d-%H%M%S').XXXXXX")
@@ -59,11 +91,18 @@ export NWOAS_DCP_LOG="$LOG.dcp" NWOAS_HV_IMAGE="$HV"
 echo "Log: $LOG"
 [ -e "$DEV" ] || { echo 'STOP: direct CDC proxy missing'; exit 1; }
 [ -e "$VUART" ] || { echo 'STOP: direct CDC diagnostic pipe missing'; exit 1; }
-[ "$(stat -f %z "$HV")" -eq 2293760 ]
-[ "$(shasum -a 256 "$HV" | awk '{print $1}')" = 61e2e2ef93382ef26c5ae8416e7564bed99c2fff9c2d2d371b58ade6d037fdad ]
+[ "$(stat -f %z "$HV")" -eq "$HV_SIZE" ]
+[ "$(shasum -a 256 "$HV" | awk '{print $1}')" = "$HV_SHA" ]
+if [ "${NWOAS_S260_HV:-0}" = 1 ] || [ "${NWOAS_S262_HV:-0}" = 1 ]; then
+    [ "$(shasum -a 256 "$S260/power_module.py" | awk '{print $1}')" = 4fdd9ee3904c71f3d439a520f7f1bbd4b38b718fe62b0d60246aa2fa9d917356 ]
+    [ "$(shasum -a 256 "$S260/nwoas_pwr_layout.py" | awk '{print $1}')" = 4690ba77885b1c131f5a93ded4dbef379c2c75a532ddcec937fce70dfda8f475 ]
+    if [ "${NWOAS_S262_HV:-0}" = 1 ]; then
+        [ "$(shasum -a 256 "$S262/nvmeqd_module.py" | awk '{print $1}')" = 4a9b0d057487d9d45dafee272efb7665d728c3c53f4ac9c9b0212acaf33ffe87 ]
+    fi
+fi
 [ "$(shasum -a 256 "$ROOT/nwoas_scripts/layout-s231/guest_module.py" | awk '{print $1}')" = 07523c1d282a3d54bdcad1cbc9ea8d7b0a4fbf1d139387bb54b576c72b36dc03 ]
 [ "$(stat -f %z "$PAYLOAD")" -eq 33669120 ]
-[ "$(shasum -a 256 "$PAYLOAD" | awk '{print $1}')" = fbc4406b0103cf028be5be2eb8ec60844af8952d9c845405338d48cb64e50497 ]
+[ "$(shasum -a 256 "$PAYLOAD" | awk '{print $1}')" = "$PAYLOAD_SHA" ]
 [ "$(shasum -a 256 "$ROOT/nwoas_scripts/native-s230/query_module.py" | awk '{print $1}')" = af4eeb7f45aa9669c264d2e3520ae3d79da4020c89354e85738989c55f80f09b ]
 [ "$(shasum -a 256 "$ROOT/nwoas_scripts/cpufreq-s193/capture.py" | awk '{print $1}')" = 6fa2119c02cbcfca71c0d76c235abd0ceb91ea1e295a11d6ffdc268f6c51c494 ]
 [ "$(shasum -a 256 "$ROOT/nwoas_scripts/memory-s180/link_module.py" | awk '{print $1}')" = 2c1db6cbbe2d7db5aca6f917af23a91c53c363e6b3480579062b723f9e9fb035 ]
@@ -98,6 +137,8 @@ shasum -a 256 "$HV" "$PAYLOAD" "$ROOT/nwoas_scripts/cpufreq-s193/capture.py" \
     "$ROOT/nwoas_scripts/nvme-s139/controller.py" >> "$LOG"
 echo '[S244] S243 stack on 13.5 OS firmware: no Tahoe DCP hook, m1n1-owned framebuffer, probe + preflight gates' | tee -a "$LOG"
 echo "[S259] Wi-Fi payload + wifi_module.py, NWOAS_WIFI=$NWOAS_WIFI" | tee -a "$LOG"
+echo "[S260] NWOAS_S260_HV=${NWOAS_S260_HV:-0} NWOAS_S260_MADT=${NWOAS_S260_MADT:-0} HV=$(basename "$HV") PAYLOAD=$(basename "$PAYLOAD") PWR: WFI=${NWOAS_PWR_WFI:-0} SECTICK=${NWOAS_PWR_SECTICK:-0} TGAP_US=${NWOAS_PWR_TGAP_US:-} NVME_SHUT=${NWOAS_PWR_NVME_SHUT:-0} OFF=${NWOAS_PWR_OFF:-0} SMC=${NWOAS_PWR_SMC:-0} SLC=${NWOAS_PWR_SLC:-0} PRINT=${NWOAS_PWR_PRINT:-0} LIVE=${NWOAS_PWR_LIVE:-0}" | tee -a "$LOG"
+echo "[S262] NWOAS_S262_HV=${NWOAS_S262_HV:-0} NVME_QD=${NWOAS_NVME_QD:-0} QD_IRQ=${NWOAS_NVME_QD_IRQ:-1} QD_STRICT=${NWOAS_NVME_QD_STRICT:-0} QD_KICK=${NWOAS_NVME_QD_KICK:-1}" | tee -a "$LOG"
 echo "[S244] delivery: MANIFEST=${NWOAS_DELIVER_MANIFEST:-} FILE=${NWOAS_DELIVER_FILE:-} SHA256=${NWOAS_DELIVER_SHA256:-}" | tee -a "$LOG"
 [ -z "${NWOAS_DELIVER_MANIFEST:-}" ] || shasum -a 256 "$NWOAS_DELIVER_MANIFEST" >> "$LOG"
 
@@ -141,4 +182,4 @@ VUART_PID=$!
     -m "$ROOT/nwoas_scripts/native-s230/query_module.py" \
     -m "$ROOT/nwoas_scripts/cpufreq-s189/observe.py" \
     -m "$ROOT/nwoas_scripts/sound-s256/audio_module.py" \
-    -m "$WIFI/wifi_module.py" "$PAYLOAD" >> "$LOG" 2>&1
+    -m "$WIFI/wifi_module.py" ${PWRMOD[@]+"${PWRMOD[@]}"} "$PAYLOAD" >> "$LOG" 2>&1

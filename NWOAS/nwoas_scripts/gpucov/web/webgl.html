@@ -1,0 +1,117 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>NWGL starting</title>
+<style>body{margin:0;background:#000;color:#0f0;font:12px monospace}canvas{display:block}</style></head>
+<body>
+<canvas id="c" width="640" height="360"></canvas>
+<pre id="out">running</pre>
+<script>
+// NWOAS GPU coverage page: WebGL1/2 renderer string, a drawn triangle read back
+// with readPixels, WebGPU adapter, media decode capabilities (powerEfficient =
+// hardware decode), and a 10 s animation whose frame count goes into the title.
+const R = {};
+const out = document.getElementById('out');
+function show() {
+  const head = ['done', 'frames', 'fps', 'webgl_draw', 'webgl1', 'webgl2', 'webgpu', 'decode_h264'];
+  document.title = ('NWGL ' + head.map(k => k + '=' + (k in R ? R[k] : '-')).join(' ')).slice(0, 250);
+  out.textContent = Object.keys(R).map(k => 'NWGL ' + k + '=' + R[k]).join('\n');
+}
+function info(gl, prefix) {
+  const ext = gl.getExtension('WEBGL_debug_renderer_info');
+  R[prefix + '_renderer'] = JSON.stringify(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+  R[prefix + '_vendor'] = JSON.stringify(ext ? gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR));
+  R[prefix + '_max_texture'] = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+}
+function triangle(gl) {
+  const vs = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vs, 'attribute vec2 p;uniform float a;void main(){float c=cos(a),s=sin(a);gl_Position=vec4(c*p.x-s*p.y,s*p.x+c*p.y,0.,1.);}');
+  gl.compileShader(vs);
+  const fs = gl.createShader(gl.FRAGMENT_SHADER);
+  gl.shaderSource(fs, 'precision mediump float;void main(){gl_FragColor=vec4(1.,.5,0.,1.);}');
+  gl.compileShader(fs);
+  const pr = gl.createProgram();
+  gl.attachShader(pr, vs); gl.attachShader(pr, fs); gl.linkProgram(pr);
+  if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) return null;
+  gl.useProgram(pr);
+  const b = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, b);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-0.8, -0.8, 0.8, -0.8, 0, 0.8]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(pr, 'p');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  return gl.getUniformLocation(pr, 'a');
+}
+function draw(gl, ua, angle) {
+  gl.viewport(0, 0, 640, 360);
+  gl.clearColor(0, 0, 0.5, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.uniform1f(ua, angle);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+const wait = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej({name: 'Timeout'}), ms))]);
+async function main() {
+  // WebGL2 probe on a throwaway canvas
+  try {
+    const g2 = document.createElement('canvas').getContext('webgl2');
+    R.webgl2 = g2 ? 'ok' : 'none';
+    if (g2) info(g2, 'webgl2');
+  } catch (e) { R.webgl2 = 'error'; }
+  const gl = document.getElementById('c').getContext('webgl', {preserveDrawingBuffer: true});
+  R.webgl1 = gl ? 'ok' : 'none';
+  let ua = null;
+  if (gl) {
+    info(gl, 'webgl1');
+    ua = triangle(gl);
+    if (ua) {
+      draw(gl, ua, 0);
+      const px = new Uint8Array(4), bg = new Uint8Array(4);
+      gl.readPixels(320, 150, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      gl.readPixels(5, 5, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, bg);
+      const tri = px[0] > 240 && px[1] > 110 && px[1] < 145 && px[2] < 15;
+      const back = bg[0] < 15 && bg[1] < 15 && bg[2] > 110 && bg[2] < 145;
+      R.webgl_draw = (tri && back) ? 'PASS' : 'FAIL';
+      R.webgl_px = Array.from(px).join(',') + '/' + Array.from(bg).join(',');
+    } else R.webgl_draw = 'FAIL_link';
+  }
+  show();
+  // WebGPU
+  try {
+    if (!navigator.gpu) R.webgpu = 'none';
+    else {
+      const a = await wait(navigator.gpu.requestAdapter(), 4000);
+      if (!a) R.webgpu = 'no_adapter';
+      else {
+        let i = a.info || (a.requestAdapterInfo ? await wait(a.requestAdapterInfo(), 2000) : {});
+        R.webgpu = 'ok';
+        R.webgpu_info = JSON.stringify([i.vendor || '', i.architecture || '', i.device || '', i.description || '']);
+        R.webgpu_fallback = a.isFallbackAdapter ? 1 : 0;
+        const d = await wait(a.requestDevice(), 4000);
+        R.webgpu_device = d ? 'ok' : 'none';
+      }
+    }
+  } catch (e) { R.webgpu = 'error:' + (e && e.name); }
+  show();
+  // media decode capabilities (powerEfficient true = hardware decoder)
+  const codecs = {h264: 'video/mp4; codecs="avc1.640028"', hevc: 'video/mp4; codecs="hvc1.1.6.L120.90"',
+                  vp9: 'video/webm; codecs="vp09.00.40.08"', av1: 'video/mp4; codecs="av01.0.08M.08"'};
+  for (const k in codecs) {
+    try {
+      const r = await wait(navigator.mediaCapabilities.decodingInfo({type: 'file', video: {contentType: codecs[k], width: 1920,
+        height: 1080, bitrate: 8000000, framerate: 30}}), 3000);
+      R['decode_' + k] = (r.supported ? 'sup' : 'nosup') + (r.smooth ? '_smooth' : '') + (r.powerEfficient ? '_hw' : '_sw');
+    } catch (e) { R['decode_' + k] = 'error'; }
+  }
+  show();
+  // animation: 10 s, frame count into the title
+  const secs = Number(new URLSearchParams(location.search).get('run') || 10);
+  let frames = 0;
+  const t0 = performance.now();
+  function tick(t) {
+    if (gl && ua) draw(gl, ua, (t - t0) / 500);
+    frames++;
+    if (t - t0 < secs * 1000) requestAnimationFrame(tick);
+    else { R.frames = frames; R.fps = (frames * 1000 / (t - t0)).toFixed(1); R.done = 1; show(); }
+  }
+  requestAnimationFrame(tick);
+}
+main();
+</script></body></html>

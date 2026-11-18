@@ -50,19 +50,9 @@ AddReg          = Nwoa.Reg
 AddReg = Nwoa.HwReg
 
 [Nwoa.HwReg]
-; defaults read by diag.cpp NwoaReadConfig (Device Parameters)
-HKR,, PollIntervalMs, 0x00010003, 10
-HKR,, UseInterrupt,   0x00010003, 0
-HKR,, ScanPassive,    0x00010003, 1
-HKR,, RxFrameFormat,  0x00010003, 0
-; bisect switch (diag.cpp): 1 = stop after chip id + EROM (no wrapper access). Not overwritten on reinstall.
-HKR,, StopAfter,      0x00010003, 1
-HKR,, SettleMs,       0x00010003, 0
-HKR,, AccessDelayUs,  0x00010003, 0
-HKR,, PostWriteRead,  0x00010003, 0
-HKR,, VerifyFirmware, 0x00010003, 1
-HKR,, DmaMode,        0x00010003, 0
-HKR,, LinkUpAtStart,  0x00010003, 0
+; production defaults are in the driver (diag.cpp NwoaReadConfig); nothing is written here so a
+; reinstall never overwrites a value set on purpose.  W1 removes leftover bring-up test values.
+HKR,, NwoaInfVersion, 0x00010001, 1
 
 [Nwoa.Files]
 nwoa4378.sys

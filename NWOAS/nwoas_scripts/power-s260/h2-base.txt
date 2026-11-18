@@ -1,0 +1,9 @@
+S260 H2 BEGIN
+NWSTAT-MARK io-begin
+S260 IO volume=C: bytes=81462820864 seconds_per_test=10
+S260 IO rand4k qd=1 bytes_per_io=4096 ios=97752 iops=9775 MBps=40.0 lat_mean_us=100 lat_max_us=169993 hist<50,100,200,500,1k,2k,5k,inf=182,39488,58038,26,5,0,1,12
+S260 IO rand4k qd=8 bytes_per_io=4096 ios=114566 iops=11455 MBps=46.9 lat_mean_us=695 lat_max_us=41512 hist<50,100,200,500,1k,2k,5k,inf=0,85,304,268,113812,45,29,23
+S260 IO rand4k qd=32 bytes_per_io=4096 ios=110990 iops=11095 MBps=45.4 lat_mean_us=2881 lat_max_us=28076 hist<50,100,200,500,1k,2k,5k,inf=0,0,0,2,11,13,110095,869
+S260 IO seq1m qd=4 bytes_per_io=1048576 ios=17546 iops=1754 MBps=1839.5 lat_mean_us=2276 lat_max_us=17022 hist<50,100,200,500,1k,2k,5k,inf=0,0,0,0,1,7839,9532,174
+NWSTAT-MARK io-end
+S260 H2 DONE

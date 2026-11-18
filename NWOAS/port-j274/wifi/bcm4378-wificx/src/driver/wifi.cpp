@@ -77,6 +77,85 @@ static UINT32 LinkQuality(int rssi)
 
 static WDI_BAND_ID WdiBand(UCHAR band) { return band == 5 ? WDI_BAND_ID_5000 : WDI_BAND_ID_2400; }
 
+// ------------------------------------------------ disconnect evidence
+// caller holds StateLock: copy the last commands (oldest first) for "what came right before"
+void NwoaCmdSnapshot(PNWOA_DEVICE Dev, ULONG Why)
+{
+    ULONG next = Dev->CmdLogNext;
+    ULONG n = next < NWOA_CMDSNAP ? next : NWOA_CMDSNAP;
+    for (ULONG i = 0; i < n; i++)
+        Dev->CmdSnap[i] = Dev->CmdLog[(next - n + i) % NWOA_CMDLOG];
+    Dev->CmdSnapN = n;
+    Dev->CmdSnapWhy = Why;
+    Dev->CmdSnapMs = (ULONG)(KeQueryInterruptTime() / 10000);
+}
+
+static void CmdRecord(PNWOA_DEVICE Dev, UINT16 Id, NTSTATUS St, ULONG Info)
+{
+    KIRQL irql;
+    int slot = -1, freeSlot = -1;
+    KeAcquireSpinLock(&Dev->StateLock, &irql);
+    NWOA_CMDREC* r = &Dev->CmdLog[Dev->CmdLogNext % NWOA_CMDLOG];
+    r->Ms = (ULONG)(KeQueryInterruptTime() / 10000);
+    r->Id = Id;
+    r->Conn = Dev->Connected ? 1 : 0;
+    r->Pad = 0;
+    r->Status = (ULONG)St;
+    r->Info = Info;
+    Dev->CmdLogNext++;
+    for (int i = 0; i < NWOA_CMDHIST; i++) {
+        if (Dev->CmdHist[i].Count && Dev->CmdHist[i].Id == Id) { slot = i; break; }
+        if (!Dev->CmdHist[i].Count && freeSlot < 0) freeSlot = i;
+    }
+    if (slot < 0)
+        slot = freeSlot;
+    if (slot >= 0) {
+        Dev->CmdHist[slot].Id = Id;
+        Dev->CmdHist[slot].Count++;
+    }
+    KeReleaseSpinLock(&Dev->StateLock, irql);
+}
+
+// every NB_C_DISASSOC the driver sends goes through here (Src = DIS_*)
+void NwoaHostDisassoc(PNWOA_DEVICE Dev, ULONG Src)
+{
+    KIRQL irql;
+    KeAcquireSpinLock(&Dev->StateLock, &irql);
+    Dev->HostDis[Dev->HostDisNext % 8].Ms = (ULONG)(KeQueryInterruptTime() / 10000);
+    Dev->HostDis[Dev->HostDisNext % 8].Src = Src;
+    Dev->HostDisNext++;
+    Dev->LastHostDisassoc = KeQueryInterruptTime();
+    NwoaCmdSnapshot(Dev, Src);
+    KeReleaseSpinLock(&Dev->StateLock, irql);
+    (void)NwoaSetInt(Dev, NB_C_DISASSOC, 0);
+}
+
+// Info bits of a connect / roam command (layout in nwoa.h); no SSID or BSSID values are kept
+static ULONG ConnectInfo(PNWOA_DEVICE Dev, const WDI_CONNECT_PARAMETERS_CONTAINER& Cp,
+                         const ArrayOfElements<WDI_CONNECT_BSS_ENTRY_CONTAINER>& List)
+{
+    ULONG info = 0;
+    const WDI_CONNECTION_SETTINGS_CONTAINER& cs = Cp.ConnectionSettings;
+    if (cs.RoamRequest) info |= 1;
+    info |= ((ULONG)cs.RoamTrigger & 0xF) << 4;
+    info |= ((ULONG)cs.RoamNeededReason & 0xFF) << 8;
+    info |= (min(List.ElementCount, 255u)) << 24;
+    if (List.ElementCount >= 1) {
+        const WDI_CONNECT_BSS_ENTRY_CONTAINER& be = List.pElements[0];
+        if (Dev->Connected && RtlEqualMemory(be.BSSID.Address, Dev->CurBssid, 6))
+            info |= 1u << 16;
+        if (be.ChannelInfo.BandId == WDI_BAND_ID_5000)
+            info |= 1u << 17;
+        NWOA_BSS* cached = (NWOA_BSS*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(NWOA_BSS), NWOA_TAG);
+        if (cached) {
+            if (NwoaScanCacheFind(Dev, be.BSSID.Address, cached))
+                info |= 1u << 18;
+            ExFreePoolWithTag(cached, NWOA_TAG);
+        }
+    }
+    return info;
+}
+
 static int CipherFromWdi(ULONG c)
 {
     switch (c) {
@@ -320,6 +399,28 @@ NTSTATUS NwoaFirmwareConfigure(PNWOA_DEVICE Dev)
         UCHAR jp[8] = { 4, 2, 8, 1, 1, 2, 0, 0 };                    // bwfm_init join_pref: RSSI delta (5G +8), RSSI
         NwoaSetVar(Dev, "join_pref", jp, sizeof(jp));
     }
+    {
+        // the firmware's own roaming settings as it boots (recorded, not secret), then roam_off:
+        // in WDI the host decides roams (OID_WDI_TASK_ROAM); a firmware roam would move the link
+        // to another BSSID without any indication to Windows (brcmfmac "roamoff" does the same)
+        static const ULONG NB_C_GET_ROAM_TRIGGER = 54, NB_C_GET_ROAM_DELTA = 56, NB_C_GET_ROAM_SCAN_PERIOD = 58;
+        UCHAR rb[8];
+        ULONG rv = 0;
+        RtlZeroMemory(rb, sizeof(rb));
+        st = NwoaGetVar(Dev, "roam_off", rb, 4);
+        NwoaDiagDword(Dev, L"NwoaFwRoamOffWas", NT_SUCCESS(st) ? nb_ld32(rb) : 0xFFFFFFFFu);
+        RtlZeroMemory(rb, sizeof(rb));
+        st = NwoaGetVar(Dev, "bcn_timeout", rb, 4);
+        NwoaDiagDword(Dev, L"NwoaFwBcnTimeout", NT_SUCCESS(st) ? nb_ld32(rb) : 0xFFFFFFFFu);
+        RtlZeroMemory(rb, sizeof(rb));
+        st = NwoaIoctl(Dev, NB_C_GET_ROAM_TRIGGER, rb, 8, 8, NULL, NULL);
+        NwoaDiagDword(Dev, L"NwoaFwRoamTrigger", NT_SUCCESS(st) ? nb_ld32(rb) : 0xFFFFFFFFu);
+        st = NwoaGetInt(Dev, NB_C_GET_ROAM_DELTA, &rv);
+        NwoaDiagDword(Dev, L"NwoaFwRoamDelta", NT_SUCCESS(st) ? rv : 0xFFFFFFFFu);
+        st = NwoaGetInt(Dev, NB_C_GET_ROAM_SCAN_PERIOD, &rv);
+        NwoaDiagDword(Dev, L"NwoaFwRoamScanPeriod", NT_SUCCESS(st) ? rv : 0xFFFFFFFFu);
+        NwoaDiagDword(Dev, L"NwoaFwRoamOffSet", (ULONG)NwoaSetVarInt(Dev, "roam_off", Dev->Cfg.FwRoamOff ? 1 : 0));
+    }
     NwoaSetInt(Dev, NB_C_SET_SCAN_CHANNEL_TIME, 40);
     NwoaSetInt(Dev, NB_C_SET_SCAN_UNASSOC_TIME, 40);
     NwoaSetInt(Dev, NB_C_SET_SCAN_PASSIVE_TIME, 120);
@@ -360,7 +461,8 @@ static void JobScanStart(PNWOA_DEVICE Dev)
     NwoaScanCacheClear(Dev);
     InterlockedIncrement(&Dev->CntScans);
     n = nb_escan_params(p, sizeof(p), Dev->ScanVer == 2 || Dev->ScanVer == 3 ? Dev->ScanVer : 1,
-                        Dev->Cfg.ScanPassive || !Dev->ScanSsidLen ? (Dev->Cfg.ScanPassive ? NB_SCANTYPE_PASSIVE : NB_SCANTYPE_ACTIVE) : NB_SCANTYPE_ACTIVE,
+                        // a directed scan (hidden network profile) must probe; otherwise ScanPassive decides
+                        Dev->ScanSsidLen ? NB_SCANTYPE_ACTIVE : (Dev->Cfg.ScanPassive ? NB_SCANTYPE_PASSIVE : NB_SCANTYPE_ACTIVE),
                         NB_ESCAN_SYNC_ID, Dev->ScanSsidLen ? Dev->ScanSsid : NULL, Dev->ScanSsidLen);
     Dev->ScanStatus = -1;
     Dev->ScanDeadline = KeQueryInterruptTime() + 12ull * 10000000ull;   // 12 s
@@ -444,13 +546,14 @@ static void IndicateDisassoc(PNWOA_DEVICE Dev, const UCHAR* Bssid, ULONG Reason)
     }
 }
 
-static void QuietDisconnect(PNWOA_DEVICE Dev)
+static void QuietDisconnect(PNWOA_DEVICE Dev, ULONG Src)
 {
+    Dev->PtkInstalled = FALSE;
     if (Dev->LinkUpReported)
         NwoaReportLink(Dev, FALSE);
     Dev->Connected = FALSE;
     InterlockedExchange(&Dev->ConnState, CONN_IDLE);
-    (void)NwoaSetInt(Dev, NB_C_DISASSOC, 0);
+    NwoaHostDisassoc(Dev, Src);
     NwoaFlowringDelete(Dev);
     NwoaRxFlushHeld(Dev);
     RtlZeroMemory(Dev->CurBssid, 6);
@@ -562,9 +665,17 @@ static void JobConnect(PNWOA_DEVICE Dev)
 
     if (!Dev->ConnTask.Active)
         return;
-    if (Dev->Connected || Dev->ConnState != CONN_IDLE)
-        QuietDisconnect(Dev);
-    NwoaSetStage(Dev, "connect_start", STATUS_PENDING);
+    if (Dev->Connected || Dev->ConnState != CONN_IDLE) {
+        UCHAR old[6];
+        BOOLEAN was = Dev->Connected;
+        RtlCopyMemory(old, Dev->CurBssid, 6);
+        QuietDisconnect(Dev, Dev->ConnIsRoam ? DIS_ROAM : DIS_CONNECT);
+        // OID_WDI_TASK_ROAM: the adapter leaves the old AP and associates with the new one; the
+        // disassociation from the old AP is one of the task's unsolicited indications
+        if (Dev->ConnIsRoam && was)
+            IndicateDisassoc(Dev, old, WDI_ASSOC_STATUS_DISASSOCIATED_BY_HOST);
+    }
+    NwoaSetStage(Dev, Dev->ConnIsRoam ? "roam_start" : "connect_start", STATUS_PENDING);
     // security (bwfm_connect): wpa_auth, wsec, auth open, mfp none, RSN IE for the request
     if (c->Rsn) {
         UCHAR ie[24];
@@ -582,6 +693,7 @@ static void JobConnect(PNWOA_DEVICE Dev)
     NwoaSetInt(Dev, NB_C_SET_INFRA, 1);
 
     KeClearEvent(&Dev->ConnEvent);
+    Dev->PtkInstalled = FALSE;
     Dev->ConnFailEvent = Dev->ConnFailStatus = Dev->ConnFailReason = 0;
     InterlockedExchange(&Dev->ConnState, CONN_JOINING);
     n = nb_ext_join_params(jp, sizeof(jp), c->Ssid, c->SsidLen, c->Bssid, c->Chanspec);
@@ -636,6 +748,9 @@ static void JobConnect(PNWOA_DEVICE Dev)
         IndicateAssocResult(Dev, WDI_ASSOC_STATUS_SUCCESS, 0, req, reqLen, resp, respLen);
         NwoaReportLink(Dev, TRUE);                             // lets NetAdapterCx create the TX/RX queues
         IndicateLinkState(Dev, (int)(LONG)rssi);
+        Dev->RssiLast = Dev->RssiMin = Dev->RssiMax = (LONG)rssi;
+        Dev->LqReported = LinkQuality((int)(LONG)rssi);
+        InterlockedIncrement(&Dev->CntLinkStateInd);
         NwoaDiagEvents(Dev);
         if (req)
             ExFreePoolWithTag(req, NWOA_TAG);
@@ -645,7 +760,7 @@ static void JobConnect(PNWOA_DEVICE Dev)
     }
     // failed: stop the firmware from retrying, report the association failure
     InterlockedExchange(&Dev->ConnState, CONN_IDLE);
-    (void)NwoaSetInt(Dev, NB_C_DISASSOC, 0);
+    NwoaHostDisassoc(Dev, DIS_CONN_FAIL);
     IndicateAssocResult(Dev, FailToWdi(Dev), Dev->ConnFailStatus, NULL, 0, NULL, 0);
     NwoaDiagEvents(Dev);
     NwoaSetStage(Dev, "connect_failed", st);
@@ -658,7 +773,7 @@ static void JobDisconnect(PNWOA_DEVICE Dev)
     UCHAR bssid[6];
     BOOLEAN was = Dev->Connected;
     RtlCopyMemory(bssid, Dev->CurBssid, 6);
-    QuietDisconnect(Dev);
+    QuietDisconnect(Dev, DIS_DISCONNECT);
     if (was)
         IndicateDisassoc(Dev, bssid, WDI_ASSOC_STATUS_DISASSOCIATED_BY_HOST);
     NwoaDiagEvents(Dev);
@@ -673,10 +788,12 @@ static void JobLinkLost(PNWOA_DEVICE Dev)
         return;
     RtlCopyMemory(bssid, Dev->CurBssid, 6);
     Dev->Connected = FALSE;
+    Dev->PtkInstalled = FALSE;
     if (Dev->LinkUpReported)
         NwoaReportLink(Dev, FALSE);
     NwoaFlowringDelete(Dev);
     NwoaRxFlushHeld(Dev);
+    InterlockedExchange(&Dev->ConnState, CONN_IDLE);         // the firmware already left the BSS
     IndicateDisassoc(Dev, bssid, Dev->LostReason);
     NwoaDiagDword(Dev, L"NwoaLostReasonWdi", Dev->LostReason);
     NwoaDiagEvents(Dev);
@@ -686,7 +803,7 @@ static void JobLinkLost(PNWOA_DEVICE Dev)
 static void JobReset(PNWOA_DEVICE Dev)
 {
     if (Dev->Connected || Dev->ConnState != CONN_IDLE)
-        QuietDisconnect(Dev);
+        QuietDisconnect(Dev, DIS_RESET);
     TaskEnd(Dev, &Dev->ResetTask, NDIS_STATUS_SUCCESS);
 }
 
@@ -695,7 +812,7 @@ static void JobRadio(PNWOA_DEVICE Dev)
     BOOLEAN on = Dev->RadioWant != 0;
     NTSTATUS st = STATUS_SUCCESS;
     if (!on && (Dev->Connected || Dev->ConnState != CONN_IDLE))
-        QuietDisconnect(Dev);
+        QuietDisconnect(Dev, DIS_RADIO_OFF);
     st = NwoaSetInt(Dev, on ? NB_C_UP : NB_C_DOWN, 0);
     if (NT_SUCCESS(st))
         Dev->RadioOn = on;
@@ -737,6 +854,8 @@ static void JobKeys(PNWOA_DEVICE Dev)
         NwoaDiagDword(Dev, key->Pairwise ? L"NwoaKeyPairwise" : L"NwoaKeyGroup", (ULONG)st);
         if (!NT_SUCCESS(st))
             break;
+        if (key->Pairwise)
+            Dev->PtkInstalled = !key->Delete;
         if (!key->Delete) {
             ULONG wsec = 0;
             if (NT_SUCCESS(NwoaGetVar(Dev, "wsec", (PUCHAR)&wsec, 4)))
@@ -751,6 +870,39 @@ static void JobKeys(PNWOA_DEVICE Dev)
         M3(req, st);
 }
 
+// NDIS_STATUS_WDI_INDICATION_LINK_STATE_CHANGE: the port indicates a link quality change of more
+// than 5 (1 in low latency mode); the host keeps its link metadata from it.  Before s258k only the
+// value at association time was ever sent.  Polled from the 2 s diag job while connected.
+static void LinkQualityTick(PNWOA_DEVICE Dev)
+{
+    ULONG v = 0;
+    if (!Dev->Connected || !Dev->RingsUp || Dev->Dead || Dev->ConnTask.Active)
+        return;
+    if (!NT_SUCCESS(NwoaGetInt(Dev, NB_C_GET_RSSI, &v)))
+        return;
+    LONG rssi = (LONG)v;
+    if (rssi >= 0 || rssi < -120)
+        return;                                                // not associated / no sample
+    Dev->RssiLast = rssi;
+    if (rssi < Dev->RssiMin) Dev->RssiMin = rssi;
+    if (rssi > Dev->RssiMax) Dev->RssiMax = rssi;
+    ULONG lq = LinkQuality((int)rssi);
+    if (Dev->Cfg.LinkQualityUpdates && (lq + 5 <= Dev->LqReported || lq >= Dev->LqReported + 5)) {
+        IndicateLinkState(Dev, (int)rssi);
+        Dev->LqReported = lq;
+        InterlockedIncrement(&Dev->CntLinkStateInd);
+    }
+}
+
+static void JobRoamStay(PNWOA_DEVICE Dev)
+{
+    // OID_WDI_TASK_ROAM: "the adapter may decide not to roam and stay on the current AP, in which
+    // case it only completes the task"
+    InterlockedIncrement(&Dev->CntRoamStay);
+    NwoaSetStage(Dev, "roam_stayed", STATUS_SUCCESS);
+    TaskEnd(Dev, &Dev->ConnTask, NDIS_STATUS_SUCCESS);
+}
+
 void NwoaEvtWork(WDFWORKITEM Work)
 {
     PNWOA_DEVICE Dev = NwoaGetDevice(WdfWorkItemGetParentObject(Work));
@@ -763,10 +915,40 @@ void NwoaEvtWork(WDFWORKITEM Work)
         if (j & JOB_RESET) JobReset(Dev);
         if (j & JOB_RADIO) JobRadio(Dev);
         if (j & JOB_LINK_LOST) JobLinkLost(Dev);
+        if (j & JOB_ROAM_STAY) JobRoamStay(Dev);
         if (j & JOB_CONNECT) JobConnect(Dev);
         if (j & JOB_SCAN_START) JobScanStart(Dev);
         if (j & JOB_SCAN_DONE) JobScanDone(Dev);
-        if (j & JOB_DIAG) { NwoaDiagCounters(Dev); if (Dev->Dead) NwoaDiagConsole(Dev); }
+        if (j & JOB_DIAG) { LinkQualityTick(Dev); NwoaDiagCounters(Dev); if (Dev->Dead) NwoaDiagConsole(Dev); }
+    }
+}
+
+// D0 exit / release: the chip loses power (S259 _PS3), so the OS is told the link is gone and
+// every task still waiting for its M4 (or a key request for its M3) is finished now.
+void NwoaWifiPowerDown(PNWOA_DEVICE Dev)
+{
+    Dev->PtkInstalled = FALSE;
+    if (Dev->Connected) {
+        UCHAR bssid[6];
+        RtlCopyMemory(bssid, Dev->CurBssid, 6);
+        Dev->Connected = FALSE;
+        if (Dev->LinkUpReported)
+            NwoaReportLink(Dev, FALSE);
+        IndicateDisassoc(Dev, bssid, WDI_ASSOC_STATUS_DISASSOCIATED_BY_HOST);
+    }
+    InterlockedExchange(&Dev->ConnState, CONN_IDLE);
+    InterlockedExchange(&Dev->ScanRunning, 0);
+    TaskEnd(Dev, &Dev->ScanTask, NDIS_STATUS_FAILURE);
+    TaskEnd(Dev, &Dev->ConnTask, NDIS_STATUS_FAILURE);
+    TaskEnd(Dev, &Dev->DiscTask, NDIS_STATUS_SUCCESS);
+    TaskEnd(Dev, &Dev->ResetTask, NDIS_STATUS_SUCCESS);
+    TaskEnd(Dev, &Dev->RadioTask, NDIS_STATUS_FAILURE);
+    if (Dev->KeyRequest) {
+        WIFIREQUEST r = Dev->KeyRequest;
+        Dev->KeyRequest = NULL;
+        RtlSecureZeroMemory(Dev->Keys, sizeof(Dev->Keys));
+        Dev->NumKeys = 0;
+        M3(r, STATUS_DEVICE_NOT_READY);
     }
 }
 
@@ -792,20 +974,20 @@ static BOOLEAN IsNoopSet(UINT16 id)
     }
 }
 
-static void ParseConnect(PNWOA_DEVICE Dev, const WDI_TASK_CONNECT_PARAMETERS& p, NTSTATUS* St)
+static void ParseConnect(PNWOA_DEVICE Dev, const WDI_CONNECT_PARAMETERS_CONTAINER& cp,
+                         const ArrayOfElements<WDI_CONNECT_BSS_ENTRY_CONTAINER>& list, NTSTATUS* St)
 {
     NWOA_CONNECT* c = &Dev->Conn;
     RtlZeroMemory(c, sizeof(*c));
     *St = STATUS_NOT_SUPPORTED;
-    const WDI_CONNECT_PARAMETERS_CONTAINER& cp = p.ConnectParameters;
-    if (cp.SSIDList.ElementCount < 1 || p.PreferredBSSEntryList.ElementCount < 1)
+    if (cp.SSIDList.ElementCount < 1 || list.ElementCount < 1)
         return;
     ULONG sl = min(cp.SSIDList.pElements[0].ElementCount, 32u);
     if (!sl)
         return;
     RtlCopyMemory(c->Ssid, cp.SSIDList.pElements[0].pElements, sl);
     c->SsidLen = sl;
-    const WDI_CONNECT_BSS_ENTRY_CONTAINER& be = p.PreferredBSSEntryList.pElements[0];
+    const WDI_CONNECT_BSS_ENTRY_CONTAINER& be = list.pElements[0];
     RtlCopyMemory(c->Bssid, be.BSSID.Address, 6);
     c->WdiAuth = cp.AuthenticationAlgorithms.ElementCount ? cp.AuthenticationAlgorithms.pElements[0] : WDI_AUTH_ALGO_80211_OPEN;
     c->WdiUcast = cp.UnicastCipherAlgorithms.ElementCount ? cp.UnicastCipherAlgorithms.pElements[0] : WDI_CIPHER_ALGO_NONE;
@@ -920,95 +1102,141 @@ void NwoaEvtWifiSendCommand(WDFDEVICE Device, WIFIREQUEST Request)
     PUCHAR buf = (PUCHAR)WifiRequestGetInOutBuffer(Request, &inLen, &outLen);
     UINT16 id = WifiRequestGetMessageId(Request);
     NTSTATUS st = STATUS_SUCCESS;
+    ULONG info = 0;
+
+// every command is recorded (id, connected, M3 status, info) before its M3
+#define DONE(s_) do { NTSTATUS d_ = (s_); CmdRecord(Dev, id, d_, info); M3(Request, d_); } while (0)
 
     if (!buf || inLen < sizeof(WDI_MESSAGE_HEADER)) {
-        M3(Request, STATUS_INVALID_PARAMETER);
+        DONE(STATUS_INVALID_PARAMETER);
         return;
     }
     PWDI_MESSAGE_HEADER hdr = (PWDI_MESSAGE_HEADER)buf;
     PUCHAR tlv = buf + sizeof(WDI_MESSAGE_HEADER);
     ULONG tlvLen = inLen - sizeof(WDI_MESSAGE_HEADER);
-    if (id == WDI_TASK_SCAN || id == WDI_TASK_CONNECT || id == WDI_TASK_DISCONNECT || id == WDI_TASK_DOT11_RESET)
+    if (id == WDI_TASK_SCAN || id == WDI_TASK_CONNECT || id == WDI_TASK_DISCONNECT || id == WDI_TASK_DOT11_RESET ||
+        id == WDI_TASK_ROAM)
         Dev->StaPortId = hdr->PortId;
 
     switch (id) {
     case WDI_TASK_SCAN: {
         WDI_SCAN_PARAMETERS p;
-        if (Dev->ScanTask.Active || Dev->ScanRunning) { M3(Request, STATUS_DEVICE_BUSY); return; }
-        if (ParseWdiTaskScan(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { M3(Request, STATUS_INVALID_PARAMETER); return; }
+        if (Dev->ScanTask.Active || Dev->ScanRunning) { DONE(STATUS_DEVICE_BUSY); return; }
+        if (ParseWdiTaskScan(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { DONE(STATUS_INVALID_PARAMETER); return; }
         Dev->ScanSsidLen = 0;
         if (p.SSIDList.ElementCount && p.SSIDList.pElements[0].ElementCount &&
             p.SSIDList.pElements[0].ElementCount <= 32) {
             Dev->ScanSsidLen = p.SSIDList.pElements[0].ElementCount;
             RtlCopyMemory(Dev->ScanSsid, p.SSIDList.pElements[0].pElements, Dev->ScanSsidLen);
         }
+        info = Dev->ScanSsidLen ? 1 : 0;                       // 1 = directed scan
         CleanupParsedWdiTaskScan(&p);
         TaskBegin(&Dev->ScanTask, id, WDI_INDICATION_SCAN_COMPLETE, hdr);
-        M3(Request, STATUS_SUCCESS);
+        DONE(STATUS_SUCCESS);
         NwoaQueueJob(Dev, JOB_SCAN_START);
         return;
     }
     case WDI_TASK_CONNECT: {
         WDI_TASK_CONNECT_PARAMETERS p;
-        if (Dev->ConnTask.Active) { M3(Request, STATUS_DEVICE_BUSY); return; }
-        if (ParseWdiTaskConnect(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { M3(Request, STATUS_INVALID_PARAMETER); return; }
-        ParseConnect(Dev, p, &st);
+        if (Dev->ConnTask.Active) { DONE(STATUS_DEVICE_BUSY); return; }
+        if (ParseWdiTaskConnect(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { DONE(STATUS_INVALID_PARAMETER); return; }
+        info = ConnectInfo(Dev, p.ConnectParameters, p.PreferredBSSEntryList);
+        if (Dev->Connected)
+            InterlockedIncrement(&Dev->CntConnWhileConn);
+        ParseConnect(Dev, p.ConnectParameters, p.PreferredBSSEntryList, &st);
         CleanupParsedWdiTaskConnect(&p);
         NwoaDiagDword(Dev, L"NwoaConnectParse", (ULONG)st);
-        if (!NT_SUCCESS(st)) { M3(Request, st); return; }
+        if (!NT_SUCCESS(st)) { DONE(st); return; }
+        Dev->ConnIsRoam = FALSE;
         TaskBegin(&Dev->ConnTask, id, WDI_INDICATION_CONNECT_COMPLETE, hdr);
-        M3(Request, STATUS_SUCCESS);
+        DONE(STATUS_SUCCESS);
         NwoaQueueJob(Dev, JOB_CONNECT);
         return;
     }
-    case WDI_TASK_DISCONNECT:
+    case WDI_TASK_ROAM: {
+        // OID_WDI_TASK_ROAM (before s258k: STATUS_NOT_SUPPORTED).  Same parameters as a connect.
+        WDI_TASK_ROAM_PARAMETERS p;
+        if (Dev->ConnTask.Active) { DONE(STATUS_DEVICE_BUSY); return; }
+        if (ParseWdiTaskRoam(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { DONE(STATUS_INVALID_PARAMETER); return; }
+        info = ConnectInfo(Dev, p.ConnectParameters, p.PreferredBSSEntryList);
+        if (Dev->Cfg.RoamStay && Dev->Connected && (info & (1u << 16))) {
+            CleanupParsedWdiTaskRoam(&p);
+            TaskBegin(&Dev->ConnTask, id, WDI_INDICATION_ROAM_COMPLETE, hdr);
+            DONE(STATUS_SUCCESS);
+            NwoaQueueJob(Dev, JOB_ROAM_STAY);              // already on that AP: stay
+            return;
+        }
+        ParseConnect(Dev, p.ConnectParameters, p.PreferredBSSEntryList, &st);
+        CleanupParsedWdiTaskRoam(&p);
+        NwoaDiagDword(Dev, L"NwoaRoamParse", (ULONG)st);
+        if (!NT_SUCCESS(st)) { DONE(st); return; }
+        InterlockedIncrement(&Dev->CntRoamMove);
+        Dev->ConnIsRoam = TRUE;
+        TaskBegin(&Dev->ConnTask, id, WDI_INDICATION_ROAM_COMPLETE, hdr);
+        DONE(STATUS_SUCCESS);
+        NwoaQueueJob(Dev, JOB_CONNECT);
+        return;
+    }
+    case WDI_TASK_DISCONNECT: {
+        WDI_TASK_DISCONNECT_PARAMETERS p;
+        if (ParseWdiTaskDisconnect(tlvLen, tlv, &Dev->Tlv, &p) == NDIS_STATUS_SUCCESS) {
+            info = p.DisconnectParameters.Disassociation80211Reason;
+            CleanupParsedWdiTaskDisconnect(&p);
+        } else {
+            info = 0xFFFF;
+        }
         TaskBegin(&Dev->DiscTask, id, WDI_INDICATION_DISCONNECT_COMPLETE, hdr);
-        M3(Request, STATUS_SUCCESS);
+        DONE(STATUS_SUCCESS);
         NwoaQueueJob(Dev, JOB_DISCONNECT);
         return;
+    }
     case WDI_TASK_DOT11_RESET:
         TaskBegin(&Dev->ResetTask, id, WDI_INDICATION_DOT11_RESET_COMPLETE, hdr);
-        M3(Request, STATUS_SUCCESS);
+        DONE(STATUS_SUCCESS);
         NwoaQueueJob(Dev, JOB_RESET);
         return;
     case WDI_TASK_SET_RADIO_STATE: {
         WDI_SET_RADIO_STATE_PARAMETERS p;
-        if (ParseWdiTaskSetRadioState(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { M3(Request, STATUS_INVALID_PARAMETER); return; }
+        if (ParseWdiTaskSetRadioState(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { DONE(STATUS_INVALID_PARAMETER); return; }
         Dev->RadioWant = p.SoftwareRadioState;
+        info = p.SoftwareRadioState;
         CleanupParsedWdiTaskSetRadioState(&p);
         TaskBegin(&Dev->RadioTask, id, WDI_INDICATION_SET_RADIO_STATE_COMPLETE, hdr);
-        M3(Request, STATUS_SUCCESS);
+        DONE(STATUS_SUCCESS);
         NwoaQueueJob(Dev, JOB_RADIO);
         return;
     }
     case WDI_SET_ADD_CIPHER_KEYS:
     case WDI_SET_DELETE_CIPHER_KEYS: {
-        if (Dev->KeyRequest) { M3(Request, STATUS_DEVICE_BUSY); return; }
+        if (Dev->KeyRequest) { DONE(STATUS_DEVICE_BUSY); return; }
         if (id == WDI_SET_ADD_CIPHER_KEYS) {
             WDI_SET_ADD_CIPHER_KEYS_PARAMETERS p;
-            if (ParseWdiSetAddCipherKeys(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { M3(Request, STATUS_INVALID_PARAMETER); return; }
+            if (ParseWdiSetAddCipherKeys(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { DONE(STATUS_INVALID_PARAMETER); return; }
             ParseKeys(Dev, &p, NULL, &st);
             CleanupParsedWdiSetAddCipherKeys(&p);
         } else {
             WDI_SET_DELETE_CIPHER_KEYS_PARAMETERS p;
-            if (ParseWdiSetDeleteCipherKeys(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { M3(Request, STATUS_INVALID_PARAMETER); return; }
+            if (ParseWdiSetDeleteCipherKeys(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { DONE(STATUS_INVALID_PARAMETER); return; }
             ParseKeys(Dev, NULL, &p, &st);
             CleanupParsedWdiSetDeleteCipherKeys(&p);
         }
+        info = Dev->NumKeys;                                   // key count only, never key data
         if (!NT_SUCCESS(st) || !Dev->NumKeys) {
             RtlSecureZeroMemory(Dev->Keys, sizeof(Dev->Keys));
             Dev->NumKeys = 0;
-            M3(Request, st);
+            DONE(st);
             return;
         }
+        CmdRecord(Dev, id, STATUS_PENDING, info);
         Dev->KeyRequest = Request;                            // completed by JobKeys
         NwoaQueueJob(Dev, JOB_KEYS);
         return;
     }
     default:
-        M3(Request, IsNoopSet(id) ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED);
+        DONE(IsNoopSet(id) ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED);
         return;
     }
+#undef DONE
 }
 
 // ------------------------------------------------------------ adapter

@@ -1,0 +1,165 @@
+{
+  "variant": "madt",
+  "tree": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-power-s260-mu",
+  "workspace_path_used": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-power-s260-mu",
+  "fd_sha256": "52b179061e2ba055019039e150ef7a87312197c24fce89fbdc4f3862ff85aca0",
+  "fd_bytes": 30965760,
+  "s216_layout_payload_sha256": "220efceda72d5aa840a6df4924c3f6f5ad67674c6e41929b4dff069d65169db9",
+  "payload": "nwoas_scripts/fw-power-s260/out/s260/m1n1-payload-s260-madt.bin",
+  "payload_sha256": "7108d491e9439435803a48c86201bbf73cc8973f72c4fbfa6cc4e2d5eb650845",
+  "payload_bytes": 33669120,
+  "window_ipa": "0x340000000",
+  "window_bytes": "0x40000",
+  "reference": {
+    "s247_payload_sha256": "fb2011f96aea4ca30c69d5bd706a379a04010dc7895366b5c86e191444ee641c",
+    "s247_fd_sha256": "ebd3bb723e9ade72e7096eeadef85889a206672ed13c449664b805c6a086bd6a",
+    "s247_agx_ssdt_aml_sha256": "15347541e59d46a36cb2e6b1953b55f52e0b01d7baa6484b8795add06fcf240a",
+    "s216_fd_sha256": "b008dcfc93059ee6f623dc7f8d96dd69276970c14931be68f8e7dce256e537cc",
+    "s216_payload_sha256": "0ae1cb75bfc3cbc2b7b15e6408c489fe5badd3d12d53fc4353a85b6b5ad3d197",
+    "s223_payload_sha256": "2343f7fc35acd0401bafd63bfdc10d047ad8c4bc78207056c42e478051a8b5e7"
+  },
+  "changed_sources": {
+    "Silicon/Apple/T810XFamilyPkg/AcpiTables/MADT_Static.aslc": {
+      "before_sha256": "43867aeaa9766977bf1a6e73e00069c03cab9857c22a3d827dd03a98594e518f",
+      "after_sha256": "72937a82b0542ad0fd0a7c503b3d60aa56647fb6d2f8c6bff72770350f0ab5cb"
+    },
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.c": {
+      "before_sha256": "c133ec4da90e30d31759d7b7881c2ab39c9f3055582c7a54cf24a9bf8c28003f",
+      "after_sha256": "02e220b4f69d01fc22b656b88bd9e8883f51557c49c957abda9ea49fc2d4741c"
+    },
+    "Silicon/Apple/T810XFamilyPkg/Library/MemoryInitPeiLib/MemoryInitPeiLib.inf": {
+      "before_sha256": "d638b47bd4f5b30e2df56f04ccbc503d4a78ae6106a6f9887d615f1349112861",
+      "after_sha256": "8115fe09b094e81460a483d7887c64e7a16a9c6e026326b0755732a8ce9de476"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/J274AppleAgxAbiAdmission.asl.inc": {
+      "before_sha256": null,
+      "after_sha256": "574e7dc97f3d22fec1348bc2d9f84bfcf5a61955979b55ebf8a7d6b10b18db04"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/J274AppleAgxAbiAdmissionSsdt.asl": {
+      "before_sha256": null,
+      "after_sha256": "a3ab7f406ca437f0380a1fe91fcac0e967b3bdaee6bbcd53e167b9b6350dcc5f"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/NwoasAudioJ274.asl.inc": {
+      "before_sha256": null,
+      "after_sha256": "bb55894116caadde800a675b3c7d4645d50503b7c67134d902c21806d30eff02"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/NwoasAudioJ274Ssdt.asl": {
+      "before_sha256": null,
+      "after_sha256": "830227167dea1deb66821f884d2abce5261506dc734b017d81494cc2917684c9"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/NwoasWifiJ274.asl.inc": {
+      "before_sha256": null,
+      "after_sha256": "8e6de65d1d67d9675c587c04fb46c768f0da7ff618d5ab3124233a1b2867aa0d"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/NwoasWifiJ274Ssdt.asl": {
+      "before_sha256": null,
+      "after_sha256": "fc47baebb98610edf2358dedf0c0f1557a89d495349d58a971ecdbfab103c436"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/IORT.aslc": {
+      "before_sha256": "e21f55237244356a4b762254239cf82381dfc4adebf15074f512b8e05ca7ea64",
+      "after_sha256": "36fe664afdc450a8ec8f410c5bbbf1692748e5d20cf736d95f6cf2927ed306b4"
+    },
+    "Platform/MacMini2020Pkg/AcpiTables/DeviceAcpiTables.inf": {
+      "before_sha256": "47960db983bb0b823857726d53a274c6146cdc51ed7306fd0017ac1bad31c0e5",
+      "after_sha256": "09906f1844d1c472dd98c725fe751e48714d4d4e4b6b9a3556d7cf112725c750"
+    },
+    "Platform/MacMini2020Pkg/MacMini2020.dsc": {
+      "before_sha256": "0b63d3fb598d4f23a5a69449f16aea9a976ce19d6d7f27354437bdf47a272902",
+      "after_sha256": "a6339e4d818a8c1167b0711b8afae767ea422dba50367f66fa714b261f7fe588"
+    }
+  },
+  "fd_identical_to_s216": false,
+  "payload_identical_to_s223": false,
+  "ssdt_aml": [
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-power-s260-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/MacMini2020Pkg/AcpiTables/DeviceAcpiTables/OUTPUT/J274AppleAgxAbiAdmissionSsdt.aml",
+      "sha256": "15347541e59d46a36cb2e6b1953b55f52e0b01d7baa6484b8795add06fcf240a",
+      "bytes": 1069,
+      "has_APPL0002": true,
+      "has_J274ABI": true
+    }
+  ],
+  "agx_ssdt_identical_to_s247": true,
+  "audio_ssdt_aml": [
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-power-s260-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/MacMini2020Pkg/AcpiTables/DeviceAcpiTables/OUTPUT/NwoasAudioJ274Ssdt.aml",
+      "sha256": "6621c8591f95f91bcb3ad8ef88e9f99d93d349870d030a4bf651b7a4f646ae9d",
+      "bytes": 322,
+      "has_NWAU0001": true,
+      "has_SPK0": true,
+      "has_window": true
+    }
+  ],
+  "s247_string_in_build": [],
+  "audio_ssdt_identical_to_s256": true,
+  "wifi_ssdt_aml": [
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-power-s260-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/MacMini2020Pkg/AcpiTables/DeviceAcpiTables/OUTPUT/NwoasWifiJ274Ssdt.aml",
+      "sha256": "bcdcbb03b167eac4a845a8efcb4ba05a0a6f9caa46732b76fd63364221643254",
+      "bytes": 701,
+      "has_NWOA4378": true,
+      "has_WLN0": true,
+      "has_NWC0": true,
+      "has_ctrl_ipa": true,
+      "has_magic": true
+    }
+  ],
+  "iort_build_files": [
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-power-s260-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/MacMini2020Pkg/AcpiTables/DeviceAcpiTables/OUTPUT/IORT.dll",
+      "has_WLN0_name": true,
+      "has_XHC0_name": true
+    },
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-power-s260-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/MacMini2020Pkg/AcpiTables/DeviceAcpiTables/OUTPUT/IORT.acpi",
+      "has_WLN0_name": true,
+      "has_XHC0_name": true
+    },
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-power-s260-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/MacMini2020Pkg/AcpiTables/DeviceAcpiTables/OUTPUT/IORT.obj",
+      "has_WLN0_name": true,
+      "has_XHC0_name": true
+    }
+  ],
+  "s259_string_in_build": [],
+  "madt_build_files": [
+    {
+      "path": "/Users/angigyeom/Desktop/DEV/NWOAS/fw-power-s260-mu/Build/MacMini2020-AARCH64/DEBUG_CLANGPDB/AARCH64/T810XFamilyPkg/AcpiTables/CPUAcpiTables/OUTPUT/MADT_Static.acpi",
+      "sha256": "a3d91600f687a6b2fc01304b6201730c82c849a6bf46b3329cc0a00478439d54",
+      "gicc": [
+        {
+          "mpidr": "0x0",
+          "efficiency": 0
+        },
+        {
+          "mpidr": "0x1",
+          "efficiency": 0
+        },
+        {
+          "mpidr": "0x2",
+          "efficiency": 0
+        },
+        {
+          "mpidr": "0x3",
+          "efficiency": 0
+        },
+        {
+          "mpidr": "0x10100",
+          "efficiency": 1
+        },
+        {
+          "mpidr": "0x10101",
+          "efficiency": 1
+        },
+        {
+          "mpidr": "0x10102",
+          "efficiency": 1
+        },
+        {
+          "mpidr": "0x10103",
+          "efficiency": 1
+        }
+      ]
+    }
+  ]
+}

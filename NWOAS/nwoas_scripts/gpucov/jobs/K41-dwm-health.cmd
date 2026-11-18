@@ -1,0 +1,5 @@
+@echo off
+echo GPUCOV K41 DWM HEALTH: dwm.exe process start times, Application Error / Windows Error Reporting events for dwm.exe and dwmcore.dll in the last 90 minutes, the MSAA switch value
+powershell -NoProfile -Command "Get-Process dwm -ErrorAction SilentlyContinue | ForEach-Object { 'K41 DWM pid='+$_.Id+' start='+$_.StartTime.ToString('HH:mm:ss')+' session='+$_.SessionId }; $t=(Get-Date).AddMinutes(-90); $e=@(Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=$t} -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'dwm.exe|dwmcore' }); 'K41 dwm_events='+$e.Count; $e | Select-Object -First 10 | ForEach-Object { 'K41 EV '+$_.TimeCreated.ToString('HH:mm:ss')+' '+$_.ProviderName+' '+$_.Id+' '+(($_.Message -split [char]10)[0..2] -join ' ').Substring(0,[math]::Min(240,(($_.Message -split [char]10)[0..2] -join ' ').Length)) }; 'K41 D3d11Msaa='+(Get-ItemProperty 'HKLM:\SOFTWARE\NWOAS\AgxD3d' -ErrorAction SilentlyContinue).D3d11Msaa"
+echo GPUCOV K41 DONE
+exit /b 0

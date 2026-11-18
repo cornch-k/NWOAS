@@ -1,0 +1,9 @@
+@echo off
+echo S261 B0 BT ACPI DEVICE STATUS (ACPI\NWOA5F69 under NWC1; Wi-Fi ACPI\NWOA4378; USB-A)
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -Command "$ErrorActionPreference='SilentlyContinue'; $ds=@(Get-PnpDevice | Where-Object { $_.InstanceId -like 'ACPI\NWOA5F69\*' -or $_.InstanceId -like 'NWBT\BCM4378BTH\*' -or $_.InstanceId -like 'ACPI\NWOA4378\*' -or $_.Class -eq 'Bluetooth' }); if (-not ($ds | Where-Object { $_.InstanceId -like 'ACPI\NWOA5F69\*' })) { 'BT ABSENT (no ACPI\NWOA5F69: _STA=0 or not the S261 payload)' }; foreach ($d in $ds) { 'DEV '+$d.InstanceId+' status='+$d.Status+' problem='+$d.Problem+' present='+$d.Present+' class='+$d.Class+' name='+$d.FriendlyName }"
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -Command "$ErrorActionPreference='SilentlyContinue'; foreach ($e in @(Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPDeviceID -like 'ACPI\NWOA5F69\*' })) { 'RES '+$e.PNPDeviceID+' cfgerr='+$e.ConfigManagerErrorCode; foreach ($m in @(Get-CimAssociatedInstance -InputObject $e -ResultClassName Win32_DeviceMemoryAddress)) { '  MEM '+$m.StartingAddress.ToString('X')+'-'+$m.EndingAddress.ToString('X') }; foreach ($q in @(Get-CimAssociatedInstance -InputObject $e -ResultClassName Win32_IRQResource)) { '  IRQ '+$q.IRQNumber } }"
+pnputil /enum-devices /instanceid "ACPI\NWOA5F69\0" /resources /drivers
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -Command "$ErrorActionPreference='SilentlyContinue'; $u=@(Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -like 'USB\*' }); 'USB present='+$u.Count+' ok='+@($u | Where-Object { $_.Status -eq 'OK' }).Count; $w=Get-PnpDevice -InstanceId 'ACPI\NWOA4378\0'; 'WIFI '+$w.Status+' problem='+$w.Problem"
+netsh wlan show interfaces | findstr /R /C:"State" /C:"SSID" /C:"Receive rate"
+echo S261 B0 DONE
+exit /b 0

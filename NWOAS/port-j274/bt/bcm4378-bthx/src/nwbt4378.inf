@@ -1,0 +1,77 @@
+;
+; nwbt4378.inf - NWOAS Broadcom BCM4378 B1 Bluetooth (Mac mini M1, J274), Bluetooth extensible transport
+; (BthX) bus driver on ACPI\NWOA5F69.  It enumerates one child with compatible ID MS_BTHX_BTHMINI that
+; the inbox bth.inf (BthMini.sys) installs on.  Test-signed, for the owner's own machine only.
+; The firmware files are Apple's (macOS /usr/share/firmware/bluetooth) and are not redistributable.
+;
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = System
+ClassGuid   = {4d36e97d-e325-11ce-bfc1-08002be10318}
+Provider    = %ProviderName%
+CatalogFile = nwbt4378.cat
+DriverVer   =
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+nwbt4378.sys = 1,,
+bt4378b1-atlantisb-m.bin = 1,,
+bt4378b1-atlantisb-u.bin = 1,,
+bt4378b1-atlantisb-m.ptb = 1,,
+bt4378b1-atlantisb-u.ptb = 1,,
+
+[ControlFlags]
+ExcludeFromSelect = *
+
+[Manufacturer]
+%ProviderName% = Nwoas,NTarm64.10.0...16299
+
+[Nwoas.NTarm64.10.0...16299]
+; S261: ACPI \_SB.NWC1.BTH0 (PCI root hidden): fn1 BAR0 32 KiB, BAR2 4 MiB, control page 16 KiB, no IRQ
+%Nwbt.DeviceDesc% = Nwbt_Inst, ACPI\NWOA5F69
+
+[Nwbt_Inst.NT]
+CopyFiles = Nwbt.Files
+
+[Nwbt_Inst.NT.HW]
+AddReg = Nwbt.HwReg
+
+[Nwbt.HwReg]
+; production defaults are in the driver (diag.c NwbtReadConfig); nothing else is written here so a
+; reinstall never overwrites a value set on purpose.  B1 removes leftover bring-up test values.
+HKR,, NwbtInfVersion, 0x00010001, 1
+
+[Nwbt.Files]
+nwbt4378.sys
+bt4378b1-atlantisb-m.bin
+bt4378b1-atlantisb-u.bin
+bt4378b1-atlantisb-m.ptb
+bt4378b1-atlantisb-u.ptb
+
+[Nwbt_Inst.NT.Services]
+AddService = nwbt4378, 0x00000002, Nwbt.Service
+
+[Nwbt.Service]
+DisplayName    = %Nwbt.SvcDesc%
+ServiceType    = 1
+StartType      = 3
+ErrorControl   = 1
+ServiceBinary  = %13%\nwbt4378.sys
+
+[Nwbt_Inst.NT.Wdf]
+KmdfService = nwbt4378, Nwbt.WdfSect
+
+[Nwbt.WdfSect]
+KmdfLibraryVersion = $KMDFVERSION$
+
+[Strings]
+ProviderName    = "NWOAS"
+DiskName        = "NWOAS BCM4378 Bluetooth"
+Nwbt.DeviceDesc = "NWOAS Broadcom BCM4378 Bluetooth transport (BthX)"
+Nwbt.SvcDesc    = "NWOAS BCM4378 Bluetooth transport driver"

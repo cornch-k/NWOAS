@@ -78,6 +78,27 @@ static void ConnFail(PNWOA_DEVICE Dev, const nb_event* e)
     KeSetEvent(&Dev->ConnEvent, IO_NO_INCREMENT, FALSE);
 }
 
+// evidence for "who disconnected": every firmware loss event, with whether we were still
+// connected (our own NB_C_DISASSOC clears Connected first) and the time since our last one
+static void LossRecord(PNWOA_DEVICE Dev, const nb_event* e)
+{
+    KIRQL irql;
+    ULONG64 now = KeQueryInterruptTime();
+    KeAcquireSpinLock(&Dev->StateLock, &irql);
+    NWOA_LOSSREC* r = &Dev->Loss[Dev->LossNext % 8];
+    ULONG64 since = Dev->LastHostDisassoc ? (now - Dev->LastHostDisassoc) / 10000 : 65535;
+    r->Ms = (ULONG)(now / 10000);
+    r->Type = (USHORT)e->type;
+    r->Reason = (USHORT)e->reason;
+    r->WasConn = Dev->Connected ? 1 : 0;
+    r->SinceHostMs = (USHORT)(since > 65535 ? 65535 : since);
+    r->Rssi = Dev->RssiLast;
+    Dev->LossNext++;
+    if (Dev->Connected)
+        NwoaCmdSnapshot(Dev, 100 + e->type);
+    KeReleaseSpinLock(&Dev->StateLock, irql);
+}
+
 static void LinkLost(PNWOA_DEVICE Dev, ULONG WdiReason)
 {
     if (!Dev->Connected)
@@ -143,13 +164,14 @@ void NwoaHandleEvent(PNWOA_DEVICE Dev, const UCHAR* Frame, ULONG Len)
             InterlockedIncrement(&Dev->CntEapolEvDrop);
             break;
         }
+        if (NwoaEapolRxDup(Dev, Dev->EvRxBuf[slot], n))
+            break;                                         // already delivered from the data path
         Dev->EvRxBusy |= 1u << slot;
         Dev->RxQ[Dev->RxQTail].Local = 1;
         Dev->RxQ[Dev->RxQTail].Slot = (USHORT)slot;
         Dev->RxQ[Dev->RxQTail].Off = 0;
         Dev->RxQ[Dev->RxQTail].Len = (USHORT)n;
         Dev->RxQTail = next;
-        InterlockedIncrement(&Dev->CntEapolRx);
         InterlockedIncrement(&Dev->CntRx);
         InterlockedExchange(&Dev->RxNotifyPending, 1);
         break;
@@ -175,17 +197,20 @@ void NwoaHandleEvent(PNWOA_DEVICE Dev, const UCHAR* Frame, ULONG Len)
                 KeSetEvent(&Dev->ConnEvent, IO_NO_INCREMENT, FALSE);
             }
         } else {
+            LossRecord(Dev, &e);
             ConnFail(Dev, &e);
             LinkLost(Dev, WDI_ASSOC_STATUS_ROAMING_ASSOCIATION_LOST);
         }
         break;
     case NB_E_DEAUTH:
     case NB_E_DEAUTH_IND:
+        LossRecord(Dev, &e);
         ConnFail(Dev, &e);
         LinkLost(Dev, WDI_ASSOC_STATUS_PEER_DEAUTHENTICATED);
         break;
     case NB_E_DISASSOC:
     case NB_E_DISASSOC_IND:
+        LossRecord(Dev, &e);
         ConnFail(Dev, &e);
         LinkLost(Dev, WDI_ASSOC_STATUS_PEER_DISASSOCIATED);
         break;

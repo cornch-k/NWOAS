@@ -1,0 +1,48 @@
+diff --git a/drivers/apple-agx/render-admission/umd/src/umd_runtime_device.c b/drivers/apple-agx/render-admission/umd/src/umd_runtime_device.c
+index 954859c..391854c 100644
+--- a/drivers/apple-agx/render-admission/umd/src/umd_runtime_device.c
++++ b/drivers/apple-agx/render-admission/umd/src/umd_runtime_device.c
+@@ -120,6 +120,43 @@ static VOID AdmissionUmdRegTraceProbe(VOID) {
+   AdmissionUmdRegTracePath[at++] = L'g';
+   AdmissionUmdRegTracePath[at] = L'\0';
+   AdmissionUmdRegTraceRefusals = refusals != 0u;
++  /* P31: a registry-armed trace is a diagnostic run: write every line at
++   * once (a GPU process that dies on a CHECK never flushes a buffer), and
++   * mark the file at arming so an empty run still shows the key was read. */
++  AdmissionUmdTraceSync = TRUE;
++  {
++    HANDLE file = CreateFileW(AdmissionUmdRegTracePath, FILE_APPEND_DATA,
++        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
++        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
++    if (file == INVALID_HANDLE_VALUE) {
++      /* Dir not writable from this process: the same name in %TEMP%. */
++      WCHAR temp[MAX_PATH];
++      DWORD tempLength = GetTempPathW(ARRAYSIZE(temp), temp);
++      PCWSTR name = AdmissionUmdRegTracePath;
++      DWORD k, out = 0u;
++      for (k = 0u; AdmissionUmdRegTracePath[k] != L'\0'; ++k)
++        if (AdmissionUmdRegTracePath[k] == L'\\')
++          name = &AdmissionUmdRegTracePath[k + 1u];
++      if (tempLength != 0u && tempLength < ARRAYSIZE(temp)) {
++        WCHAR moved[MAX_PATH];
++        for (k = 0u; k < tempLength && out + 1u < ARRAYSIZE(moved); ++k)
++          moved[out++] = temp[k];
++        for (k = 0u; name[k] != L'\0' && out + 1u < ARRAYSIZE(moved); ++k)
++          moved[out++] = name[k];
++        moved[out] = L'\0';
++        for (k = 0u; k <= out; ++k) AdmissionUmdRegTracePath[k] = moved[k];
++        file = CreateFileW(AdmissionUmdRegTracePath, FILE_APPEND_DATA,
++            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
++            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
++      }
++    }
++    if (file != INVALID_HANDLE_VALUE) {
++      static const char armed[] = "measure-trace-armed registry\r\n";
++      DWORD written;
++      (void)WriteFile(file, armed, (DWORD)(sizeof(armed) - 1u), &written, NULL);
++      CloseHandle(file);
++    }
++  }
+   InterlockedExchange(&AdmissionUmdRegTraceOn, 1);
+ }
+ 

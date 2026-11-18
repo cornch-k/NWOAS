@@ -423,6 +423,27 @@ static void test_eapol_event(void)
     CHECK(nb_eapol_from_event(raw, sizeof(raw), own, ap, out, sizeof(out), &fmt) == 0 && fmt == 0);
 }
 
+static void test_eapol_kinds(void)
+{
+    nb_u8 f[120], w[200];
+    const nb_u8 bss[6] = { 0xe8, 0x9f, 0x80, 0xeb, 0xba, 0x64 };
+    static const nb_u16 ki[] = { 0x008a, 0x010a, 0x13ca, 0x030a, 0x1382, 0x0302 };
+    static const int want[] = { 1, 2, 3, 4, NB_EAPOL_G1, NB_EAPOL_G2 };
+    memset(f, 0, sizeof(f));
+    f[12] = 0x88; f[13] = 0x8E; f[14] = 2; f[15] = 3; f[16] = 0; f[17] = 95; f[18] = 2;
+    for (int i = 0; i < 6; i++) {
+        f[19] = (nb_u8)(ki[i] >> 8); f[20] = (nb_u8)ki[i];
+        CHECK(nb_eapol_key_msg(f, sizeof(f)) == want[i]);
+    }
+    f[15] = 0;
+    CHECK(nb_eapol_key_msg(f, sizeof(f)) == NB_EAPOL_OTHER);
+    f[13] = 0x00;
+    CHECK(nb_eapol_key_msg(f, sizeof(f)) == -1);
+    f[13] = 0x8E;
+    CHECK(nb_8023_to_80211_p(f, 60, bss, 1, w, sizeof(w)) == 78 && w[1] == 0x42);
+    CHECK(nb_8023_to_80211_p(f, 60, bss, 0, w, sizeof(w)) == 78 && w[1] == 0x02);
+}
+
 static void test_board(void)
 {
     nb_u8 cal[2096], f[2200];
@@ -460,6 +481,7 @@ int main(int argc, char **argv)
     test_frames();
     test_board();
     test_eapol_event();
+    test_eapol_kinds();
     printf("%s: %d checks, %d failures\n", failures ? "FAIL" : "PASS", checks, failures);
     return failures ? 1 : 0;
 }

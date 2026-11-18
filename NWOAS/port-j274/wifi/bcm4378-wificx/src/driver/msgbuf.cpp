@@ -8,7 +8,7 @@
 #define ID_IOCTLRESP 0x1000
 #define ID_EVENT     0x2000
 #define ID_RX        0x3000
-#define N_RX_WANT    128
+#define N_RX_WANT    256
 
 static void Dbell(PNWOA_DEVICE Dev)
 {
@@ -194,6 +194,29 @@ void NwoaRxRepost(PNWOA_DEVICE Dev, USHORT Slot)
     (void)Submit(Dev, &Dev->Ring[NB_RING_RXPOST], it, 1);
 }
 
+// EAPOL received on the data path and again in an E_EAPOL_MSG event is the same frame twice
+// (hardware 2026-11-18: CntEapolRx = 2 x CntEapolEv).  Counts the message type (flags only)
+// and returns TRUE for a copy already delivered in the last 2 s.
+BOOLEAN NwoaEapolRxDup(PNWOA_DEVICE Dev, const UCHAR* Eth, ULONG Len)
+{
+    int k = nb_eapol_key_msg(Eth, Len);
+    ULONG crc = Len > 14 ? nb_crc32(Eth + 14, Len - 14) : 0;
+    ULONG64 now = KeQueryInterruptTime();
+    for (int i = 0; i < 4; i++)
+        if (Dev->EapolRecent[i].Len == Len && Dev->EapolRecent[i].Crc == crc && now - Dev->EapolRecent[i].T < 20000000ull) {
+            InterlockedIncrement(&Dev->CntEapolDup);
+            return TRUE;
+        }
+    Dev->EapolRecent[Dev->EapolRecentNext % 4].Crc = crc;
+    Dev->EapolRecent[Dev->EapolRecentNext % 4].Len = Len;
+    Dev->EapolRecent[Dev->EapolRecentNext % 4].T = now;
+    Dev->EapolRecentNext++;
+    if (k >= 0 && k < 8)
+        InterlockedIncrement(&Dev->EapolRxMsg[k]);
+    InterlockedIncrement(&Dev->CntEapolRx);
+    return FALSE;
+}
+
 void NwoaRxItemDone(PNWOA_DEVICE Dev, const NWOA_RXITEM* It)
 {
     if (It->Local)
@@ -365,8 +388,10 @@ static void OnRx(PNWOA_DEVICE Dev, const nb_msg* m)
         NwoaRxRepost(Dev, (USHORT)slot);
         return;
     }
-    if (nb_be16(f + off + 12) == NB_ETHERTYPE_EAPOL)
-        InterlockedIncrement(&Dev->CntEapolRx);
+    if (nb_be16(f + off + 12) == NB_ETHERTYPE_EAPOL && NwoaEapolRxDup(Dev, f + off, m->data_len)) {
+        NwoaRxRepost(Dev, (USHORT)slot);
+        return;
+    }
     ULONG next = (Dev->RxQTail + 1) % NWOA_RXQ;
     ULONG used = (Dev->RxQTail + NWOA_RXQ - Dev->RxQHead) % NWOA_RXQ;
     // the queues are only created once NetAdapterCx sees the link up: hold up to 32 frames
@@ -479,6 +504,8 @@ static void Drain(PNWOA_DEVICE Dev, int Which, BOOLEAN* RxQueued, BOOLEAN* TxFre
         return;
     }
     KeMemoryBarrier();
+    if (R->RPtr != w)
+        Dev->LastActivity = (LONG64)KeQueryInterruptTime();
     while (R->RPtr != w && guard++ < R->D.nitem) {
         Dispatch(Dev, R->Va + (SIZE_T)R->RPtr * R->D.itemsz, R->D.itemsz, RxQueued, TxFreed);
         R->RPtr = (R->RPtr + 1) % R->D.nitem;
@@ -720,8 +747,12 @@ NTSTATUS NwoaTxFrame(PNWOA_DEVICE Dev, const UCHAR* Eth, ULONG Len)
     if (Dev->FlowState != 2 || !Dev->RingsUp || Dev->Dead)
         return STATUS_DEVICE_NOT_READY;
     eapol = nb_be16(Eth + 12) == NB_ETHERTYPE_EAPOL;
-    if (eapol)
+    if (eapol) {
+        int k = nb_eapol_key_msg(Eth, Len);
         InterlockedIncrement(&Dev->CntEapolTx);
+        if (k >= 0 && k < 8)
+            InterlockedIncrement(&Dev->EapolTxMsg[k]);
+    }
     KeAcquireSpinLock(&Dev->TxLock, &irql);
     if (!Dev->TxFreeCount) {
         KeReleaseSpinLock(&Dev->TxLock, irql);
@@ -746,6 +777,9 @@ NTSTATUS NwoaTxFrame(PNWOA_DEVICE Dev, const UCHAR* Eth, ULONG Len)
         return st;
     }
     InterlockedIncrement(&Dev->CntTx);
+    Dev->LastActivity = (LONG64)KeQueryInterruptTime();
+    if (Dev->PollIdle && Dev->PollRunning && Dev->PollTimer && InterlockedExchange(&Dev->PollIdle, 0))
+        WdfTimerStart(Dev->PollTimer, WDF_REL_TIMEOUT_IN_MS(Dev->Cfg.PollIntervalMs));   // wake the poll now
     return STATUS_SUCCESS;
 }
 
@@ -758,10 +792,21 @@ static BOOLEAN NwoaIsr(WDFINTERRUPT Interrupt, ULONG MessageId)
         return FALSE;
     ULONG mi = Dev->PciReg64 ? NB_PCIE2_64_MAILBOXINT : NB_PCIE2_MAILBOXINT;
     ULONG st = NwoaRegRead(Dev, mi);
-    if (st == 0 || st == 0xFFFFFFFF)
+    if (st == 0 || st == 0xFFFFFFFF) {
+        // level-triggered line (S259 contract 4) asserted with nothing to clear: after 200 in a
+        // row mask the mailbox and fall back to polling instead of storming
+        if (InterlockedIncrement(&Dev->IsrUnclaimedRow) > 200) {
+            NwoaIntrEnable(Dev, FALSE);
+            InterlockedExchange(&Dev->IrqMode, 4);
+            return TRUE;
+        }
         return FALSE;
+    }
+    Dev->IsrUnclaimedRow = 0;
     NwoaRegWrite(Dev, mi, st);
     InterlockedIncrement(&Dev->CntIsr);
+    if (Dev->IrqMode == 1)
+        InterlockedExchange(&Dev->IrqMode, 2);
     WdfInterruptQueueDpcForIsr(Interrupt);
     return TRUE;
 }
@@ -803,14 +848,34 @@ void NwoaIntrEnable(PNWOA_DEVICE Dev, BOOLEAN On)
 void NwoaEvtPollTimer(WDFTIMER Timer)
 {
     PNWOA_DEVICE Dev = NwoaGetDevice(WdfTimerGetParentObject(Timer));
-    static const ULONG DiagEvery = 200;
-    LONG n = InterlockedIncrement(&Dev->CntPoll);
+    static const ULONG DiagEveryMs = 2000;
+    static ULONG64 lastDiag;
+    ULONG64 now;
+    InterlockedIncrement(&Dev->CntPoll);
     NwoaProcess(Dev);
+    now = KeQueryInterruptTime();
+    // interrupt on trial: no ISR within 3 s of rings up although messages were handled -> poll only
+    if (Dev->IrqMode == 1 && now - Dev->RingsUpTime > 30000000ull && Dev->CntMsgs > 0 && Dev->CntIsr == 0) {
+        NwoaIntrEnable(Dev, FALSE);
+        InterlockedExchange(&Dev->IrqMode, 3);
+    }
     if (Dev->ScanRunning && KeQueryInterruptTime() > Dev->ScanDeadline) {
         Dev->ScanStatus = -2;                                 // timeout
         InterlockedExchange(&Dev->ScanRunning, 0);
         NwoaQueueJob(Dev, JOB_SCAN_DONE);
     }
-    if ((ULONG)n % DiagEvery == 0)
+    if (now - lastDiag > DiagEveryMs * 10000ull) {
+        lastDiag = now;
         NwoaQueueJob(Dev, JOB_DIAG);
+    }
+    // adaptive interval: fast while messages/TX flowed in the last 200 ms or work is pending
+    BOOLEAN busy = now - (ULONG64)Dev->LastActivity < 2000000ull || Dev->IoctlPending || Dev->ScanRunning ||
+                   Dev->ConnState == CONN_JOINING || Dev->FlowState == 1 || Dev->FlowState == 3 ||
+                   Dev->RxQHead != Dev->RxQTail;
+    ULONG ms = busy ? Dev->Cfg.PollIntervalMs : (Dev->IrqMode == 2 ? 200 : Dev->Cfg.PollIdleMs);
+    if (Dev->IrqMode == 2 && busy)
+        ms = 20;                                                  // interrupts carry the traffic; safety poll only
+    InterlockedExchange(&Dev->PollIdle, busy ? 0 : 1);
+    if (Dev->PollRunning)
+        WdfTimerStart(Timer, WDF_REL_TIMEOUT_IN_MS(ms));
 }

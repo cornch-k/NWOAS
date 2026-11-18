@@ -94,6 +94,7 @@ static void TxAdvance(NETPACKETQUEUE Queue)
                 fi = NetRingIncrementIndex(fr, fi);
             }
             NTSTATUS st = STATUS_INVALID_PARAMETER;
+            volatile LONG* why = &Dev->CntTxDropSize;
             if (fits) {
                 if (pkt->Layout.Layer2Type == NetPacketLayer2TypeIeee80211 || nb_frame_kind(q->Buf, len) == NB_FRAME_80211) {
                     ULONG n = nb_80211_to_8023(q->Buf, len, q->Buf, sizeof(q->Buf));
@@ -101,13 +102,18 @@ static void TxAdvance(NETPACKETQUEUE Queue)
                     if (Dev->Cfg.RxFrameFormat == 2)
                         Dev->Cfg.RxFrameFormat = 3;      // auto: TX is 802.11, deliver RX the same way
                     len = n;
+                    why = &Dev->CntTxDropConv;
                 }
                 st = len ? NwoaTxFrame(Dev, q->Buf, len) : STATUS_INVALID_PARAMETER;
+                if (len && !NT_SUCCESS(st))
+                    why = st == STATUS_DEVICE_NOT_READY ? &Dev->CntTxDropNotReady : &Dev->CntTxDropOther;
             }
             if (st == STATUS_DEVICE_BUSY)
                 break;                                   // no slot: keep the packet, retry on TX status
-            if (!NT_SUCCESS(st))
+            if (!NT_SUCCESS(st)) {
                 InterlockedIncrement(&Dev->CntTxDrop);
+                InterlockedIncrement(why);
+            }
         }
         if (pkt->FragmentCount)
             fr->BeginIndex = NetRingAdvanceIndex(fr, pkt->FragmentIndex, pkt->FragmentCount);
@@ -198,9 +204,18 @@ static void RxAdvance(NETPACKETQUEUE Queue)
                              : Dev->RxPool.Va + (SIZE_T)it.Slot * NWOA_SLOT_SIZE + it.Off;
         PUCHAR dst = (PUCHAR)va->VirtualAddress;
         ULONG n = 0;
-        if (as80211)
-            n = nb_8023_to_80211(src, it.Len, Dev->CurBssid, dst, (nb_u32)f->Capacity);
-        else if (it.Len <= f->Capacity) {
+        if (as80211) {
+            // EAPOL after the pairwise key is installed was received encrypted (the firmware
+            // decrypted it): mark it Protected.  Supplicants discard unprotected group-key /
+            // rekey messages once a PTK exists (same rule as wpa_supplicant's "unencrypted
+            // EAPOL-Key after PTK" check).  Hardware 2026-11-18 14:xx: the AP retried its
+            // rekey message ten times, Windows never answered, the AP disassociated.
+            // Only EAPOL gets the bit (RxProtectedBit=2 marks every frame, 0 none).
+            BOOLEAN isEapol = it.Len >= 14 && nb_be16(src + 12) == NB_ETHERTYPE_EAPOL;
+            int prot = Dev->PtkInstalled && Dev->Conn.Rsn &&
+                       ((Dev->Cfg.RxProtectedBit == 1 && isEapol) || Dev->Cfg.RxProtectedBit == 2);
+            n = nb_8023_to_80211_p(src, it.Len, Dev->CurBssid, prot, dst, (nb_u32)f->Capacity);
+        } else if (it.Len <= f->Capacity) {
             RtlCopyMemory(dst, src, it.Len);
             n = it.Len;
         }

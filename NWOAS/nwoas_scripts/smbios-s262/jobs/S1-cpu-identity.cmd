@@ -1,0 +1,10 @@
+@echo off
+rem S262 S1: what Windows shows as CPU name, maker, cores and clock (WMI, registry, computer, BIOS). Read-only.
+echo S262 S1 CPU IDENTITY
+powershell -NoProfile -Command "Get-CimInstance Win32_Processor | ForEach-Object { 'WMI Name=['+$_.Name+'] Manufacturer=['+$_.Manufacturer+'] MaxClockSpeed='+$_.MaxClockSpeed+' CurrentClockSpeed='+$_.CurrentClockSpeed+' ExtClock='+$_.ExtClock; 'WMI NumberOfCores='+$_.NumberOfCores+' NumberOfEnabledCore='+$_.NumberOfEnabledCore+' NumberOfLogicalProcessors='+$_.NumberOfLogicalProcessors+' ThreadCount='+$_.ThreadCount+' Family='+$_.Family+' Socket=['+$_.SocketDesignation+'] Part=['+$_.PartNumber+'] L2CacheSize='+$_.L2CacheSize+' L3CacheSize='+$_.L3CacheSize+' Caption=['+$_.Caption+'] ProcessorId=['+$_.ProcessorId+']' }"
+powershell -NoProfile -Command "Get-ChildItem 'HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor' | ForEach-Object { $p=Get-ItemProperty $_.PSPath; 'REG CentralProcessor\'+$_.PSChildName+' ProcessorNameString=['+$p.ProcessorNameString+'] ~MHz='+$p.'~MHz'+' VendorIdentifier=['+$p.VendorIdentifier+'] Identifier=['+$p.Identifier+']' }"
+reg query "HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0"
+powershell -NoProfile -Command "$c=Get-CimInstance Win32_ComputerSystem; 'CS Manufacturer=['+$c.Manufacturer+'] Model=['+$c.Model+'] SystemFamily=['+$c.SystemFamily+'] SystemSKUNumber=['+$c.SystemSKUNumber+'] NumberOfProcessors='+$c.NumberOfProcessors+' NumberOfLogicalProcessors='+$c.NumberOfLogicalProcessors+' TotalPhysicalMemory='+$c.TotalPhysicalMemory"
+powershell -NoProfile -Command "$b=Get-CimInstance Win32_BIOS; 'BIOS Manufacturer=['+$b.Manufacturer+'] SMBIOSBIOSVersion=['+$b.SMBIOSBIOSVersion+'] SMBIOS='+$b.SMBIOSMajorVersion+'.'+$b.SMBIOSMinorVersion+' ReleaseDate='+$b.ReleaseDate; $m=Get-CimInstance Win32_PhysicalMemory; foreach($x in $m){ 'MEM Capacity='+$x.Capacity+' Speed='+$x.Speed+' Manufacturer=['+$x.Manufacturer+'] PartNumber=['+$x.PartNumber+'] SMBIOSMemoryType='+$x.SMBIOSMemoryType }"
+echo S262 S1 DONE
+exit /b 0

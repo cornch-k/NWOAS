@@ -1,0 +1,339 @@
+--- a/drivers/apple-agx/mesa/d3d11/agx_wddm2_ddi.cpp (2761 P25)
++++ b/drivers/apple-agx/mesa/d3d11/agx_wddm2_ddi.cpp (2762 P26)
+@@ -880,7 +880,328 @@
+ }
+ 
+ } /* namespace */
++
++/* NWOAS-J274 PATCH P26: D3D11 draw-state trace, opt-in per process with
++ * APPLE_AGX_D3D_DRAW_STATE=1 (and the UMD trace file). Wraps the WDDM 2.0
++ * table's state, shader and draw entries; behaviour is unchanged.
++ *   measure-d3d11-blend  {handle, A2C, independent, RT0 blend, logic-op
++ *                         enable, src, dst, op, srcA, dstA, opA, logic op,
++ *                         RT0 write mask, RT1..7 write masks (4 bits each)}
++ *   measure-d3d11-raster {handle, fill, cull, front-CCW, depth bias, depth
++ *                         clip, scissor enable, MSAA, AA line, forced
++ *                         samples, conservative}
++ *   measure-d3d11-dsa    {handle, depth, write mask, func, stencil, front,
++ *                         back, read mask, write mask, front fail, depth
++ *                         fail, pass, func}
++ *   measure-d3d11-shader-sig {stage, FNV hash, DWORDs, version, inputs,
++ *                         outputs, then up to 10 inputs and 10 outputs as
++ *                         sysvalue<<16 | register<<8 | mask}
++ *   measure-d3d11-drawstate {sequence, kind, count, instances, blend, sample
++ *                         mask, raster, dsa, stencil ref, viewport0 x, y,
++ *                         width, height, viewports, scissor0 left, top,
++ *                         right, bottom, scissors, colour targets, target0
++ *                         format, target0 width, depth format, VS hash, PS
++ *                         hash, PS SRV0 format, primitive, framebuffer
++ *                         width, height}: the first 1500 draws, then every
++ *                         50th.
++ * With APPLE_AGX_D3D_SHADER_DUMP=1 the shader wrapper also writes each
++ * shader's I/O signature next to its tokens (<stage>-<hash>.sig: input and
++ * output counts, then the entries' system value, register and mask). */
++namespace drawstate {
++
++struct DevState {
++   const void *dev;
++   UINT blend, sample_mask, raster, dsa, stencil_ref, vs, ps, srv0;
++   D3D10_DDI_VIEWPORT vp;
++   UINT nvp, nsc;
++   D3D10_DDI_RECT sc;
++};
++DevState devs[8];
++struct ShaderHash { const void *shader; UINT hash; };
++ShaderHash shaders[1024];
++volatile LONG nshaders, draws, sigdumps;
++SRWLOCK lock = SRWLOCK_INIT;
++
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnCreateBlendState) o_create_blend;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnCreateRasterizerState) o_create_raster;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnCreateDepthStencilState) o_create_dsa;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnCreateVertexShader) o_create_vs;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnCreatePixelShader) o_create_ps;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnSetBlendState) o_set_blend;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnSetRasterizerState) o_set_raster;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnSetDepthStencilState) o_set_dsa;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnSetViewports) o_set_vp;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnSetScissorRects) o_set_sc;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnVsSetShader) o_vs_set;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnPsSetShader) o_ps_set;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnPsSetShaderResources) o_ps_srv;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnDraw) o_draw;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnDrawIndexed) o_draw_indexed;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnDrawInstanced) o_draw_instanced;
++decltype(D3DWDDM2_0DDI_DEVICEFUNCS::pfnDrawIndexedInstanced) o_draw_indexed_instanced;
++
++UINT Lo(const void *p) { return (UINT)(UINT_PTR)p; }
++
++bool Enabled()
++{
++   static volatile LONG cached = -1;
++   LONG v = InterlockedCompareExchange(&cached, -1, -1);
++   if (v < 0) {
++      char flag[2] = {};
++      DWORD saved = GetLastError();
++      v = GetEnvironmentVariableA("APPLE_AGX_D3D_DRAW_STATE", flag, sizeof(flag)) == 1 && flag[0] == '1';
++      SetLastError(saved);
++      InterlockedExchange(&cached, v);
++   }
++   return v == 1;
++}
++
++DevState *Find(D3D10DDI_HDEVICE h)
++{
++   DevState *found = NULL;
++   AcquireSRWLockExclusive(&lock);
++   for (DevState &d : devs)
++      if (d.dev == h.pDrvPrivate) { found = &d; break; }
++   if (!found)
++      for (DevState &d : devs)
++         if (!d.dev) { memset(&d, 0, sizeof(d)); d.dev = h.pDrvPrivate; d.sample_mask = ~0u; found = &d; break; }
++   ReleaseSRWLockExclusive(&lock);
++   return found;
++}
++
++UINT HashOf(const void *shader)
++{
++   const LONG n = InterlockedCompareExchange(&nshaders, 0, 0);
++   for (LONG i = 0; shader && i < n && i < 1024; ++i)
++      if (shaders[i].shader == shader) return shaders[i].hash;
++   return 0u;
++}
++
++UINT Pack(const D3D11_1DDIARG_SIGNATURE_ENTRY2 &e)
++{
++   return ((UINT)e.SystemValue << 16) | ((e.Register & 0xffu) << 8) | (e.Mask & 0xfu);
++}
++
++void ShaderSig(UINT stage, const UINT *code, D3D10DDI_HSHADER h, const D3D11_1DDIARG_STAGE_IO_SIGNATURES *sig)
++{
++   const UINT count = code ? (code[1] < 65536u ? code[1] : 65536u) : 0u;
++   UINT hash = 2166136261u;
++   for (UINT i = 0; i < count; ++i) hash = (hash ^ code[i]) * 16777619u;
++   const LONG slot = InterlockedIncrement(&nshaders) - 1;
++   if (slot < 1024) { shaders[slot].shader = h.pDrvPrivate; shaders[slot].hash = hash; }
++   UINT v[26] = {stage, hash, count, code ? code[0] : 0u};
++   const UINT nin = sig && sig->pInputSignature ? sig->NumInputSignatureEntries : 0u;
++   const UINT nout = sig && sig->pOutputSignature ? sig->NumOutputSignatureEntries : 0u;
++   v[4] = nin; v[5] = nout;
++   for (UINT i = 0; i < nin && i < 10u; ++i) v[6 + i] = Pack(sig->pInputSignature[i]);
++   for (UINT i = 0; i < nout && i < 10u; ++i) v[16 + i] = Pack(sig->pOutputSignature[i]);
++   AgxD3d10WindowsDiagnostic("measure-d3d11-shader-sig", S_OK, v, 26u);
++   char flag[2] = {};
++   if (GetEnvironmentVariableA("APPLE_AGX_D3D_SHADER_DUMP", flag, sizeof(flag)) == 1 && flag[0] == '1' &&
++       InterlockedIncrement(&sigdumps) <= 200) {
++      char dir[MAX_PATH] = {}, path[MAX_PATH] = {};
++      DWORD n = GetEnvironmentVariableA("APPLE_AGX_D3D_SHADER_DUMP_DIR", dir, sizeof(dir));
++      if (!n || n >= sizeof(dir)) strcpy_s(dir, sizeof(dir), "C:\\NWOAS\\gpucov\\dxbc");
++      (void)CreateDirectoryA(dir, NULL);
++      if (_snprintf_s(path, sizeof(path), _TRUNCATE, "%s\\%u-%08x.sig", dir, stage, hash) > 0) {
++         HANDLE file = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
++         if (file != INVALID_HANDLE_VALUE) {
++            UINT head[2] = {nin, nout};
++            DWORD w = 0;
++            (void)WriteFile(file, head, sizeof(head), &w, NULL);
++            for (UINT i = 0; i < nin; ++i) {
++               UINT e[3] = {(UINT)sig->pInputSignature[i].SystemValue, sig->pInputSignature[i].Register,
++                            sig->pInputSignature[i].Mask};
++               (void)WriteFile(file, e, sizeof(e), &w, NULL);
++            }
++            for (UINT i = 0; i < nout; ++i) {
++               UINT e[3] = {(UINT)sig->pOutputSignature[i].SystemValue, sig->pOutputSignature[i].Register,
++                            sig->pOutputSignature[i].Mask};
++               (void)WriteFile(file, e, sizeof(e), &w, NULL);
++            }
++            CloseHandle(file);
++         }
++      }
++   }
++}
++
++void APIENTRY CreateBlend(D3D10DDI_HDEVICE h, const D3D11_1_DDI_BLEND_DESC *d, D3D10DDI_HBLENDSTATE s,
++                          D3D10DDI_HRTBLENDSTATE rt)
++{
++   o_create_blend(h, d, s, rt);
++   if (!d) return;
++   UINT masks = 0;
++   for (UINT i = 1; i < 8; ++i) masks |= (UINT)(d->RenderTarget[i].RenderTargetWriteMask & 0xfu) << (4 * (i - 1));
++   const D3D11_1_DDI_RENDER_TARGET_BLEND_DESC &r = d->RenderTarget[0];
++   const UINT v[14] = {Lo(s.pDrvPrivate), (UINT)d->AlphaToCoverageEnable, (UINT)d->IndependentBlendEnable,
++                       (UINT)r.BlendEnable, (UINT)r.LogicOpEnable, (UINT)r.SrcBlend, (UINT)r.DestBlend,
++                       (UINT)r.BlendOp, (UINT)r.SrcBlendAlpha, (UINT)r.DestBlendAlpha, (UINT)r.BlendOpAlpha,
++                       (UINT)r.LogicOp, (UINT)r.RenderTargetWriteMask, masks};
++   AgxD3d10WindowsDiagnostic("measure-d3d11-blend", S_OK, v, 14u);
++}
++
++void APIENTRY CreateRaster(D3D10DDI_HDEVICE h, const D3DWDDM2_0DDI_RASTERIZER_DESC *d,
++                           D3D10DDI_HRASTERIZERSTATE s, D3D10DDI_HRTRASTERIZERSTATE rt)
++{
++   o_create_raster(h, d, s, rt);
++   if (!d) return;
++   const UINT v[11] = {Lo(s.pDrvPrivate), (UINT)d->FillMode, (UINT)d->CullMode, (UINT)d->FrontCounterClockwise,
++                       (UINT)d->DepthBias, (UINT)d->DepthClipEnable, (UINT)d->ScissorEnable,
++                       (UINT)d->MultisampleEnable, (UINT)d->AntialiasedLineEnable, d->ForcedSampleCount,
++                       (UINT)d->ConservativeRasterizationMode};
++   AgxD3d10WindowsDiagnostic("measure-d3d11-raster", S_OK, v, 11u);
++}
++
++void APIENTRY CreateDsa(D3D10DDI_HDEVICE h, const D3D10_DDI_DEPTH_STENCIL_DESC *d, D3D10DDI_HDEPTHSTENCILSTATE s,
++                        D3D10DDI_HRTDEPTHSTENCILSTATE rt)
++{
++   o_create_dsa(h, d, s, rt);
++   if (!d) return;
++   const UINT v[13] = {Lo(s.pDrvPrivate), (UINT)d->DepthEnable, (UINT)d->DepthWriteMask, (UINT)d->DepthFunc,
++                       (UINT)d->StencilEnable, (UINT)d->FrontEnable, (UINT)d->BackEnable, d->StencilReadMask,
++                       d->StencilWriteMask, (UINT)d->FrontFace.StencilFailOp, (UINT)d->FrontFace.StencilDepthFailOp,
++                       (UINT)d->FrontFace.StencilPassOp, (UINT)d->FrontFace.StencilFunc};
++   AgxD3d10WindowsDiagnostic("measure-d3d11-dsa", S_OK, v, 13u);
++}
++
++void APIENTRY CreateVs(D3D10DDI_HDEVICE h, const UINT *code, D3D10DDI_HSHADER s, D3D10DDI_HRTSHADER rt,
++                       const D3D11_1DDIARG_STAGE_IO_SIGNATURES *sig)
++{
++   o_create_vs(h, code, s, rt, sig);
++   ShaderSig(0u, code, s, sig);
++}
++
++void APIENTRY CreatePs(D3D10DDI_HDEVICE h, const UINT *code, D3D10DDI_HSHADER s, D3D10DDI_HRTSHADER rt,
++                       const D3D11_1DDIARG_STAGE_IO_SIGNATURES *sig)
++{
++   o_create_ps(h, code, s, rt, sig);
++   ShaderSig(4u, code, s, sig);
++}
++
++void APIENTRY SetBlend(D3D10DDI_HDEVICE h, D3D10DDI_HBLENDSTATE s, const FLOAT factor[4], UINT mask)
++{
++   if (DevState *d = Find(h)) { d->blend = Lo(s.pDrvPrivate); d->sample_mask = mask; }
++   o_set_blend(h, s, factor, mask);
++}
++
++void APIENTRY SetRaster(D3D10DDI_HDEVICE h, D3D10DDI_HRASTERIZERSTATE s)
++{
++   if (DevState *d = Find(h)) d->raster = Lo(s.pDrvPrivate);
++   o_set_raster(h, s);
++}
++
++void APIENTRY SetDsa(D3D10DDI_HDEVICE h, D3D10DDI_HDEPTHSTENCILSTATE s, UINT ref)
++{
++   if (DevState *d = Find(h)) { d->dsa = Lo(s.pDrvPrivate); d->stencil_ref = ref; }
++   o_set_dsa(h, s, ref);
++}
++
++void APIENTRY SetViewports(D3D10DDI_HDEVICE h, UINT n, UINT clear, const D3D10_DDI_VIEWPORT *vp)
++{
++   if (DevState *d = Find(h)) {
++      d->nvp = n;
++      if (n && vp) d->vp = vp[0]; else memset(&d->vp, 0, sizeof(d->vp));
++   }
++   o_set_vp(h, n, clear, vp);
++}
++
++void APIENTRY SetScissors(D3D10DDI_HDEVICE h, UINT n, UINT clear, const D3D10_DDI_RECT *r)
++{
++   if (DevState *d = Find(h)) {
++      d->nsc = n;
++      if (n && r) d->sc = r[0]; else memset(&d->sc, 0, sizeof(d->sc));
++   }
++   o_set_sc(h, n, clear, r);
++}
++
++void APIENTRY VsSet(D3D10DDI_HDEVICE h, D3D10DDI_HSHADER s)
++{
++   if (DevState *d = Find(h)) d->vs = HashOf(s.pDrvPrivate);
++   o_vs_set(h, s);
++}
++
++void APIENTRY PsSet(D3D10DDI_HDEVICE h, D3D10DDI_HSHADER s)
++{
++   if (DevState *d = Find(h)) d->ps = HashOf(s.pDrvPrivate);
++   o_ps_set(h, s);
++}
+ 
++void APIENTRY PsSrv(D3D10DDI_HDEVICE h, UINT start, UINT n, const D3D10DDI_HSHADERRESOURCEVIEW *views)
++{
++   if (start == 0u && n && views)
++      if (DevState *d = Find(h)) {
++         struct pipe_sampler_view *v = CastPipeShaderResourceView(views[0]);
++         d->srv0 = v ? (UINT)v->format : 0xffffffffu;
++      }
++   o_ps_srv(h, start, n, views);
++}
++
++void Log(D3D10DDI_HDEVICE h, UINT kind, UINT count, UINT instances)
++{
++   const LONG seq = InterlockedIncrement(&draws);
++   if (seq > 1500 && seq % 50) return;
++   DevState *d = Find(h);
++   Device *dev = CastDevice(h);
++   if (!d || !dev) return;
++   const UINT v[30] = {(UINT)seq, kind, count, instances, d->blend, d->sample_mask, d->raster, d->dsa,
++                       d->stencil_ref, (UINT)(INT)d->vp.TopLeftX, (UINT)(INT)d->vp.TopLeftY, (UINT)(INT)d->vp.Width,
++                       (UINT)(INT)d->vp.Height, d->nvp, (UINT)d->sc.left, (UINT)d->sc.top, (UINT)d->sc.right,
++                       (UINT)d->sc.bottom, d->nsc, (UINT)dev->fb.nr_cbufs,
++                       dev->fb.nr_cbufs ? (UINT)dev->fb.cbufs[0].format : 0u,
++                       dev->fb.nr_cbufs && dev->fb.cbufs[0].texture ? dev->fb.cbufs[0].texture->width0 : 0u,
++                       (UINT)dev->fb.zsbuf.format, d->vs, d->ps, d->srv0, (UINT)dev->primitive,
++                       (UINT)dev->fb.width, (UINT)dev->fb.height, 0u};
++   AgxD3d10WindowsDiagnostic("measure-d3d11-drawstate", S_OK, v, 30u);
++}
++
++void APIENTRY Draw(D3D10DDI_HDEVICE h, UINT count, UINT start)
++{
++   Log(h, 1u, count, 1u);
++   o_draw(h, count, start);
++}
++
++void APIENTRY DrawIndexed(D3D10DDI_HDEVICE h, UINT count, UINT start, INT base)
++{
++   Log(h, 2u, count, 1u);
++   o_draw_indexed(h, count, start, base);
++}
++
++void APIENTRY DrawInstanced(D3D10DDI_HDEVICE h, UINT count, UINT instances, UINT start, UINT first)
++{
++   Log(h, 3u, count, instances);
++   o_draw_instanced(h, count, instances, start, first);
++}
++
++void APIENTRY DrawIndexedInstanced(D3D10DDI_HDEVICE h, UINT count, UINT instances, UINT start, INT base, UINT first)
++{
++   Log(h, 4u, count, instances);
++   o_draw_indexed_instanced(h, count, instances, start, base, first);
++}
++
++void Install(D3DWDDM2_0DDI_DEVICEFUNCS *f)
++{
++   if (!Enabled() || f->pfnDraw == Draw) return;
++   o_create_blend = f->pfnCreateBlendState; f->pfnCreateBlendState = CreateBlend;
++   o_create_raster = f->pfnCreateRasterizerState; f->pfnCreateRasterizerState = CreateRaster;
++   o_create_dsa = f->pfnCreateDepthStencilState; f->pfnCreateDepthStencilState = CreateDsa;
++   o_create_vs = f->pfnCreateVertexShader; f->pfnCreateVertexShader = CreateVs;
++   o_create_ps = f->pfnCreatePixelShader; f->pfnCreatePixelShader = CreatePs;
++   o_set_blend = f->pfnSetBlendState; f->pfnSetBlendState = SetBlend;
++   o_set_raster = f->pfnSetRasterizerState; f->pfnSetRasterizerState = SetRaster;
++   o_set_dsa = f->pfnSetDepthStencilState; f->pfnSetDepthStencilState = SetDsa;
++   o_set_vp = f->pfnSetViewports; f->pfnSetViewports = SetViewports;
++   o_set_sc = f->pfnSetScissorRects; f->pfnSetScissorRects = SetScissors;
++   o_vs_set = f->pfnVsSetShader; f->pfnVsSetShader = VsSet;
++   o_ps_set = f->pfnPsSetShader; f->pfnPsSetShader = PsSet;
++   o_ps_srv = f->pfnPsSetShaderResources; f->pfnPsSetShaderResources = PsSrv;
++   o_draw = f->pfnDraw; f->pfnDraw = Draw;
++   o_draw_indexed = f->pfnDrawIndexed; f->pfnDrawIndexed = DrawIndexed;
++   o_draw_instanced = f->pfnDrawInstanced; f->pfnDrawInstanced = DrawInstanced;
++   o_draw_indexed_instanced = f->pfnDrawIndexedInstanced; f->pfnDrawIndexedInstanced = DrawIndexedInstanced;
++}
++
++} /* namespace drawstate */
++
+ void
+ AgxWddm2_0FillDeviceFuncs(D3DWDDM2_0DDI_DEVICEFUNCS *f, const D3D10DDI_DEVICEFUNCS *base)
+ {
+@@ -943,6 +1264,7 @@
+    f->pfnGetResourceLayout = GetResourceLayout;
+    f->pfnRetrieveShaderComment = RetrieveShaderComment;
+    f->pfnSetHardwareProtectionState = SetHardwareProtectionState;
++   drawstate::Install(f); /* NWOAS-J274 PATCH P26 */
+ }
+ 
+ /* ----- DXGI 1.2 to 1.4 base functions (IS_DXGI1_4_BASE_FUNCTIONS holds for

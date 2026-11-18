@@ -1,0 +1,362 @@
+diff --git a/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py b/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
+index d5ac685..881fd4f 100644
+--- a/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
++++ b/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
+@@ -1478,6 +1478,23 @@ AgxSetErrorWithOrigin(D3D10DDI_HDEVICE hDevice, HRESULT hr,
+ {
+    if (FAILED(hr)) {
+       AgxD3d10WindowsDiagnosticSetError(origin, line, hr);
++      /* NWOAS-J274 PATCH P32: a Create* / Open* DDI may report only
++       * E_OUTOFMEMORY (or device removal) through pfnSetErrorCb; any other
++       * code makes the runtime remove the device (2767 K35: a refused
++       * shared R10G10B10A2 texture turned every later call into
++       * DXGI_ERROR_DEVICE_REMOVED). A creation this driver cannot honour
++       * fails alone, as E_OUTOFMEMORY, and the app can fall back. */
++      if (origin &&
++          ((origin[0] == 'C' && origin[1] == 'r' && origin[2] == 'e' &&
++            origin[3] == 'a' && origin[4] == 't' && origin[5] == 'e') ||
++           (origin[0] == 'O' && origin[1] == 'p' && origin[2] == 'e' &&
++            origin[3] == 'n')) &&
++          hr != E_OUTOFMEMORY && hr != D3DDDIERR_DEVICEREMOVED &&
++          hr != DXGI_DDI_ERR_UNSUPPORTED) {
++         UINT mapped[2] = {line, (UINT)hr};
++         AgxD3d10WindowsDiagnostic("reject-create-error-as-oom", hr, mapped, 2u);
++         hr = E_OUTOFMEMORY;
++      }
+       Device *pDevice = CastDevice(hDevice);
+       pDevice->UMCallbacks.pfnSetErrorCb(pDevice->hRTCoreLayer, hr);
+    }
+diff --git a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp b/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp
+index 2c099cc..7bc30b5 100644
+--- a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp
++++ b/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp
+@@ -371,6 +371,17 @@ static BOOL presentation_linear_format(D3DDDIFORMAT windowsFormat,
+     *format=AgxWin32AsahiLinearFormatBgra8Unorm;return TRUE;
+   case D3DDDIFMT_A8B8G8R8:
+     *format=AgxWin32AsahiLinearFormatRgba8Unorm;return TRUE;
++  /* P32: the storage labels umd.c AdmissionUmdSharedStorage writes. */
++  case D3DDDIFMT_X8R8G8B8:
++    *format=AgxWin32AsahiLinearFormatBgrx8Unorm;return TRUE;
++  case D3DDDIFMT_A2B10G10R10:
++    *format=AgxWin32AsahiLinearFormatRgb10a2Unorm;return TRUE;
++  case D3DDDIFMT_A16B16G16R16F:
++    *format=AgxWin32AsahiLinearFormatRgba16Float;return TRUE;
++  case D3DDDIFMT_L8:
++    *format=AgxWin32AsahiLinearFormatR8Unorm;return TRUE;
++  case D3DDDIFMT_A8L8:
++    *format=AgxWin32AsahiLinearFormatRg8Unorm;return TRUE;
+   default: return FALSE;
+   }
+ }
+@@ -381,6 +392,12 @@ static BOOL presentation_pipe_format(const struct pipe_resource *resource,
+   switch(resource->format) {
+   case PIPE_FORMAT_B8G8R8A8_UNORM:
+   case PIPE_FORMAT_R8G8B8A8_UNORM:
++  /* P32: the other shareable linear formats (AgxWin32AsahiImportLinearColor32). */
++  case PIPE_FORMAT_B8G8R8X8_UNORM:
++  case PIPE_FORMAT_R10G10B10A2_UNORM:
++  case PIPE_FORMAT_R16G16B16A16_FLOAT:
++  case PIPE_FORMAT_R8_UNORM:
++  case PIPE_FORMAT_R8G8_UNORM:
+     *format=resource->format;return TRUE;
+   default: return FALSE;
+   }
+diff --git a/drivers/apple-agx/mesa/winsys/agx_win32_asahi_scene.c b/drivers/apple-agx/mesa/winsys/agx_win32_asahi_scene.c
+index 9f172d1..444c91d 100644
+--- a/drivers/apple-agx/mesa/winsys/agx_win32_asahi_scene.c
++++ b/drivers/apple-agx/mesa/winsys/agx_win32_asahi_scene.c
+@@ -117,20 +117,37 @@ struct pipe_resource *AgxWin32AsahiImportLinearColor32(
+     APPLE_AGX_U64 bytes,AGX_WIN32_ASAHI_LINEAR_FORMAT format) {
+   AGX_WIN32_ASAHI_BACKEND *backend=screen?
+       agx_device(screen)->windows_private:NULL;
+-  if(!screen || !buffer || !width || !height ||
+-     pitch<(APPLE_AGX_U64)width*4ULL || (pitch&15u) ||
+-     bytes<(APPLE_AGX_U64)pitch*height ||
+-     !backend || buffer->Transport.Bytes!=bytes ||
+-     buffer->Transport.Generation!=backend->Buffers.Generation)
+-    return NULL;
+   enum pipe_format pipe_format;
++  APPLE_AGX_U32 texel=4u;
+   switch(format) {
+   case AgxWin32AsahiLinearFormatBgra8Unorm:
+     pipe_format=PIPE_FORMAT_B8G8R8A8_UNORM;break;
+   case AgxWin32AsahiLinearFormatRgba8Unorm:
+     pipe_format=PIPE_FORMAT_R8G8B8A8_UNORM;break;
++  /* P32: every shareable D3D11.1 single-plane format, linear, one level. */
++  case AgxWin32AsahiLinearFormatBgrx8Unorm:
++    pipe_format=PIPE_FORMAT_B8G8R8X8_UNORM;break;
++  case AgxWin32AsahiLinearFormatRgb10a2Unorm:
++    pipe_format=PIPE_FORMAT_R10G10B10A2_UNORM;break;
++  case AgxWin32AsahiLinearFormatRgba16Float:
++    pipe_format=PIPE_FORMAT_R16G16B16A16_FLOAT;texel=8u;break;
++  case AgxWin32AsahiLinearFormatR8Unorm:
++    pipe_format=PIPE_FORMAT_R8_UNORM;texel=1u;break;
++  case AgxWin32AsahiLinearFormatRg8Unorm:
++    pipe_format=PIPE_FORMAT_R8G8_UNORM;texel=2u;break;
+   default: return NULL;
+   }
++  if(!screen || !buffer || !width || !height ||
++     pitch<(APPLE_AGX_U64)width*texel || (pitch&15u) ||
++     bytes<(APPLE_AGX_U64)pitch*height ||
++     !backend || buffer->Transport.Bytes!=bytes ||
++     buffer->Transport.Generation!=backend->Buffers.Generation)
++    return NULL;
++  /* The GPU must render and sample this format linearly. */
++  if(screen->is_format_supported &&
++     !screen->is_format_supported(screen,pipe_format,PIPE_TEXTURE_2D,1,1,
++         PIPE_BIND_RENDER_TARGET|PIPE_BIND_SAMPLER_VIEW))
++    return NULL;
+   struct pipe_resource info={0};
+   info.target=PIPE_TEXTURE_2D;info.format=pipe_format;
+   info.width0=width;info.height0=height;info.depth0=1;info.array_size=1;
+diff --git a/drivers/apple-agx/mesa/winsys/agx_win32_asahi_scene.h b/drivers/apple-agx/mesa/winsys/agx_win32_asahi_scene.h
+index e4ab4de..5204dde 100644
+--- a/drivers/apple-agx/mesa/winsys/agx_win32_asahi_scene.h
++++ b/drivers/apple-agx/mesa/winsys/agx_win32_asahi_scene.h
+@@ -20,7 +20,13 @@ typedef enum {
+  * and AIL format rather than relabelling the allocation. */
+ typedef enum {
+   AgxWin32AsahiLinearFormatBgra8Unorm,
+-  AgxWin32AsahiLinearFormatRgba8Unorm
++  AgxWin32AsahiLinearFormatRgba8Unorm,
++  /* NWOAS-J274 PATCH P32: the other D3D11.1 shareable formats. */
++  AgxWin32AsahiLinearFormatBgrx8Unorm,
++  AgxWin32AsahiLinearFormatRgb10a2Unorm,
++  AgxWin32AsahiLinearFormatRgba16Float,
++  AgxWin32AsahiLinearFormatR8Unorm,
++  AgxWin32AsahiLinearFormatRg8Unorm
+ } AGX_WIN32_ASAHI_LINEAR_FORMAT;
+ 
+ typedef struct {
+diff --git a/drivers/apple-agx/render-admission/src/allocation_windows.c b/drivers/apple-agx/render-admission/src/allocation_windows.c
+index 5df0595..518e4a5 100644
+--- a/drivers/apple-agx/render-admission/src/allocation_windows.c
++++ b/drivers/apple-agx/render-admission/src/allocation_windows.c
+@@ -231,8 +231,19 @@ static BOOLEAN AdmissionFormatBytesPerPixel(D3DDDIFORMAT Format,
+     *BytesPerPixel = 4u;
+     return TRUE;
+   case D3DDDIFMT_A8:
++  case D3DDDIFMT_L8:
+     *BytesPerPixel = 1u;
+     return TRUE;
++  /* P32: the UMD's other shareable storages (umd.c AdmissionUmdSharedStorage). */
++  case D3DDDIFMT_A2B10G10R10:
++    *BytesPerPixel = 4u;
++    return TRUE;
++  case D3DDDIFMT_A8L8:
++    *BytesPerPixel = 2u;
++    return TRUE;
++  case D3DDDIFMT_A16B16G16R16F:
++    *BytesPerPixel = 8u;
++    return TRUE;
+   default:
+     *BytesPerPixel = 0u;
+     return FALSE;
+diff --git a/drivers/apple-agx/render-admission/src/render_allocation.c b/drivers/apple-agx/render-admission/src/render_allocation.c
+index 3498997..7846d1b 100644
+--- a/drivers/apple-agx/render-admission/src/render_allocation.c
++++ b/drivers/apple-agx/render-admission/src/render_allocation.c
+@@ -42,7 +42,9 @@ int AdmissionAllocationDescribe(unsigned int Width, unsigned int Height,
+   unsigned long long pitch;
+ 
+   if (Description == ADMISSION_ALLOCATION_NULL || Width == 0u ||
+-      Height == 0u || BytesPerPixel == 0u || BytesPerPixel > 4u ||
++      Height == 0u || BytesPerPixel == 0u || BytesPerPixel > 8u ||
++      /* P32: 1, 2, 4 or 8 bytes (FP16 RGBA is 8). */
++      (BytesPerPixel & (BytesPerPixel - 1u)) != 0u ||
+       Type == 0u || Format == 0u || CpuVisible > 1u)
+     return 0;
+   rowBytes = (unsigned long long)Width * BytesPerPixel;
+diff --git a/drivers/apple-agx/render-admission/umd/src/umd.c b/drivers/apple-agx/render-admission/umd/src/umd.c
+index 7b9a4b6..1528e0b 100644
+--- a/drivers/apple-agx/render-admission/umd/src/umd.c
++++ b/drivers/apple-agx/render-admission/umd/src/umd.c
+@@ -119,19 +119,62 @@ static ADMISSION_UMD_RESOURCE *AdmissionUmdResourceFromDxgi(
+ 
+ 
+ 
+-/* The storage AdmissionUmdDescribePrimary gives each shared DXGI format. */
+-static BOOLEAN AdmissionUmdSharedFormatStorage(UINT DxgiFormat,
+-                                               UINT StorageFormat) {
++/* NWOAS-J274 PATCH P32: the linear storage of every shareable / presentable
++ * DXGI format: its Windows format label and bytes per pixel. D3D 11.1
++ * ExtendedResourceSharing guarantees sharing of these Texture2D formats
++ * (2767 K35: Chromium's R10G10B10A2 shared texture was refused). Planar
++ * formats (NV12, P010) are not linear single-plane storage and stay out. */
++static BOOLEAN AdmissionUmdSharedStorage(UINT DxgiFormat, UINT *Storage,
++                                         UINT *BytesPerPixel) {
++  UINT storage, bytes = 4u;
+   switch (DxgiFormat) {
+   case DXGI_FORMAT_B8G8R8A8_UNORM:
+   case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+-    return StorageFormat == (UINT)D3DDDIFMT_A8R8G8B8;
++    storage = (UINT)D3DDDIFMT_A8R8G8B8; break;
++  case DXGI_FORMAT_B8G8R8X8_UNORM:
++  case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
++    storage = (UINT)D3DDDIFMT_X8R8G8B8; break;
+   case DXGI_FORMAT_R8G8B8A8_UNORM:
++  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+   case DXGI_FORMAT_A8_UNORM:
+-    return StorageFormat == (UINT)D3DDDIFMT_A8B8G8R8;
++    storage = (UINT)D3DDDIFMT_A8B8G8R8; break;
++  case DXGI_FORMAT_R10G10B10A2_UNORM:
++    storage = (UINT)D3DDDIFMT_A2B10G10R10; break;
++  case DXGI_FORMAT_R16G16B16A16_FLOAT:
++    storage = (UINT)D3DDDIFMT_A16B16G16R16F; bytes = 8u; break;
++  case DXGI_FORMAT_R8_UNORM:
++    storage = (UINT)D3DDDIFMT_L8; bytes = 1u; break;
++  case DXGI_FORMAT_R8G8_UNORM:
++    storage = (UINT)D3DDDIFMT_A8L8; bytes = 2u; break;
+   default:
+     return FALSE;
+   }
++  if (Storage != NULL) *Storage = storage;
++  if (BytesPerPixel != NULL) *BytesPerPixel = bytes;
++  return TRUE;
++}
++
++/* A storage label this UMD writes, with its bytes per pixel. */
++static BOOLEAN AdmissionUmdStorageKnown(UINT StorageFormat, UINT BytesPerPixel) {
++  switch (StorageFormat) {
++  case D3DDDIFMT_A8R8G8B8: case D3DDDIFMT_X8R8G8B8: case D3DDDIFMT_A8B8G8R8:
++  case D3DDDIFMT_A2B10G10R10:
++    return BytesPerPixel == 4u;
++  case D3DDDIFMT_A16B16G16R16F: return BytesPerPixel == 8u;
++  case D3DDDIFMT_L8: return BytesPerPixel == 1u;
++  case D3DDDIFMT_A8L8: return BytesPerPixel == 2u;
++  default: return FALSE;
++  }
++}
++
++/* The storage AdmissionUmdDescribePrimary gives each shared DXGI format. */
++static BOOLEAN AdmissionUmdSharedFormatStorage(UINT DxgiFormat,
++                                               UINT StorageFormat) {
++  UINT storage;
++  return AdmissionUmdSharedStorage(DxgiFormat, &storage, NULL) &&
++                 storage == StorageFormat
++             ? TRUE
++             : FALSE;
+ }
+ 
+ static BOOLEAN AdmissionUmdDescribePrimary(
+@@ -146,13 +189,12 @@ static BOOLEAN AdmissionUmdDescribePrimary(
+   const UINT allowedMiscFlags = D3D10_DDI_RESOURCE_MISC_SHARED |
+       D3D10_DDI_RESOURCE_MISC_DISCARD_ON_PRESENT |
+       D3DWDDM2_0DDI_RESOURCE_MISC_DISPLAYABLE_SURFACE;
++  UINT storageFormat = 0u, storageBytes = 0u;
+   if (CreateResource == NULL || Description == NULL ||
+       CreateResource->pMipInfoList == NULL ||
+       CreateResource->ResourceDimension != D3D10DDIRESOURCE_TEXTURE2D ||
+-      (CreateResource->Format != DXGI_FORMAT_B8G8R8A8_UNORM &&
+-       CreateResource->Format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB &&
+-       CreateResource->Format != DXGI_FORMAT_R8G8B8A8_UNORM &&
+-       CreateResource->Format != DXGI_FORMAT_A8_UNORM) ||
++      !AdmissionUmdSharedStorage((UINT)CreateResource->Format, &storageFormat,
++                                 &storageBytes) ||
+       (CreateResource->Format != DXGI_FORMAT_B8G8R8A8_UNORM &&
+        CreateResource->Format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB &&
+        CreateResource->pPrimaryDesc != NULL) ||
+@@ -197,9 +239,6 @@ static BOOLEAN AdmissionUmdDescribePrimary(
+        * allocation. */
+       ((CreateResource->BindFlags & D3D10_DDI_BIND_PRESENT) == 0u &&
+        (CreateResource->MiscFlags != D3D10_DDI_RESOURCE_MISC_SHARED ||
+-        (CreateResource->Format != DXGI_FORMAT_B8G8R8A8_UNORM &&
+-         CreateResource->Format != DXGI_FORMAT_R8G8B8A8_UNORM &&
+-         CreateResource->Format != DXGI_FORMAT_A8_UNORM) ||
+         (CreateResource->BindFlags & (D3D10_DDI_BIND_RENDER_TARGET |
+                                       D3D10_DDI_BIND_SHADER_RESOURCE)) == 0u)) ||
+       CreateResource->pInitialDataUP != NULL)
+@@ -210,10 +249,7 @@ static BOOLEAN AdmissionUmdDescribePrimary(
+   if (!AdmissionAllocationDescribe(
+           CreateResource->pMipInfoList[0].TexelWidth,
+           CreateResource->pMipInfoList[0].TexelHeight,
+-          4u, (UINT)D3DKMDT_GDISURFACE_TEXTURE,
+-          CreateResource->Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+-          CreateResource->Format == DXGI_FORMAT_A8_UNORM
+-              ? (UINT)D3DDDIFMT_A8B8G8R8 : (UINT)D3DDDIFMT_A8R8G8B8,
++          storageBytes, (UINT)D3DKMDT_GDISURFACE_TEXTURE, storageFormat,
+           0u, &Description->Allocation))
+     return FALSE;
+   /* AIL linear layers are cache-line padded; no layout metadata is implicit. */
+@@ -250,9 +286,12 @@ static BOOLEAN AdmissionUmdResourceIsPresentable(
+       r->Version == ADMISSION_UMD_DIRECT_FLIP_RESOURCE_VERSION &&
+       r->SegmentId == 2u && r->Linear == 1u && r->Reserved == 0u &&
+       AdmissionAllocationDescriptionValid(a) &&
+-      a->BytesPerPixel == 4u && a->CpuVisible == 0u &&
+-      ((a->Format == (UINT)D3DDDIFMT_A8R8G8B8 && r->Displayable == 1u) ||
+-       (a->Format == (UINT)D3DDDIFMT_A8B8G8R8 && r->Displayable == 0u));
++      a->CpuVisible == 0u &&
++      ((a->Format == (UINT)D3DDDIFMT_A8R8G8B8 && a->BytesPerPixel == 4u &&
++        r->Displayable == 1u) ||
++       /* P32: every other shared storage (RGBA8, BGRX8, RGB10A2, FP16, R8,
++        * R8G8) is composed by DWM, never scanned out. */
++       (a->Format != (UINT)D3DDDIFMT_A8R8G8B8 && r->Displayable == 0u));
+ }
+ 
+ static HRESULT AdmissionUmdSubmitClear(
+@@ -817,7 +856,9 @@ VOID AdmissionUmdCreateResourceWithMetadata(
+       AdmissionUmdDiagnostic("reject-primary", E_INVALIDARG, values,
+                              ARRAYSIZE(values));
+     }
+-    AdmissionUmdSetError(device, E_INVALIDARG);
++    /* P32: CreateResource may report only E_OUTOFMEMORY; anything else
++     * removes the device. */
++    AdmissionUmdSetError(device, E_OUTOFMEMORY);
+     return;
+   }
+   retirement = AdmissionUmdRetirementCreate();
+@@ -873,7 +914,8 @@ VOID AdmissionUmdCreateResourceWithMetadata(
+   }
+   if (FAILED(result) || allocationInfo.hAllocation == 0u) {
+     AdmissionUmdRetirementFree(retirement);
+-    AdmissionUmdSetError(device, FAILED(result) ? result : E_FAIL);
++    AdmissionUmdSetError(device, result == D3DDDIERR_DEVICEREMOVED
++                                     ? result : E_OUTOFMEMORY);
+     return;
+   }
+   resource->Magic = ADMISSION_UMD_RESOURCE_MAGIC;
+@@ -923,7 +965,7 @@ VOID APIENTRY AdmissionUmdOpenResource(
+       RuntimeResource.handle == NULL ||
+       OpenResource->NumAllocations != 1u ||
+       OpenResource->pOpenAllocationInfo == NULL) {
+-    AdmissionUmdSetError(device, E_INVALIDARG);
++    AdmissionUmdSetError(device, E_OUTOFMEMORY); /* P32 */
+     return;
+   }
+   if (OpenResource->PrivateDriverDataSize != 0u ||
+@@ -933,7 +975,7 @@ VOID APIENTRY AdmissionUmdOpenResource(
+         !AdmissionPresentResourceDataValid(
+             (const ADMISSION_PRESENT_RESOURCE_DATA *)
+                 OpenResource->pPrivateDriverData)) {
+-      AdmissionUmdSetError(device, E_INVALIDARG);
++      AdmissionUmdSetError(device, E_OUTOFMEMORY); /* P32 */
+       return;
+     }
+     resourceData = (const ADMISSION_PRESENT_RESOURCE_DATA *)
+@@ -950,17 +992,21 @@ VOID APIENTRY AdmissionUmdOpenResource(
+   if (description == NULL ||
+       info->PrivateDriverDataSize != sizeof(*description) ||
+       !AdmissionAllocationDescriptionValid(description) ||
+-      (description->Format != (UINT)D3DDDIFMT_A8R8G8B8 &&
+-       description->Format != (UINT)D3DDDIFMT_A8B8G8R8) ||
++      !AdmissionUmdStorageKnown(description->Format,
++                                description->BytesPerPixel) ||
+       description->Width > 8192u || description->Height > 8192u ||
+       description->Type != (UINT)D3DKMDT_GDISURFACE_TEXTURE ||
+-      description->BytesPerPixel != 4u ||
+-      description->Size > 0x1000000ULL || info->hAllocation == 0u ||
++      /* P32: the size follows from the description (at most 8192 x 8192 x
++       * 8 bytes plus row padding); the old 16 MiB cap refused a 1080p FP16
++       * or a 4K BGRA8 shared texture. */
++      description->Size >
++          (unsigned long long)description->Pitch * description->Height + 127ULL ||
++      info->hAllocation == 0u ||
+       (resourceData != NULL && resourceData->Format != 0u &&
+        !AdmissionUmdSharedFormatStorage(resourceData->Format,
+                                         description->Format))) {
+     AdmissionUmdRetirementFree(retirement);
+-    AdmissionUmdSetError(device, E_INVALIDARG);
++    AdmissionUmdSetError(device, E_OUTOFMEMORY); /* P32 */
+     return;
+   }
+   ZeroMemory(resource, sizeof(*resource));

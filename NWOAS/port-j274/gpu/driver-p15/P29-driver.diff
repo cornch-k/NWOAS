@@ -1,0 +1,589 @@
+diff --git a/drivers/apple-agx/mesa/d3d11/agx_wddm2_ddi.cpp b/drivers/apple-agx/mesa/d3d11/agx_wddm2_ddi.cpp
+index 88ac609..06611bc 100644
+--- a/drivers/apple-agx/mesa/d3d11/agx_wddm2_ddi.cpp
++++ b/drivers/apple-agx/mesa/d3d11/agx_wddm2_ddi.cpp
+@@ -1329,12 +1329,19 @@ dxgi_receipt(const char *stage, HRESULT hr, UINT a, UINT b)
+    AgxD3d10WindowsDiagnostic(stage, hr, values, 2u);
+ }
+ 
++/* NWOAS-J274 PATCH P29: the first 8 calls of every DXGI 1.2+ entry, as a
++ * measure- line (kept by the refusals-only trace). */
++#define DXGI_ENTRY(name, a, b) do { static volatile LONG entries; \
++      if (InterlockedIncrement(&entries) <= 8) \
++         dxgi_receipt("measure-dxgi1-" name, S_OK, (UINT)(a), (UINT)(b)); } while (0)
++
+ /* Blt1 adds a source rectangle. NWOAS-J274 PATCH P28: a sub-rectangle is
+  * no longer refused; both rectangles come from the runtime and the GPU blit
+  * stretches between them (Stretch) or copies 1:1 clipped (no Stretch). */
+ HRESULT APIENTRY
+ Blt1(DXGI_DDI_ARG_BLT1 *args)
+ {
++   DXGI_ENTRY("Blt1", args ? args->Flags.Value : ~0u, 0);
+    if (!args)
+       return E_INVALIDARG;
+    Device *device = CastDevice(args->hDevice);
+@@ -1401,6 +1408,10 @@ Blt1(DXGI_DDI_ARG_BLT1 *args)
+ HRESULT APIENTRY
+ Present1(DXGI_DDI_ARG_PRESENT1 *args)
+ {
++   DXGI_ENTRY("Present1",
++      args ? (args->Flags.Value | (args->SurfacesToPresent << 8) |
++              ((args->hDstResource != 0) << 16)) : ~0u,
++      args ? ((UINT)args->FlipInterval | (args->DirtyRects << 8)) : ~0u);
+    if (!args)
+       return E_INVALIDARG;
+    if (args->SurfacesToPresent && !args->phSurfacesToPresent) {
+@@ -1448,12 +1459,14 @@ Present1(DXGI_DDI_ARG_PRESENT1 *args)
+ HRESULT APIENTRY
+ OfferResources(DXGI_DDI_ARG_OFFERRESOURCES *args)
+ {
++   DXGI_ENTRY("OfferResources", args ? args->Resources : ~0u, 0);
+    return args ? S_OK : E_INVALIDARG;
+ }
+ 
+ HRESULT APIENTRY
+ ReclaimResources(DXGI_DDI_ARG_RECLAIMRESOURCES *args)
+ {
++   DXGI_ENTRY("ReclaimResources", args ? args->Resources : ~0u, 0);
+    if (!args)
+       return E_INVALIDARG;
+    for (UINT i = 0; args->pDiscarded && i < args->Resources; ++i)
+@@ -1465,6 +1478,7 @@ ReclaimResources(DXGI_DDI_ARG_RECLAIMRESOURCES *args)
+ HRESULT APIENTRY
+ GetMultiplaneOverlayCaps(DXGI_DDI_ARG_GETMULTIPLANEOVERLAYCAPS *args)
+ {
++   DXGI_ENTRY("GetMultiplaneOverlayCaps", args != NULL, 0);
+    if (!args)
+       return E_INVALIDARG;
+    args->MultiplaneOverlayCaps.MaxPlanes = 1;
+@@ -1496,6 +1510,7 @@ PresentMultiplaneOverlay1(DXGI_DDI_ARG_PRESENTMULTIPLANEOVERLAY1 *args)
+ HRESULT APIENTRY
+ CheckMultiplaneOverlayColorSpaceSupport(DXGI_DDI_ARG_CHECKMULTIPLANEOVERLAYCOLORSPACESUPPORT *args)
+ {
++   DXGI_ENTRY("CheckMpoColorSpace", args ? (UINT)args->Format : ~0u, args ? (UINT)args->ColorSpace : ~0u);
+    if (!args)
+       return E_INVALIDARG;
+    args->Supported = FALSE;
+@@ -1506,6 +1521,7 @@ CheckMultiplaneOverlayColorSpaceSupport(DXGI_DDI_ARG_CHECKMULTIPLANEOVERLAYCOLOR
+ HRESULT APIENTRY
+ CheckPresentDurationSupport(DXGI_DDI_ARG_CHECKPRESENTDURATIONSUPPORT *args)
+ {
++   DXGI_ENTRY("CheckPresentDuration", args ? args->DesiredPresentDuration : ~0u, 0);
+    if (!args)
+       return E_INVALIDARG;
+    args->ClosestSmallerDuration = 0;
+@@ -1518,6 +1534,7 @@ CheckPresentDurationSupport(DXGI_DDI_ARG_CHECKPRESENTDURATIONSUPPORT *args)
+ HRESULT APIENTRY
+ TrimResidencySet(DXGI_DDI_ARG_TRIMRESIDENCYSET *args)
+ {
++   DXGI_ENTRY("TrimResidencySet", args != NULL, 0);
+    return args ? S_OK : E_INVALIDARG;
+ }
+ 
+diff --git a/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py b/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
+index b05145e..d5ac685 100644
+--- a/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
++++ b/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
+@@ -3279,7 +3279,9 @@ UnsupportedDxgi''')
+             r'return AgxDxgiTraceReturn(__func__, (\1));', body)
+         if not returns:
+             raise SystemExit('Missing DXGI trace return: ' + name)
+-        entry = '   AgxD3d10WindowsDiagnostic("' + name + '-entry", S_OK, NULL, 0);\n'
++        # P29: the first 8 calls of every DXGI entry as a measure- line.
++        entry = ('   { static volatile LONG agxEntryCount; if (InterlockedIncrement(&agxEntryCount) <= 8) '
++                 'AgxD3d10WindowsDiagnostic("measure-dxgi-entry' + name + '", S_OK, NULL, 0); }\n')
+         if name == '_Present':
+             entry += '''   UINT presentMeasure[10] = {
+       pPresentData ? pPresentData->Flags.Value : ~0u,
+diff --git a/drivers/apple-agx/render-admission/include/render_admission.h b/drivers/apple-agx/render-admission/include/render_admission.h
+index e677b3e..67d3cbb 100644
+--- a/drivers/apple-agx/render-admission/include/render_admission.h
++++ b/drivers/apple-agx/render-admission/include/render_admission.h
+@@ -2307,6 +2307,12 @@ DXGKDDI_BUILDPAGINGBUFFER AdmissionDdiBuildPagingBuffer;
+ DXGKDDI_PREEMPTCOMMAND AdmissionDdiPreemptCommand;
+ DXGKDDI_RENDER AdmissionDdiRender;
+ DXGKDDI_PRESENT AdmissionDdiPresent;
++/* NWOAS-J274 P29: observational DDI rings (receipts.c), installed in
++ * driver.c in place of the plain DDIs. */
++DXGKDDI_PRESENT AdmissionTraceDdiPresent;
++DXGKDDI_GETSTANDARDALLOCATIONDRIVERDATA AdmissionTraceDdiGetStandardAllocationDriverData;
++DXGKDDI_OPENALLOCATIONINFO AdmissionTraceDdiOpenAllocation;
++DXGKDDI_CREATEALLOCATION AdmissionTraceDdiCreateAllocation;
+ DXGKDDI_CREATEOVERLAY AdmissionDdiCreateOverlay;
+ DXGKDDI_UPDATEOVERLAY AdmissionDdiUpdateOverlay;
+ DXGKDDI_FLIPOVERLAY AdmissionDdiFlipOverlay;
+diff --git a/drivers/apple-agx/render-admission/include/render_ddi_status_wrappers.h b/drivers/apple-agx/render-admission/include/render_ddi_status_wrappers.h
+index 305fec0..a2f79c2 100644
+--- a/drivers/apple-agx/render-admission/include/render_ddi_status_wrappers.h
++++ b/drivers/apple-agx/render-admission/include/render_ddi_status_wrappers.h
+@@ -169,7 +169,7 @@ ADMISSION_STATUS_WRAP(30, AdmissionDdiDestroyDevice,
+     (Device), Device, 0, MAXULONG,
+     (void)0)
+ /* 31: DxgkDdiCreateAllocation */
+-ADMISSION_STATUS_WRAP(31, AdmissionDdiCreateAllocation,
++ADMISSION_STATUS_WRAP(31, AdmissionTraceDdiCreateAllocation,
+     (HANDLE Adapter, DXGKARG_CREATEALLOCATION *Args),
+     (Adapter, Args), Adapter, 0, MAXULONG,
+     (void)0; if (first) AdmissionQueueDdiStatus((ADMISSION_CONTEXT *)Adapter))
+@@ -184,12 +184,12 @@ ADMISSION_STATUS_WRAP(33, AdmissionDdiDescribeAllocation,
+     (Adapter, Args), Adapter, Args ? Args->hAllocation : NULL, MAXULONG,
+     (void)0; if (first) AdmissionQueueDdiStatus((ADMISSION_CONTEXT *)Adapter))
+ /* 34: DxgkDdiGetStandardAllocationDriverData */
+-ADMISSION_STATUS_WRAP(34, AdmissionDdiGetStandardAllocationDriverData,
++ADMISSION_STATUS_WRAP(34, AdmissionTraceDdiGetStandardAllocationDriverData,
+     (HANDLE Adapter, DXGKARG_GETSTANDARDALLOCATIONDRIVERDATA *StandardAllocation),
+     (Adapter, StandardAllocation), Adapter, 0, MAXULONG,
+     (void)0; if (first) AdmissionQueueDdiStatus((ADMISSION_CONTEXT *)Adapter))
+ /* 35: DxgkDdiOpenAllocation */
+-ADMISSION_STATUS_WRAP(35, AdmissionDdiOpenAllocation,
++ADMISSION_STATUS_WRAP(35, AdmissionTraceDdiOpenAllocation,
+     (HANDLE Device, const DXGKARG_OPENALLOCATION *Args),
+     (Device, Args), Device, 0, MAXULONG,
+     (void)0)
+@@ -224,7 +224,7 @@ ADMISSION_STATUS_WRAP(41, AdmissionDdiRender,
+     (Context, Args), Context, 0, MAXULONG,
+     (void)0)
+ /* 42: DxgkDdiPresent */
+-ADMISSION_STATUS_WRAP(42, AdmissionDdiPresent,
++ADMISSION_STATUS_WRAP(42, AdmissionTraceDdiPresent,
+     (HANDLE Context, DXGKARG_PRESENT *Present),
+     (Context, Present), Context, 0, MAXULONG,
+     (void)0)
+@@ -383,18 +383,18 @@ static void AdmissionInstallStatusReceipts(DRIVER_INITIALIZATION_DATA *Init) {
+   Init->DxgkDdiQueryInterface = AdmissionDdiQueryInterfaceStatus;
+   Init->DxgkDdiCreateDevice = AdmissionDdiCreateDeviceStatus;
+   Init->DxgkDdiDestroyDevice = AdmissionDdiDestroyDeviceStatus;
+-  Init->DxgkDdiCreateAllocation = AdmissionDdiCreateAllocationStatus;
++  Init->DxgkDdiCreateAllocation = AdmissionTraceDdiCreateAllocationStatus; /* P29: through the DDI ring */
+   Init->DxgkDdiDestroyAllocation = AdmissionDdiDestroyAllocationStatus;
+   Init->DxgkDdiDescribeAllocation = AdmissionDdiDescribeAllocationStatus;
+-  Init->DxgkDdiGetStandardAllocationDriverData = AdmissionDdiGetStandardAllocationDriverDataStatus;
+-  Init->DxgkDdiOpenAllocation = AdmissionDdiOpenAllocationStatus;
++  Init->DxgkDdiGetStandardAllocationDriverData = AdmissionTraceDdiGetStandardAllocationDriverDataStatus; /* P29: through the DDI ring */
++  Init->DxgkDdiOpenAllocation = AdmissionTraceDdiOpenAllocationStatus; /* P29: through the DDI ring */
+   Init->DxgkDdiCloseAllocation = AdmissionDdiCloseAllocationStatus;
+   Init->DxgkDdiPatch = AdmissionDdiPatchStatus;
+   Init->DxgkDdiSubmitCommand = AdmissionDdiSubmitCommandStatus;
+   Init->DxgkDdiBuildPagingBuffer = AdmissionDdiBuildPagingBufferStatus;
+   Init->DxgkDdiPreemptCommand = AdmissionDdiPreemptCommandStatus;
+   Init->DxgkDdiRender = AdmissionDdiRenderStatus;
+-  Init->DxgkDdiPresent = AdmissionDdiPresentStatus;
++  Init->DxgkDdiPresent = AdmissionTraceDdiPresentStatus; /* P29: through the DDI ring */
+   Init->DxgkDdiCreateOverlay = AdmissionDdiCreateOverlayStatus;
+   Init->DxgkDdiUpdateOverlay = AdmissionDdiUpdateOverlayStatus;
+   Init->DxgkDdiFlipOverlay = AdmissionDdiFlipOverlayStatus;
+diff --git a/drivers/apple-agx/render-admission/src/receipts.c b/drivers/apple-agx/render-admission/src/receipts.c
+index ebc0920..5396a21 100644
+--- a/drivers/apple-agx/render-admission/src/receipts.c
++++ b/drivers/apple-agx/render-admission/src/receipts.c
+@@ -3233,3 +3233,286 @@ static void AdmissionWriteDdiStatuses(ADMISSION_CONTEXT *Context) {
+ }
+ 
+ #endif
++
++/* NWOAS-J274 PATCH P29: unconditional, bounded DDI rings for the paths a
++ * windowed blt-model present can take.  Each ring keeps the last 16 calls
++ * (24 words each) behind an 8-word header {version, calls, failures, next
++ * slot, skipped MMIO flips, writes, 0, 0}.  The ring is written at PASSIVE
++ * for its first 48 writes, then for a failure (at most 64 more) or at most
++ * once a second.  Observational only: every wrapper returns the inner
++ * DDI's status unchanged. */
++#define ADMISSION_DDI_RING_SLOTS 16u
++#define ADMISSION_DDI_RING_WORDS 24u
++typedef struct _ADMISSION_DDI_RING {
++  ULONG Header[8];
++  ULONG Entries[ADMISSION_DDI_RING_SLOTS][ADMISSION_DDI_RING_WORDS];
++} ADMISSION_DDI_RING;
++typedef struct _ADMISSION_DDI_RING_STATE {
++  ADMISSION_DDI_RING Ring;
++  volatile LONG Calls, Failures, Skipped, Writes, FailureWrites;
++  volatile LONGLONG LastQpc;
++} ADMISSION_DDI_RING_STATE;
++static ADMISSION_DDI_RING_STATE AdmissionPresentRing, AdmissionStdAllocRing,
++    AdmissionOpenAllocRing, AdmissionCreateAllocRing;
++
++static VOID AdmissionDdiRingRecord(ADMISSION_DDI_RING_STATE *State,
++    PDEVICE_OBJECT DeviceObject, PCWSTR Name, const ULONG *Entry,
++    NTSTATUS Status) {
++  LONG calls = InterlockedIncrement(&State->Calls);
++  LONG failures = NT_SUCCESS(Status) ? State->Failures
++                                     : InterlockedIncrement(&State->Failures);
++  ULONG slot = (ULONG)(calls - 1) % ADMISSION_DDI_RING_SLOTS;
++  LARGE_INTEGER frequency;
++  LONGLONG now, last;
++  BOOLEAN write = FALSE;
++  HANDLE key = NULL;
++  RtlCopyMemory(State->Ring.Entries[slot], Entry,
++                ADMISSION_DDI_RING_WORDS * sizeof(ULONG));
++  State->Ring.Entries[slot][ADMISSION_DDI_RING_WORDS - 1u] = (ULONG)Status;
++  if (DeviceObject == NULL || KeGetCurrentIrql() != PASSIVE_LEVEL)
++    return;
++  now = KeQueryPerformanceCounter(&frequency).QuadPart;
++  last = State->LastQpc;
++  if (State->Writes < 48)
++    write = TRUE;
++  else if (!NT_SUCCESS(Status) && State->FailureWrites < 64) {
++    InterlockedIncrement(&State->FailureWrites);
++    write = TRUE;
++  } else if (now - last >= frequency.QuadPart)
++    write = TRUE;
++  if (!write)
++    return;
++  InterlockedExchange64(&State->LastQpc, now);
++  State->Ring.Header[0] = 1u;
++  State->Ring.Header[1] = (ULONG)calls;
++  State->Ring.Header[2] = (ULONG)failures;
++  State->Ring.Header[3] = (ULONG)calls % ADMISSION_DDI_RING_SLOTS;
++  State->Ring.Header[4] = (ULONG)State->Skipped;
++  State->Ring.Header[5] = (ULONG)InterlockedIncrement(&State->Writes);
++  if (!NT_SUCCESS(IoOpenDeviceRegistryKey(DeviceObject,
++          PLUGPLAY_REGKEY_DEVICE, KEY_SET_VALUE, &key)))
++    return;
++  WriteBinary(key, Name, &State->Ring, sizeof(State->Ring));
++  ZwClose(key);
++}
++
++/* Width, height, format, type of an opened allocation, or ~0 and a reason. */
++static VOID AdmissionDdiRingEndpoint(HANDLE Handle, ULONG *Out) {
++  const ADMISSION_OPEN_ALLOCATION *opened =
++      (const ADMISSION_OPEN_ALLOCATION *)Handle;
++  Out[0] = Out[1] = Out[2] = Out[3] = 0u;
++  if (opened == NULL) { Out[3] = 0xfffffff1u; return; }
++  if (opened->Magic != ADMISSION_OPEN_ALLOCATION_MAGIC ||
++      opened->Allocation == NULL ||
++      opened->Allocation->Magic != ADMISSION_ALLOCATION_OBJECT_MAGIC) {
++    Out[3] = 0xfffffff2u;
++    return;
++  }
++  Out[0] = opened->Allocation->Description.Width;
++  Out[1] = opened->Allocation->Description.Height;
++  Out[2] = opened->Allocation->Description.Format;
++  Out[3] = opened->Allocation->Description.Type |
++           (opened->Allocation->Description.CpuVisible ? 0x100u : 0u);
++}
++
++static PDEVICE_OBJECT AdmissionDdiRingDeviceObject(ADMISSION_DEVICE *Device) {
++  ADMISSION_CONTEXT *adapter;
++  if (Device == NULL || Device->Object.Magic != ADMISSION_OBJECT_DEVICE_MAGIC ||
++      Device->Object.Adapter == NULL ||
++      Device->Object.Adapter->Magic != ADMISSION_OBJECT_ADAPTER_MAGIC)
++    return NULL;
++  adapter = CONTAINING_RECORD(Device->Object.Adapter, ADMISSION_CONTEXT,
++                              ObjectAdapter);
++  return adapter->PhysicalDeviceObject;
++}
++
++/* Wom1PresentDdiRing entry: pid, context flags, present flags, NumSrc |
++ * NumDst << 16, pointer bits (DMA, allocation info, allocation list,
++ * private data, sub-rects), SrcRect, DstRect, sub-rect count, source
++ * {w,h,format,type}, destination {w,h,format,type}, flip interval, color,
++ * status.  DWM's MMIO flips (no DMA, flags 0x4/0xc, one source) are only
++ * counted (header word 4). */
++_Use_decl_annotations_ NTSTATUS AdmissionTraceDdiPresent(
++    HANDLE Context, DXGKARG_PRESENT *Present) {
++  ADMISSION_RENDER_CONTEXT *renderContext = (ADMISSION_RENDER_CONTEXT *)Context;
++  ADMISSION_DEVICE *device = NULL;
++  ULONG entry[ADMISSION_DDI_RING_WORDS];
++  ULONG flags = Present != NULL ? Present->Flags.Value : ~0u;
++  HANDLE src = NULL, dst = NULL;
++  NTSTATUS status;
++  RtlZeroMemory(entry, sizeof(entry));
++  if (renderContext != NULL &&
++      renderContext->Object.Magic == ADMISSION_OBJECT_CONTEXT_MAGIC &&
++      renderContext->Object.Device != NULL &&
++      renderContext->Object.Device->Magic == ADMISSION_OBJECT_DEVICE_MAGIC)
++    device = CONTAINING_RECORD(renderContext->Object.Device,
++                               ADMISSION_DEVICE, Object);
++  else if (Context != NULL &&
++           ((ADMISSION_DEVICE *)Context)->Object.Magic ==
++               ADMISSION_OBJECT_DEVICE_MAGIC)
++    device = (ADMISSION_DEVICE *)Context;
++  if (Present != NULL) {
++    entry[0] = HandleToULong(PsGetCurrentProcessId());
++    if (renderContext != NULL &&
++        renderContext->Object.Magic == ADMISSION_OBJECT_CONTEXT_MAGIC)
++      entry[1] = renderContext->Object.Flags;
++    entry[2] = flags;
++    entry[3] = Present->NumSrcAllocations | (Present->NumDstAllocations << 16);
++    entry[4] = (Present->pDmaBuffer != NULL ? 1u : 0u) |
++               (Present->pAllocationInfo != NULL ? 2u : 0u) |
++               (Present->pAllocationList != NULL ? 4u : 0u) |
++               (Present->pPrivateDriverData != NULL ? 8u : 0u) |
++               (Present->pDstSubRects != NULL ? 16u : 0u);
++    RtlCopyMemory(&entry[5], &Present->SrcRect, sizeof(RECT));
++    RtlCopyMemory(&entry[9], &Present->DstRect, sizeof(RECT));
++    entry[13] = Present->SubRectCnt;
++    if (Present->pAllocationInfo != NULL) {
++      src = Present->pAllocationInfo[DXGK_PRESENT_SOURCE_INDEX].hDeviceSpecificAllocation;
++      dst = Present->pAllocationInfo[DXGK_PRESENT_DESTINATION_INDEX].hDeviceSpecificAllocation;
++    } else if (Present->pAllocationList != NULL) {
++      src = Present->pAllocationList[DXGK_PRESENT_SOURCE_INDEX].hDeviceSpecificAllocation;
++      dst = Present->pAllocationList[DXGK_PRESENT_DESTINATION_INDEX].hDeviceSpecificAllocation;
++    }
++    AdmissionDdiRingEndpoint(src, &entry[14]);
++    AdmissionDdiRingEndpoint(dst, &entry[18]);
++    entry[22] = (ULONG)Present->FlipInterval | (Present->Color << 8);
++  }
++  status = AdmissionDdiPresent(Context, Present);
++  if (Present != NULL && entry[4] == 2u && (flags & ~0x8u) == 0x4u &&
++      Present->NumSrcAllocations == 1u && Present->NumDstAllocations == 0u &&
++      NT_SUCCESS(status)) {
++    InterlockedIncrement(&AdmissionPresentRing.Skipped);
++    return status;
++  }
++  if (Present != NULL && (entry[4] & 1u) == 0u && (flags & ~0x8u) == 0x4u &&
++      Present->NumSrcAllocations == 0u && NT_SUCCESS(status)) {
++    InterlockedIncrement(&AdmissionPresentRing.Skipped);
++    return status;
++  }
++  AdmissionDdiRingRecord(&AdmissionPresentRing,
++      AdmissionDdiRingDeviceObject(device), L"Wom1PresentDdiRing", entry, status);
++  return status;
++}
++
++/* Wom1StdAllocRing entry: pid, standard type, then {w, h, format, surface
++ * type, surface flags} of the primary / shadow / GDI surface, pitch out,
++ * private size. */
++_Use_decl_annotations_ NTSTATUS AdmissionTraceDdiGetStandardAllocationDriverData(
++    HANDLE Adapter, DXGKARG_GETSTANDARDALLOCATIONDRIVERDATA *Args) {
++  ADMISSION_CONTEXT *context = (ADMISSION_CONTEXT *)Adapter;
++  ULONG entry[ADMISSION_DDI_RING_WORDS];
++  NTSTATUS status;
++  RtlZeroMemory(entry, sizeof(entry));
++  entry[0] = HandleToULong(PsGetCurrentProcessId());
++  if (Args != NULL) {
++    entry[1] = (ULONG)Args->StandardAllocationType;
++    switch (Args->StandardAllocationType) {
++    case D3DKMDT_STANDARDALLOCATION_SHAREDPRIMARYSURFACE:
++      if (Args->pCreateSharedPrimarySurfaceData != NULL) {
++        entry[2] = Args->pCreateSharedPrimarySurfaceData->Width;
++        entry[3] = Args->pCreateSharedPrimarySurfaceData->Height;
++        entry[4] = (ULONG)Args->pCreateSharedPrimarySurfaceData->Format;
++        entry[5] = Args->pCreateSharedPrimarySurfaceData->VidPnSourceId;
++      }
++      break;
++    case D3DKMDT_STANDARDALLOCATION_SHADOWSURFACE:
++      if (Args->pCreateShadowSurfaceData != NULL) {
++        entry[2] = Args->pCreateShadowSurfaceData->Width;
++        entry[3] = Args->pCreateShadowSurfaceData->Height;
++        entry[4] = (ULONG)Args->pCreateShadowSurfaceData->Format;
++      }
++      break;
++    case D3DKMDT_STANDARDALLOCATION_GDISURFACE:
++      if (Args->pCreateGdiSurfaceData != NULL) {
++        entry[2] = Args->pCreateGdiSurfaceData->Width;
++        entry[3] = Args->pCreateGdiSurfaceData->Height;
++        entry[4] = (ULONG)Args->pCreateGdiSurfaceData->Format;
++        entry[5] = (ULONG)Args->pCreateGdiSurfaceData->Type;
++        entry[6] = Args->pCreateGdiSurfaceData->Flags.Value;
++      }
++      break;
++    default:
++      break;
++    }
++    entry[8] = Args->AllocationPrivateDriverDataSize;
++  }
++  status = AdmissionDdiGetStandardAllocationDriverData(Adapter, Args);
++  if (Args != NULL) {
++    if (Args->StandardAllocationType == D3DKMDT_STANDARDALLOCATION_GDISURFACE &&
++        Args->pCreateGdiSurfaceData != NULL)
++      entry[7] = Args->pCreateGdiSurfaceData->Pitch;
++    else if (Args->StandardAllocationType == D3DKMDT_STANDARDALLOCATION_SHADOWSURFACE &&
++             Args->pCreateShadowSurfaceData != NULL)
++      entry[7] = Args->pCreateShadowSurfaceData->Pitch;
++  }
++  AdmissionDdiRingRecord(&AdmissionStdAllocRing,
++      context != NULL ? context->PhysicalDeviceObject : NULL,
++      L"Wom1StdAllocRing", entry, status);
++  return status;
++}
++
++/* Wom1OpenAllocRing entry: pid, count, then the first allocation's private
++ * size and {w, h, format, type|cpu<<8, pitch} when its private data is our
++ * description.  Recorded for failures and for the first 48 calls. */
++_Use_decl_annotations_ NTSTATUS AdmissionTraceDdiOpenAllocation(
++    HANDLE Device, const DXGKARG_OPENALLOCATION *Args) {
++  ULONG entry[ADMISSION_DDI_RING_WORDS];
++  NTSTATUS status = AdmissionDdiOpenAllocation(Device, Args);
++  if (NT_SUCCESS(status) && AdmissionOpenAllocRing.Writes >= 48)
++    return status;
++  RtlZeroMemory(entry, sizeof(entry));
++  entry[0] = HandleToULong(PsGetCurrentProcessId());
++  if (Args != NULL) {
++    entry[1] = Args->NumAllocations;
++    entry[2] = Args->PrivateDriverSize;
++    entry[3] = Args->Flags.Value;
++    if (Args->NumAllocations != 0u && Args->pOpenAllocation != NULL) {
++      const DXGK_OPENALLOCATIONINFO *info = &Args->pOpenAllocation[0];
++      entry[4] = info->PrivateDriverDataSize;
++      if (info->pPrivateDriverData != NULL &&
++          info->PrivateDriverDataSize >= sizeof(ADMISSION_ALLOCATION_DESCRIPTION)) {
++        const ADMISSION_ALLOCATION_DESCRIPTION *d =
++            (const ADMISSION_ALLOCATION_DESCRIPTION *)info->pPrivateDriverData;
++        entry[5] = d->Magic; entry[6] = d->Width; entry[7] = d->Height;
++        entry[8] = d->Format; entry[9] = d->Type | (d->CpuVisible ? 0x100u : 0u);
++        entry[10] = d->Pitch;
++      }
++    }
++  }
++  AdmissionDdiRingRecord(&AdmissionOpenAllocRing,
++      AdmissionDdiRingDeviceObject((ADMISSION_DEVICE *)Device),
++      L"Wom1OpenAllocRing", entry, status);
++  return status;
++}
++
++/* Wom1CreateAllocRing (failures only): pid, count, resource private size,
++ * flags, first allocation's private size and the first 8 words of it. */
++_Use_decl_annotations_ NTSTATUS AdmissionTraceDdiCreateAllocation(
++    HANDLE Adapter, DXGKARG_CREATEALLOCATION *Args) {
++  ADMISSION_CONTEXT *context = (ADMISSION_CONTEXT *)Adapter;
++  ULONG entry[ADMISSION_DDI_RING_WORDS];
++  NTSTATUS status = AdmissionDdiCreateAllocation(Adapter, Args);
++  if (NT_SUCCESS(status))
++    return status;
++  RtlZeroMemory(entry, sizeof(entry));
++  entry[0] = HandleToULong(PsGetCurrentProcessId());
++  if (Args != NULL) {
++    entry[1] = Args->NumAllocations;
++    entry[2] = Args->PrivateDriverDataSize;
++    entry[3] = Args->Flags.Value;
++    if (Args->NumAllocations != 0u && Args->pAllocationInfo != NULL) {
++      const DXGK_ALLOCATIONINFO *info = &Args->pAllocationInfo[0];
++      entry[4] = info->PrivateDriverDataSize;
++      entry[5] = info->Flags.Value;
++      if (info->pPrivateDriverData != NULL) {
++        ULONG words = info->PrivateDriverDataSize / sizeof(ULONG);
++        if (words > 8u) words = 8u;
++        RtlCopyMemory(&entry[6], info->pPrivateDriverData, words * sizeof(ULONG));
++      }
++    }
++  }
++  AdmissionDdiRingRecord(&AdmissionCreateAllocRing,
++      context != NULL ? context->PhysicalDeviceObject : NULL,
++      L"Wom1CreateAllocRing", entry, status);
++  return status;
++}
+diff --git a/drivers/apple-agx/render-admission/umd/src/umd_runtime_device.c b/drivers/apple-agx/render-admission/umd/src/umd_runtime_device.c
+index e110fb5..954859c 100644
+--- a/drivers/apple-agx/render-admission/umd/src/umd_runtime_device.c
++++ b/drivers/apple-agx/render-admission/umd/src/umd_runtime_device.c
+@@ -59,12 +59,102 @@ static BOOL CALLBACK AdmissionUmdTraceLoad(PINIT_ONCE Once, PVOID Parameter,
+   return TRUE;
+ }
+ 
++/* NWOAS-J274 PATCH P29: processes that cannot be given an environment
++ * (dwm.exe, started by Windows) are traced through
++ * HKLM\SOFTWARE\NWOAS\AgxUmdTrace: Dir (REG_SZ, a writable directory),
++ * Process (REG_SZ, an image name such as dwm.exe, or *), RefusalsOnly
++ * (REG_DWORD, default 1).  Read at most every 2 s until it matches, so a
++ * running DWM picks it up without a restart; the file is
++ * Dir\<image>-<pid>.log and stops at 16 MiB.  The environment variables
++ * keep precedence. */
++static WCHAR AdmissionUmdRegTracePath[MAX_PATH];
++static volatile LONG AdmissionUmdRegTraceOn;
++static volatile LONGLONG AdmissionUmdRegTraceNextTick;
++static BOOL AdmissionUmdRegTraceRefusals = TRUE;
++#define ADMISSION_UMD_REG_TRACE_KEY L"SOFTWARE\\NWOAS\\AgxUmdTrace"
++#define ADMISSION_UMD_REG_TRACE_MAX_BYTES (16LL * 1024 * 1024)
++
++static VOID AdmissionUmdRegTraceProbe(VOID) {
++  LONGLONG now = (LONGLONG)GetTickCount64();
++  LONGLONG next = InterlockedCompareExchange64(&AdmissionUmdRegTraceNextTick, 0, 0);
++  WCHAR dir[200], process[64], image[MAX_PATH];
++  DWORD bytes, refusals = 1u, length, i, at = 0u, pid, digits = 0u;
++  WCHAR number[12];
++  PCWSTR base;
++  if (now < next ||
++      InterlockedCompareExchange64(&AdmissionUmdRegTraceNextTick, now + 2000,
++                                   next) != next)
++    return;
++  bytes = sizeof(dir);
++  if (RegGetValueW(HKEY_LOCAL_MACHINE, ADMISSION_UMD_REG_TRACE_KEY, L"Dir",
++                   RRF_RT_REG_SZ, NULL, dir, &bytes) != ERROR_SUCCESS)
++    return;
++  bytes = sizeof(process);
++  if (RegGetValueW(HKEY_LOCAL_MACHINE, ADMISSION_UMD_REG_TRACE_KEY, L"Process",
++                   RRF_RT_REG_SZ, NULL, process, &bytes) != ERROR_SUCCESS)
++    return;
++  bytes = sizeof(refusals);
++  (void)RegGetValueW(HKEY_LOCAL_MACHINE, ADMISSION_UMD_REG_TRACE_KEY,
++                     L"RefusalsOnly", RRF_RT_REG_DWORD, NULL, &refusals, &bytes);
++  length = GetModuleFileNameW(NULL, image, ARRAYSIZE(image));
++  if (length == 0u || length >= ARRAYSIZE(image)) return;
++  base = image;
++  for (i = 0u; i < length; ++i)
++    if (image[i] == L'\\') base = &image[i + 1u];
++  if (!(process[0] == L'*' && process[1] == L'\0') && _wcsicmp(process, base) != 0)
++    return;
++  for (i = 0u; dir[i] != L'\0' && at + 1u < ARRAYSIZE(AdmissionUmdRegTracePath); ++i)
++    AdmissionUmdRegTracePath[at++] = dir[i];
++  if (at + 1u < ARRAYSIZE(AdmissionUmdRegTracePath))
++    AdmissionUmdRegTracePath[at++] = L'\\';
++  for (i = 0u; base[i] != L'\0' && at + 1u < ARRAYSIZE(AdmissionUmdRegTracePath); ++i)
++    AdmissionUmdRegTracePath[at++] = base[i];
++  pid = GetCurrentProcessId();
++  do { number[digits++] = (WCHAR)(L'0' + pid % 10u); pid /= 10u; } while (pid != 0u);
++  if (at + digits + 6u >= ARRAYSIZE(AdmissionUmdRegTracePath)) return;
++  AdmissionUmdRegTracePath[at++] = L'-';
++  while (digits != 0u) AdmissionUmdRegTracePath[at++] = number[--digits];
++  AdmissionUmdRegTracePath[at++] = L'.';
++  AdmissionUmdRegTracePath[at++] = L'l';
++  AdmissionUmdRegTracePath[at++] = L'o';
++  AdmissionUmdRegTracePath[at++] = L'g';
++  AdmissionUmdRegTracePath[at] = L'\0';
++  AdmissionUmdRegTraceRefusals = refusals != 0u;
++  InterlockedExchange(&AdmissionUmdRegTraceOn, 1);
++}
++
+ /* The trace file path, or NULL when tracing is off. */
+ static PCWSTR AdmissionUmdTraceConfig(BOOL *RefusalsOnly) {
+   (void)InitOnceExecuteOnce(&AdmissionUmdTraceOnce, AdmissionUmdTraceLoad,
+                             NULL, NULL);
++  if (AdmissionUmdTracePath[0] != L'\0') {
++    *RefusalsOnly = AdmissionUmdTraceRefusalsOnly;
++    return AdmissionUmdTracePath;
++  }
++  if (InterlockedCompareExchange(&AdmissionUmdRegTraceOn, 0, 0) == 0) {
++    AdmissionUmdRegTraceProbe();
++  } else {
++    /* Deleting the key turns the trace off again (checked every 2 s). */
++    static volatile LONGLONG offCheck;
++    LONGLONG now = (LONGLONG)GetTickCount64();
++    LONGLONG due = InterlockedCompareExchange64(&offCheck, 0, 0);
++    if (now >= due &&
++        InterlockedCompareExchange64(&offCheck, now + 2000, due) == due) {
++      WCHAR dir[200];
++      DWORD bytes = sizeof(dir);
++      if (RegGetValueW(HKEY_LOCAL_MACHINE, ADMISSION_UMD_REG_TRACE_KEY, L"Dir",
++                       RRF_RT_REG_SZ, NULL, dir, &bytes) != ERROR_SUCCESS) {
++        InterlockedExchange(&AdmissionUmdRegTraceOn, 0);
++        InterlockedExchange64(&AdmissionUmdRegTraceNextTick, now + 2000);
++      }
++    }
++  }
++  if (InterlockedCompareExchange(&AdmissionUmdRegTraceOn, 0, 0) != 0) {
++    *RefusalsOnly = AdmissionUmdRegTraceRefusals;
++    return AdmissionUmdRegTracePath;
++  }
+   *RefusalsOnly = AdmissionUmdTraceRefusalsOnly;
+-  return AdmissionUmdTracePath[0] != L'\0' ? AdmissionUmdTracePath : NULL;
++  return NULL;
+ }
+ 
+ /* Opt-in, process-local diagnostics for standard-runtime admission. Never
+@@ -198,6 +288,15 @@ static VOID AdmissionUmdTraceWriteLocked(VOID) {
+   if (AdmissionUmdTraceUsed == 0u) return;
+   path = AdmissionUmdTraceConfig(&refusalsOnly);
+   file = path != NULL ? AdmissionUmdTraceHandle(path) : INVALID_HANDLE_VALUE;
++  {
++    static LONGLONG registryBytes;
++    if (file != INVALID_HANDLE_VALUE && path == AdmissionUmdRegTracePath) {
++      if (registryBytes >= ADMISSION_UMD_REG_TRACE_MAX_BYTES)
++        file = INVALID_HANDLE_VALUE;
++      else
++        registryBytes += AdmissionUmdTraceUsed;
++    }
++  }
+   if (file != INVALID_HANDLE_VALUE)
+     (void)WriteFile(file, AdmissionUmdTraceBuffer, AdmissionUmdTraceUsed,
+                     &written, NULL);

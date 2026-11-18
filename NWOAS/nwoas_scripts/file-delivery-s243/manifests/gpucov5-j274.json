@@ -1,0 +1,35 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "dxgi-trace-proxy-arm64.dll",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/bin/dxgi-trace-proxy-arm64.dll",
+   "bytes": 139776,
+   "sha256": "6796b8d625253f82411c38553572ad549fa1b43caa3dd5efdf55601b2e56667f"
+  },
+  {
+   "name": "d3d11-warp-proxy-arm64.dll",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/bin/d3d11-warp-proxy-arm64.dll",
+   "bytes": 137728,
+   "sha256": "28c3392315c1e278953e5728aa71e792506ac0b0daaffc9cfb7e9161fc6031d7"
+  },
+  {
+   "name": "cb26ui2.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/ps/cb26ui2.ps1",
+   "bytes": 2106,
+   "sha256": "695681b8bb512be50ae84f88fbaa621fb4e6b51fe490145cfda8615b982edea4"
+  },
+  {
+   "name": "wintree.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/ps/wintree.ps1",
+   "bytes": 3416,
+   "sha256": "eaed2df3bc00f392ca4cbd6125af571b4c8ef8c86391edbca24d3a89d019dc16"
+  },
+  {
+   "name": "edge2.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/ps/edge2.ps1",
+   "bytes": 4880,
+   "sha256": "89b4cb8050e7b8bbb5e3990543e0cdb9d42bffe49a63a4681f18c6aa2d833b8a"
+  }
+ ]
+}

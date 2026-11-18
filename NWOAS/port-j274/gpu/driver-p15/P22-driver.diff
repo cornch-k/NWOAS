@@ -1,0 +1,28 @@
+--- a/drivers/apple-agx/render-admission/src/allocation_windows.c (2757 P21)
++++ b/drivers/apple-agx/render-admission/src/allocation_windows.c (2758 P22)
+@@ -87,6 +87,25 @@
+     return Context->PoolBytes &
+            ~(ULONGLONG)(ADMISSION_ALLOCATION_ALIGNMENT - 1u);
+ #endif
++#if defined(APPLE_AGX_BOARD_J274)
++  /* NWOAS-J274 PATCH P22: without a pool window (NWOAS_AGX_POOL_IPA=0, the
++   * J274 launchers since S249) General BOs are placed in segment 2, the
++   * firmware-reserved local segment (1 GiB reserve - 64 MiB private - 8 MiB
++   * backend = 952 MiB). M2-f7 sizes the General class by "the segment it is
++   * placed in"; that segment is segment 2 here, so report its size rather
++   * than the 16 MiB legacy arena bound. With the legacy bound every D3D12
++   * heap, committed buffer or texture above 16 MiB was refused before
++   * AllocateCb (AgxWin32ScreenCreateBuffer: Bytes > MaximumBytes), and the
++   * runtime returned E_OUTOFMEMORY while DXGI reported ~1 GB of dedicated
++   * memory. Segment 2 is 16 KiB-contiguous and fully UAT-mapped, and the
++   * hypervisor GPUVA broker admits all of it (HV_AGX_GPUVA_V5_LOCAL_PAGES =
++   * 1 GiB). Shader and encoder classes keep their own arena bounds. */
++  if (Context != NULL && AdmissionMemoryReady(&Context->Memory) &&
++      Context->Memory.LocalAllocationBytes >
++          ADMISSION_WIN32_ALLOCATION_LEGACY_MAX_BYTES)
++    return Context->Memory.LocalAllocationBytes &
++           ~(ULONGLONG)(ADMISSION_ALLOCATION_ALIGNMENT - 1u);
++#endif
+   UNREFERENCED_PARAMETER(Context);
+   return ADMISSION_WIN32_ALLOCATION_LEGACY_MAX_BYTES;
+ }

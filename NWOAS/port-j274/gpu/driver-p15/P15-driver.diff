@@ -1,0 +1,526 @@
+diff -ru driver-p14/drivers/apple-agx/render-admission/src/display.c driver-p15/drivers/apple-agx/render-admission/src/display.c
+--- driver-p14/drivers/apple-agx/render-admission/src/display.c	2026-11-15 19:39:30
++++ driver-p15/drivers/apple-agx/render-admission/src/display.c	2026-11-16 13:11:33
+@@ -8,6 +8,19 @@
+ static VOID AdmissionFillPanelSignalInfo(D3DKMDT_VIDEO_SIGNAL_INFO *Signal) {
+   RtlZeroMemory(Signal, sizeof(*Signal));
+   Signal->VideoStandard = D3DKMDT_VSS_OTHER;
++#if defined(APPLE_AGX_BOARD_J274)
++  /* NWOAS-J274 PATCH P15: CEA-861 1080p60 (148.5 MHz, 2200x1125). */
++  Signal->ActiveSize.cx = 1920u;
++  Signal->ActiveSize.cy = 1080u;
++  Signal->TotalSize.cx = 2200u;
++  Signal->TotalSize.cy = 1125u;
++  Signal->PixelRate = 148500000ULL;
++  Signal->HSyncFreq.Numerator = 148500000u;
++  Signal->HSyncFreq.Denominator = 2200u;
++  Signal->VSyncFreq.Numerator = 148500000u;
++  Signal->VSyncFreq.Denominator = 2200u * 1125u;
++  Signal->ScanLineOrdering = D3DDDI_VSSLO_PROGRESSIVE;
++#else
+   Signal->ActiveSize.cx = 2560u;
+   Signal->ActiveSize.cy = 1600u;
+   Signal->TotalSize.cx = 2642u;
+@@ -18,6 +31,7 @@
+   Signal->VSyncFreq.Numerator = 266630000u;
+   Signal->VSyncFreq.Denominator = 2642u * 1682u;
+   Signal->ScanLineOrdering = D3DDDI_VSSLO_PROGRESSIVE;
++#endif
+ }
+ 
+ _Use_decl_annotations_ NTSTATUS AdmissionDdiUpdateMonitorLinkInfo(
+diff -ru driver-p14/drivers/apple-agx/render-admission/src/scanout_windows.c driver-p15/drivers/apple-agx/render-admission/src/scanout_windows.c
+--- driver-p14/drivers/apple-agx/render-admission/src/scanout_windows.c	2026-11-15 19:39:30
++++ driver-p15/drivers/apple-agx/render-admission/src/scanout_windows.c	2026-11-16 13:07:50
+@@ -51,8 +51,257 @@
+   ULONG PresentCount;
+   ADMISSION_PRESENT_QUERY PresentHistory[ADMISSION_PRESENT_QUERY_CAPACITY];
+ #endif
++#if defined(APPLE_AGX_BOARD_J274)
++  /* NWOAS-J274 PATCH P15: software scanout broker.  The Mac mini HV has no
++   * DCP scanout service; the broker ABI v2 at MMIO +0x400 is answered here
++   * and PRESENT copies the pool surface into the POST HDMI framebuffer. */
++  KDPC SoftLatchDpc;
++  volatile UCHAR *SoftFb;
++  SIZE_T SoftFbBytes;
++  ULONG SoftFbPitch;
++  volatile UCHAR *SoftPool;
++  SIZE_T SoftPoolBytes;
++  ULONGLONG SoftPoolIpa;
++  ULONG SoftState;
++  ULONG SoftResult;
++  ULONG SoftIrqEnable;
++  ULONG SoftSwapId;
++  ULONG SoftWidth, SoftHeight, SoftStride, SoftFormat;
++  volatile LONG SoftIrqStatus;
++  volatile LONG SoftLatchPending;
++  volatile LONG64 SoftReceipt;
++  volatile LONG64 SoftApplied;
++  volatile LONG64 SoftLatched;
++  ULONGLONG SoftActiveOffset;
++  ULONGLONG SoftAccepted, SoftRejected;
++  ULONGLONG SoftReqPoolIpa, SoftReqPoolSize;
++  ULONGLONG SoftSurfaceOffset, SoftSurfaceSize;
++  ULONGLONG SoftRequestSequence;
++  ULONGLONG SoftPresentCount;
++#endif
+ } ADMISSION_SCANOUT_RUNTIME;
+ 
++#if defined(APPLE_AGX_BOARD_J274)
++#define ADMISSION_SCANOUT_SOFT_UNMAP(r) AdmissionScanoutSoftUnmap(r)
++#else
++#define ADMISSION_SCANOUT_SOFT_UNMAP(r) ((void)0)
++#endif
++
++#if defined(APPLE_AGX_BOARD_J274)
++static BOOLEAN AdmissionScanoutSoftOwns(APPLE_AGX_SCANOUT_U32 Offset,
++                                        APPLE_AGX_SCANOUT_U32 Width) {
++  return Offset >= APPLE_AGX_SCANOUT_MMIO_OFFSET &&
++                 Offset - APPLE_AGX_SCANOUT_MMIO_OFFSET + Width <=
++                     APPLE_AGX_SCANOUT_MMIO_SIZE
++             ? TRUE
++             : FALSE;
++}
++
++static APPLE_AGX_SCANOUT_U32 AdmissionScanoutSoftRead32(
++    ADMISSION_SCANOUT_RUNTIME *R, APPLE_AGX_SCANOUT_U32 Reg) {
++  switch (Reg) {
++  case APPLE_AGX_SCANOUT_REG_MAGIC: return APPLE_AGX_SCANOUT_MAGIC;
++  case APPLE_AGX_SCANOUT_REG_ABI_VERSION: return APPLE_AGX_SCANOUT_ABI_VERSION_V2;
++  case APPLE_AGX_SCANOUT_REG_CAPABILITIES:
++    return APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES;
++  case APPLE_AGX_SCANOUT_REG_STATE: return R->SoftState;
++  case APPLE_AGX_SCANOUT_REG_RESULT: return R->SoftResult;
++  case APPLE_AGX_SCANOUT_REG_IRQ_STATUS:
++    return (APPLE_AGX_SCANOUT_U32)InterlockedCompareExchange(&R->SoftIrqStatus, 0, 0);
++  case APPLE_AGX_SCANOUT_REG_IRQ_ENABLE: return R->SoftIrqEnable;
++  case APPLE_AGX_SCANOUT_REG_SWAP_ID: return R->SoftSwapId;
++  case APPLE_AGX_SCANOUT_REG_WIDTH: return R->SoftWidth;
++  case APPLE_AGX_SCANOUT_REG_HEIGHT: return R->SoftHeight;
++  case APPLE_AGX_SCANOUT_REG_STRIDE: return R->SoftStride;
++  case APPLE_AGX_SCANOUT_REG_FORMAT: return R->SoftFormat;
++  default: return 0u;
++  }
++}
++
++static APPLE_AGX_SCANOUT_U64 AdmissionScanoutSoftRead64(
++    ADMISSION_SCANOUT_RUNTIME *R, APPLE_AGX_SCANOUT_U32 Reg) {
++  switch (Reg) {
++  case APPLE_AGX_SCANOUT_REG_RECEIPT_SEQUENCE:
++    return (APPLE_AGX_SCANOUT_U64)InterlockedCompareExchange64(&R->SoftReceipt, 0, 0);
++  case APPLE_AGX_SCANOUT_REG_APPLIED_SEQUENCE:
++    return (APPLE_AGX_SCANOUT_U64)InterlockedCompareExchange64(&R->SoftApplied, 0, 0);
++  case APPLE_AGX_SCANOUT_REG_LATCHED_SEQUENCE:
++    return (APPLE_AGX_SCANOUT_U64)InterlockedCompareExchange64(&R->SoftLatched, 0, 0);
++  case APPLE_AGX_SCANOUT_REG_ACTIVE_OFFSET: return R->SoftActiveOffset;
++  case APPLE_AGX_SCANOUT_REG_POOL_PA: return R->SoftPoolIpa;
++  case APPLE_AGX_SCANOUT_REG_ACCEPTED_REQUESTS: return R->SoftAccepted;
++  case APPLE_AGX_SCANOUT_REG_REJECTED_REQUESTS: return R->SoftRejected;
++  case APPLE_AGX_SCANOUT_REG_POOL_IPA: return R->SoftReqPoolIpa;
++  case APPLE_AGX_SCANOUT_REG_POOL_SIZE: return R->SoftReqPoolSize;
++  case APPLE_AGX_SCANOUT_REG_SURFACE_OFFSET: return R->SoftSurfaceOffset;
++  case APPLE_AGX_SCANOUT_REG_SURFACE_SIZE: return R->SoftSurfaceSize;
++  case APPLE_AGX_SCANOUT_REG_REQUEST_SEQUENCE: return R->SoftRequestSequence;
++  default: return 0ULL;
++  }
++}
++
++/* PRESENT: linear BGRA8888 rows of the pool surface into the framebuffer.
++ * Both mappings are non-paged write-combined, so any IRQL may copy. */
++static APPLE_AGX_SCANOUT_U32 AdmissionScanoutSoftPresent(
++    ADMISSION_SCANOUT_RUNTIME *R) {
++  ULONGLONG bytes = (ULONGLONG)R->SoftStride * R->SoftHeight;
++  ULONG row;
++  if (R->SoftState != APPLE_AGX_SCANOUT_STATE_READY &&
++      R->SoftState != APPLE_AGX_SCANOUT_STATE_ACTIVE)
++    return APPLE_AGX_SCANOUT_BROKER_INVALID_POOL;
++  if (R->SoftFb == NULL || R->SoftPool == NULL ||
++      R->SoftWidth != APPLE_AGX_SCANOUT_J313_WIDTH ||
++      R->SoftHeight != APPLE_AGX_SCANOUT_J313_HEIGHT ||
++      R->SoftStride != APPLE_AGX_SCANOUT_J313_STRIDE ||
++      R->SoftFormat != APPLE_AGX_SCANOUT_FORMAT_BGRA8888 ||
++      R->SoftSurfaceSize < bytes ||
++      (R->SoftSurfaceOffset & (APPLE_AGX_SCANOUT_ALIGNMENT - 1ULL)) != 0ULL ||
++      R->SoftSurfaceOffset > R->SoftPoolBytes ||
++      bytes > R->SoftPoolBytes - R->SoftSurfaceOffset ||
++      (ULONGLONG)R->SoftFbPitch * R->SoftHeight > R->SoftFbBytes ||
++      (ULONGLONG)R->SoftWidth * 4u > R->SoftFbPitch)
++    return APPLE_AGX_SCANOUT_BROKER_INVALID_SURFACE;
++  for (row = 0u; row < R->SoftHeight; ++row)
++    RtlCopyMemory((PVOID)(R->SoftFb + (SIZE_T)row * R->SoftFbPitch),
++                  (const VOID *)(R->SoftPool + R->SoftSurfaceOffset +
++                                 (SIZE_T)row * R->SoftStride),
++                  (SIZE_T)R->SoftWidth * 4u);
++  R->SoftActiveOffset = R->SoftSurfaceOffset;
++  if (++R->SoftSwapId == 0u)
++    R->SoftSwapId = 1u;
++  R->SoftState = APPLE_AGX_SCANOUT_STATE_ACTIVE;
++  R->SoftPresentCount++;
++  return APPLE_AGX_SCANOUT_BROKER_OK;
++}
++
++static VOID AdmissionScanoutSoftCommand(ADMISSION_SCANOUT_RUNTIME *R,
++                                        APPLE_AGX_SCANOUT_U32 Command) {
++  ULONGLONG seq = R->SoftRequestSequence;
++  APPLE_AGX_SCANOUT_U32 result = APPLE_AGX_SCANOUT_BROKER_OK;
++  if (seq == 0ULL ||
++      seq <= (ULONGLONG)InterlockedCompareExchange64(&R->SoftReceipt, 0, 0)) {
++    R->SoftResult = APPLE_AGX_SCANOUT_BROKER_STALE_SEQUENCE;
++    R->SoftRejected++;
++    return;
++  }
++  switch (Command) {
++  case APPLE_AGX_SCANOUT_CMD_QUERY:
++    break;
++  case APPLE_AGX_SCANOUT_CMD_REGISTER_POOL:
++    if (R->SoftState != APPLE_AGX_SCANOUT_STATE_UNREGISTERED)
++      result = APPLE_AGX_SCANOUT_BROKER_BUSY;
++    else if (R->SoftPool == NULL || R->SoftFb == NULL ||
++             R->SoftReqPoolIpa != R->SoftPoolIpa ||
++             R->SoftReqPoolSize == 0ULL ||
++             R->SoftReqPoolSize > R->SoftPoolBytes)
++      result = APPLE_AGX_SCANOUT_BROKER_INVALID_POOL;
++    else
++      R->SoftState = APPLE_AGX_SCANOUT_STATE_READY;
++    break;
++  case APPLE_AGX_SCANOUT_CMD_PRESENT:
++    result = AdmissionScanoutSoftPresent(R);
++    if (result == APPLE_AGX_SCANOUT_BROKER_OK) {
++      InterlockedExchange64(&R->SoftLatched, (LONG64)seq);
++      InterlockedExchange(&R->SoftLatchPending, 1);
++    }
++    break;
++  case APPLE_AGX_SCANOUT_CMD_RELEASE:
++    R->SoftState = APPLE_AGX_SCANOUT_STATE_UNREGISTERED;
++    break;
++  default:
++    result = APPLE_AGX_SCANOUT_BROKER_INVALID_COMMAND;
++    break;
++  }
++  R->SoftResult = result;
++  if (result == APPLE_AGX_SCANOUT_BROKER_OK) {
++    InterlockedExchange64(&R->SoftApplied, (LONG64)seq);
++    R->SoftAccepted++;
++  } else {
++    R->SoftRejected++;
++  }
++  InterlockedExchange64(&R->SoftReceipt, (LONG64)seq);
++}
++
++static VOID AdmissionScanoutSoftWrite32(ADMISSION_SCANOUT_RUNTIME *R,
++                                        APPLE_AGX_SCANOUT_U32 Reg,
++                                        APPLE_AGX_SCANOUT_U32 Value) {
++  switch (Reg) {
++  case APPLE_AGX_SCANOUT_REG_IRQ_STATUS:
++    InterlockedAnd(&R->SoftIrqStatus, ~(LONG)Value);
++    break;
++  case APPLE_AGX_SCANOUT_REG_IRQ_ENABLE: R->SoftIrqEnable = Value; break;
++  case APPLE_AGX_SCANOUT_REG_WIDTH: R->SoftWidth = Value; break;
++  case APPLE_AGX_SCANOUT_REG_HEIGHT: R->SoftHeight = Value; break;
++  case APPLE_AGX_SCANOUT_REG_STRIDE: R->SoftStride = Value; break;
++  case APPLE_AGX_SCANOUT_REG_FORMAT: R->SoftFormat = Value; break;
++  case APPLE_AGX_SCANOUT_REG_COMMAND: AdmissionScanoutSoftCommand(R, Value); break;
++  default: break;
++  }
++}
++
++static VOID AdmissionScanoutSoftWrite64(ADMISSION_SCANOUT_RUNTIME *R,
++                                        APPLE_AGX_SCANOUT_U32 Reg,
++                                        APPLE_AGX_SCANOUT_U64 Value) {
++  switch (Reg) {
++  case APPLE_AGX_SCANOUT_REG_POOL_IPA: R->SoftReqPoolIpa = Value; break;
++  case APPLE_AGX_SCANOUT_REG_POOL_SIZE: R->SoftReqPoolSize = Value; break;
++  case APPLE_AGX_SCANOUT_REG_SURFACE_OFFSET: R->SoftSurfaceOffset = Value; break;
++  case APPLE_AGX_SCANOUT_REG_SURFACE_SIZE: R->SoftSurfaceSize = Value; break;
++  case APPLE_AGX_SCANOUT_REG_REQUEST_SEQUENCE: R->SoftRequestSequence = Value; break;
++  default: break;
++  }
++}
++
++static VOID AdmissionScanoutSoftUnmap(ADMISSION_SCANOUT_RUNTIME *R) {
++  if (R->SoftFb != NULL)
++    MmUnmapIoSpace((PVOID)R->SoftFb, R->SoftFbBytes);
++  if (R->SoftPool != NULL)
++    MmUnmapIoSpace((PVOID)R->SoftPool, R->SoftPoolBytes);
++  R->SoftFb = NULL;
++  R->SoftPool = NULL;
++}
++
++/* PASSIVE.  Adopt only the exact POST geometry the J274 build offers. */
++static NTSTATUS AdmissionScanoutSoftMap(ADMISSION_CONTEXT *Context,
++                                        ADMISSION_SCANOUT_RUNTIME *R,
++                                        const ADMISSION_SCANOUT_MEMORY_VIEW *Memory) {
++  const DXGK_DISPLAY_INFORMATION *post = &Context->PostDisplayInformation;
++  PHYSICAL_ADDRESS pa;
++  if (post->Width != APPLE_AGX_SCANOUT_J313_WIDTH ||
++      post->Height != APPLE_AGX_SCANOUT_J313_HEIGHT ||
++      post->Pitch < APPLE_AGX_SCANOUT_J313_WIDTH * 4u ||
++      post->PhysicAddress.QuadPart == 0 ||
++      (post->ColorFormat != D3DDDIFMT_A8R8G8B8 &&
++       post->ColorFormat != D3DDDIFMT_X8R8G8B8))
++    return STATUS_GRAPHICS_INVALID_DISPLAY_ADAPTER;
++  R->SoftFbPitch = post->Pitch;
++  R->SoftFbBytes = (SIZE_T)post->Pitch * post->Height;
++  R->SoftFb = (volatile UCHAR *)MmMapIoSpaceEx(
++      post->PhysicAddress, R->SoftFbBytes, PAGE_READWRITE | PAGE_WRITECOMBINE);
++  if (R->SoftFb == NULL)
++    return STATUS_INSUFFICIENT_RESOURCES;
++  pa.QuadPart = (LONGLONG)Memory->GuestIpaAddress;
++  R->SoftPoolIpa = Memory->GuestIpaAddress;
++  R->SoftPoolBytes = (SIZE_T)Memory->PoolBytes;
++  R->SoftPool = (volatile UCHAR *)MmMapIoSpaceEx(
++      pa, R->SoftPoolBytes, PAGE_READWRITE | PAGE_WRITECOMBINE);
++  if (R->SoftPool == NULL) {
++    AdmissionScanoutSoftUnmap(R);
++    return STATUS_INSUFFICIENT_RESOURCES;
++  }
++  R->SoftState = APPLE_AGX_SCANOUT_STATE_UNREGISTERED;
++  return STATUS_SUCCESS;
++}
++
++static KDEFERRED_ROUTINE AdmissionScanoutSoftLatchDpc;
++
++/* After the pending flip is recorded: raise LATCHED and run the ISR path. */
++static VOID AdmissionScanoutSoftKick(ADMISSION_SCANOUT_RUNTIME *R) {
++  if (InterlockedCompareExchange(&R->SoftLatchPending, 0, 0) != 0)
++    (void)KeInsertQueueDpc(&R->SoftLatchDpc, NULL, NULL);
++}
++#endif
++
+ _Use_decl_annotations_ ULONG AdmissionScanoutReceiptState(
+     ADMISSION_CONTEXT *Context) {
+   ADMISSION_SCANOUT_RUNTIME *runtime = Context->ScanoutRuntime;
+@@ -81,6 +330,13 @@
+       runtime->Adapter->BrokerBase == NULL ||
+       !AdmissionScanoutOffsetValid(Offset, sizeof(*Value)))
+     return APPLE_AGX_SCANOUT_FALSE;
++#if defined(APPLE_AGX_BOARD_J274)
++  if (AdmissionScanoutSoftOwns(Offset, sizeof(*Value))) {
++    *Value = AdmissionScanoutSoftRead32(runtime,
++                                        Offset - APPLE_AGX_SCANOUT_MMIO_OFFSET);
++    return APPLE_AGX_SCANOUT_TRUE;
++  }
++#endif
+   *Value = READ_REGISTER_ULONG(
+       (volatile ULONG *)(runtime->Adapter->BrokerBase + Offset));
+   return APPLE_AGX_SCANOUT_TRUE;
+@@ -94,6 +350,13 @@
+       runtime->Adapter->BrokerBase == NULL ||
+       !AdmissionScanoutOffsetValid(Offset, sizeof(*Value)))
+     return APPLE_AGX_SCANOUT_FALSE;
++#if defined(APPLE_AGX_BOARD_J274)
++  if (AdmissionScanoutSoftOwns(Offset, sizeof(*Value))) {
++    *Value = AdmissionScanoutSoftRead64(runtime,
++                                        Offset - APPLE_AGX_SCANOUT_MMIO_OFFSET);
++    return APPLE_AGX_SCANOUT_TRUE;
++  }
++#endif
+   *Value = READ_REGISTER_ULONG64(
+       (volatile ULONG64 *)(runtime->Adapter->BrokerBase + Offset));
+   return APPLE_AGX_SCANOUT_TRUE;
+@@ -107,6 +370,13 @@
+       runtime->Adapter->BrokerBase == NULL ||
+       !AdmissionScanoutOffsetValid(Offset, sizeof(Value)))
+     return APPLE_AGX_SCANOUT_FALSE;
++#if defined(APPLE_AGX_BOARD_J274)
++  if (AdmissionScanoutSoftOwns(Offset, sizeof(Value))) {
++    AdmissionScanoutSoftWrite32(runtime, Offset - APPLE_AGX_SCANOUT_MMIO_OFFSET,
++                                Value);
++    return APPLE_AGX_SCANOUT_TRUE;
++  }
++#endif
+   WRITE_REGISTER_ULONG(
+       (volatile ULONG *)(runtime->Adapter->BrokerBase + Offset), Value);
+   return APPLE_AGX_SCANOUT_TRUE;
+@@ -120,6 +390,13 @@
+       runtime->Adapter->BrokerBase == NULL ||
+       !AdmissionScanoutOffsetValid(Offset, sizeof(Value)))
+     return APPLE_AGX_SCANOUT_FALSE;
++#if defined(APPLE_AGX_BOARD_J274)
++  if (AdmissionScanoutSoftOwns(Offset, sizeof(Value))) {
++    AdmissionScanoutSoftWrite64(runtime, Offset - APPLE_AGX_SCANOUT_MMIO_OFFSET,
++                                Value);
++    return APPLE_AGX_SCANOUT_TRUE;
++  }
++#endif
+   WRITE_REGISTER_ULONG64(
+       (volatile ULONG64 *)(runtime->Adapter->BrokerBase + Offset), Value);
+   return APPLE_AGX_SCANOUT_TRUE;
+@@ -557,6 +834,9 @@
+   KeInitializeSpinLock(&runtime->TimerLock);
+   KeInitializeTimer(&runtime->VsyncTimer);
+   KeInitializeDpc(&runtime->VsyncDpc, AdmissionScanoutTimerDpc, runtime);
++#if defined(APPLE_AGX_BOARD_J274)
++  KeInitializeDpc(&runtime->SoftLatchDpc, AdmissionScanoutSoftLatchDpc, runtime);
++#endif
+   runtime->Timeline.Running = APPLE_AGX_SCANOUT_TRUE;
+   runtime->Timeline.Enabled = APPLE_AGX_SCANOUT_TRUE;
+   runtime->VsyncNotifyEnabled = 1;
+@@ -571,6 +851,15 @@
+   AdmissionDisplayOutputLeaseInitialize(&runtime->ActiveLease);
+   AdmissionDisplayOutputLeaseInitialize(&runtime->FallbackLease);
+ #endif
++#if defined(APPLE_AGX_BOARD_J274)
++  {
++    NTSTATUS soft = AdmissionScanoutSoftMap(Context, runtime, &memory);
++    if (!NT_SUCCESS(soft)) {
++      ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
++      return soft;
++    }
++  }
++#endif
+   RtlZeroMemory(&io, sizeof(io));
+   io.Context = runtime;
+   io.NowMs = AdmissionScanoutNow;
+@@ -583,6 +872,7 @@
+       &runtime->Panel, &io, memory.GuestIpaAddress, memory.PoolBytes, 1ULL,
+       ADMISSION_SCANOUT_MAX_POLLS);
+   if (result != AppleAgxFixedPanelOk) {
++    ADMISSION_SCANOUT_SOFT_UNMAP(runtime);
+     ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
+     return STATUS_INVALID_PARAMETER;
+   }
+@@ -593,6 +883,7 @@
+       (runtime->Panel.Scanout.Capabilities &
+        APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES) !=
+           APPLE_AGX_SCANOUT_V2_PRESENT_CAPABILITIES) {
++    ADMISSION_SCANOUT_SOFT_UNMAP(runtime);
+     ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
+     return STATUS_NOT_SUPPORTED;
+   }
+@@ -604,6 +895,7 @@
+       Context->ScanoutRuntime = runtime;
+       return STATUS_DEVICE_BUSY;
+     }
++    ADMISSION_SCANOUT_SOFT_UNMAP(runtime);
+     ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
+     return STATUS_DEVICE_HARDWARE_ERROR;
+   }
+@@ -650,6 +942,9 @@
+     (void)KeCancelTimer(&runtime->VsyncTimer);
+     runtime->TimerArmed = FALSE;
+     (void)KeRemoveQueueDpc(&runtime->VsyncDpc);
++#if defined(APPLE_AGX_BOARD_J274)
++    (void)KeRemoveQueueDpc(&runtime->SoftLatchDpc);
++#endif
+     KeReleaseSpinLock(&runtime->TimerLock, oldIrql);
+     /* No rearm is possible once Stopping is published under TimerLock. */
+     KeFlushQueuedDpcs();
+@@ -694,6 +989,7 @@
+     return STATUS_DEVICE_BUSY;
+ #endif
+   Context->ScanoutRuntime = NULL;
++  ADMISSION_SCANOUT_SOFT_UNMAP(runtime);
+   ExFreePoolWithTag(runtime, ADMISSION_SCANOUT_TAG);
+   return STATUS_SUCCESS;
+ }
+@@ -1104,6 +1400,9 @@
+                         InterlockedExchange64(&runtime->NextMpoPresentId, 0));
+   InterlockedExchange(&runtime->PendingMpo,
+                       InterlockedExchange(&runtime->NextMpo, 0));
++#if defined(APPLE_AGX_BOARD_J274)
++  AdmissionScanoutSoftKick(runtime);
++#endif
+   return STATUS_SUCCESS;
+ }
+ 
+@@ -1294,6 +1593,9 @@
+                         InterlockedExchange64(&runtime->NextMpoPresentId, 0));
+   InterlockedExchange(&runtime->PendingMpo,
+                       InterlockedExchange(&runtime->NextMpo, 0));
++#if defined(APPLE_AGX_BOARD_J274)
++  AdmissionScanoutSoftKick(runtime);
++#endif
+ #if defined(APPLE_AGX_VISIBLE_AGX_QUALIFICATION)
+   if (fallbackCandidateValid) {
+     BOOLEAN retained;
+@@ -1478,6 +1780,36 @@
+     ADMISSION_CONTEXT *Context) {
+   return AdmissionScanoutProcessInterrupt(Context, FALSE);
+ }
++
++#if defined(APPLE_AGX_BOARD_J274)
++/* DIRQL (DxgkCbSynchronizeExecution): publish the software latch exactly
++ * like the HV broker's LATCHED interrupt, then run the normal ISR path. */
++static BOOLEAN AdmissionScanoutSoftInterrupt(PVOID Opaque) {
++  ADMISSION_SCANOUT_RUNTIME *runtime = Opaque;
++  if (runtime == NULL)
++    return FALSE;
++  if (InterlockedExchange(&runtime->SoftLatchPending, 0) != 0 &&
++      (runtime->SoftIrqEnable & APPLE_AGX_SCANOUT_IRQ_LATCHED) != 0u)
++    InterlockedOr(&runtime->SoftIrqStatus, (LONG)APPLE_AGX_SCANOUT_IRQ_LATCHED);
++  (void)AdmissionScanoutProcessInterrupt(runtime->Adapter, FALSE);
++  return TRUE;
++}
++
++_Use_decl_annotations_ static VOID AdmissionScanoutSoftLatchDpc(
++    KDPC *Dpc, PVOID Opaque, PVOID Arg1, PVOID Arg2) {
++  ADMISSION_SCANOUT_RUNTIME *runtime = Opaque;
++  BOOLEAN done = FALSE;
++  UNREFERENCED_PARAMETER(Dpc);
++  UNREFERENCED_PARAMETER(Arg1);
++  UNREFERENCED_PARAMETER(Arg2);
++  if (runtime == NULL || runtime->Adapter == NULL ||
++      InterlockedCompareExchange(&runtime->Stopping, 0, 0) != 0)
++    return;
++  (void)runtime->Adapter->Interface.DxgkCbSynchronizeExecution(
++      runtime->Adapter->Interface.DeviceHandle, AdmissionScanoutSoftInterrupt,
++      runtime, 0u, &done);
++}
++#endif
+ 
+ static BOOLEAN AdmissionScanoutVsyncTick(PVOID Opaque) {
+   ADMISSION_SCANOUT_RUNTIME *runtime = Opaque;
+diff -ru driver-p14/drivers/apple-agx/shared/include/apple_agx_fixed_panel_modes.h driver-p15/drivers/apple-agx/shared/include/apple_agx_fixed_panel_modes.h
+--- driver-p14/drivers/apple-agx/shared/include/apple_agx_fixed_panel_modes.h	2026-11-15 19:39:30
++++ driver-p15/drivers/apple-agx/shared/include/apple_agx_fixed_panel_modes.h	2026-11-16 13:05:38
+@@ -15,6 +15,16 @@
+  * dcp_iomfb_present_build_v13_5: stride & 63 must be zero); 1366x768 is
+  * therefore not offered.  Every height is even, so Stride * Height is a
+  * multiple of 128 and the cache-line padded UMD allocation size equals it. */
++#if defined(APPLE_AGX_BOARD_J274)
++/* NWOAS-J274 PATCH P15: one source mode, the POST HDMI framebuffer.  The
++ * software scanout broker never advertises CAP_SCALED_SOURCE. */
++#define APPLE_AGX_FIXED_PANEL_MODE_COUNT 1u
++
++static const unsigned int
++    AppleAgxFixedPanelModeSizes[APPLE_AGX_FIXED_PANEL_MODE_COUNT][2] = {
++        {1920u, 1080u},
++};
++#else
+ #define APPLE_AGX_FIXED_PANEL_MODE_COUNT 11u
+ 
+ static const unsigned int
+@@ -23,6 +33,7 @@
+         {1680u, 1050u}, {1600u, 900u},  {1440u, 900u},  {1280u, 800u},
+         {1280u, 720u},  {1024u, 768u},  {800u, 600u},
+ };
++#endif
+ 
+ /* Index of Width x Height in the table, or APPLE_AGX_FIXED_PANEL_MODE_COUNT
+  * when it is not an offered source mode. */
+diff -ru driver-p14/drivers/apple-agx/shared/include/apple_agx_scanout.h driver-p15/drivers/apple-agx/shared/include/apple_agx_scanout.h
+--- driver-p14/drivers/apple-agx/shared/include/apple_agx_scanout.h	2026-11-15 19:39:30
++++ driver-p15/drivers/apple-agx/shared/include/apple_agx_scanout.h	2026-11-16 13:05:38
+@@ -41,10 +41,21 @@
+    APPLE_AGX_SCANOUT_CAP_REPEATED_PRESENT |                                  \
+    APPLE_AGX_SCANOUT_CAP_LATCHED_RECEIPT | APPLE_AGX_SCANOUT_CAP_LATCHED_IRQ)
+ 
++#if defined(APPLE_AGX_BOARD_J274)
++/* NWOAS-J274 PATCH P15: the Mac mini has no fixed panel.  The native source
++ * is the HDMI linear framebuffer m1n1 hands over at POST (1920x1080, 32 bpp,
++ * stride 7680; S244 probe on the 13.5 stub).  Any other POST geometry is
++ * refused by the post-display route exactly like a non-J313 panel. */
++#define APPLE_AGX_SCANOUT_J313_WIDTH 1920u
++#define APPLE_AGX_SCANOUT_J313_HEIGHT 1080u
++#define APPLE_AGX_SCANOUT_J313_STRIDE 7680u
++#define APPLE_AGX_SCANOUT_J313_SURFACE_SIZE 0x7e9000ULL
++#else
+ #define APPLE_AGX_SCANOUT_J313_WIDTH 2560u
+ #define APPLE_AGX_SCANOUT_J313_HEIGHT 1600u
+ #define APPLE_AGX_SCANOUT_J313_STRIDE 10240u
+ #define APPLE_AGX_SCANOUT_J313_SURFACE_SIZE 0xfa0000ULL
++#endif
+ /* M2-f2c: the pool is segment 2 of the receipt-sized reserve; this is its
+  * J313 maximum (a 1 GiB reserve less the private span and backend arena). */
+ #define APPLE_AGX_SCANOUT_J313_POOL_MAX_SIZE 0x3b800000ULL

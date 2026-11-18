@@ -1,0 +1,180 @@
+S260 H4 BEGIN
+S260 CPUSET id=256 lp=0 core=0 llc=0 efficiency_class=0 sched_class=0 flags=0
+S260 CPUSET id=257 lp=1 core=1 llc=1 efficiency_class=0 sched_class=0 flags=0
+S260 CPUSET id=258 lp=2 core=2 llc=2 efficiency_class=0 sched_class=0 flags=1
+S260 CPUSET id=259 lp=3 core=3 llc=3 efficiency_class=0 sched_class=0 flags=1
+S260 CPUSET id=260 lp=4 core=4 llc=4 efficiency_class=0 sched_class=0 flags=1
+S260 CPUSET id=261 lp=5 core=5 llc=5 efficiency_class=0 sched_class=0 flags=1
+S260 CPUSET id=262 lp=6 core=6 llc=6 efficiency_class=0 sched_class=0 flags=1
+S260 CPUSET id=263 lp=7 core=7 llc=7 efficiency_class=0 sched_class=0 flags=1
+S260 CPUSET count=8 active=8
+NWSTAT-SET wfi=0 sectick=0
+S260 H4 PHASE w0s0
+S260 IDLE cpu=0 busy_pct=4.6 dpc_pct=0.0 intr_pct=2.0 interrupts_per_s=27537
+S260 IDLE cpu=1 busy_pct=2.6 dpc_pct=0.0 intr_pct=2.0 interrupts_per_s=27401
+S260 IDLE cpu=2 busy_pct=3.6 dpc_pct=0.0 intr_pct=3.6 interrupts_per_s=16377
+S260 IDLE cpu=3 busy_pct=4.6 dpc_pct=0.0 intr_pct=3.6 interrupts_per_s=16135
+S260 IDLE cpu=4 busy_pct=0.5 dpc_pct=0.0 intr_pct=0.5 interrupts_per_s=2606
+S260 IDLE cpu=5 busy_pct=1.0 dpc_pct=0.0 intr_pct=1.0 interrupts_per_s=2222
+S260 IDLE cpu=6 busy_pct=1.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=998
+S260 IDLE cpu=7 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=35
+S260 IDLE seconds_measured_ms=3000 cpus=8 interrupts_per_s_total=93315
+NWSTAT-MARK w0s0-load8-begin
+S260 LOAD mode=default prio_class_before=0x00004000 set_prio_ok=1 set_throttle_ok=1
+S260 LOAD thread=0 Mops=5784 ran_on=cpu0:1468 cpu1:385 cpu2:887 cpu3:3044 
+S260 LOAD thread=1 Mops=5934 ran_on=cpu0:1081 cpu1:2383 cpu2:887 cpu3:1086 cpu4:172 cpu5:154 cpu6:80 cpu7:91 
+S260 LOAD thread=2 Mops=8231 ran_on=cpu0:50 cpu1:219 cpu2:40 cpu3:41 cpu4:1833 cpu5:1694 cpu6:3164 cpu7:1190 
+S260 LOAD thread=3 Mops=8387 ran_on=cpu4:3888 cpu5:2125 cpu6:2076 cpu7:298 
+S260 LOAD thread=4 Mops=8381 ran_on=cpu4:1442 cpu5:2249 cpu6:2185 cpu7:2505 
+S260 LOAD thread=5 Mops=8389 ran_on=cpu4:1000 cpu5:2159 cpu6:907 cpu7:4323 
+S260 LOAD thread=6 Mops=5775 ran_on=cpu0:1829 cpu1:2201 cpu2:721 cpu3:1023 cpu4:1 
+S260 LOAD thread=7 Mops=5791 ran_on=cpu0:1250 cpu1:616 cpu2:3288 cpu3:637 
+S260 LOAD seconds=20 threads=8 total_Mops=56672 Mops_per_s=2833
+NWSTAT-MARK w0s0-load8-end
+NWSTAT-MARK w0s0-load8hi-begin
+S260 LOAD mode=hi prio_class_before=0x00004000 set_prio_ok=1 set_throttle_ok=1
+S260 LOAD thread=0 Mops=5656 ran_on=cpu0:2442 cpu1:1209 cpu2:1949 cpu3:56 
+S260 LOAD thread=1 Mops=8236 ran_on=cpu4:2713 cpu5:4416 cpu6:1107 
+S260 LOAD thread=2 Mops=5699 ran_on=cpu0:332 cpu1:191 cpu2:18 cpu3:5158 
+S260 LOAD thread=3 Mops=8239 ran_on=cpu4:908 cpu5:1609 cpu6:5656 cpu7:66 
+S260 LOAD thread=4 Mops=5673 ran_on=cpu0:1321 cpu1:3266 cpu2:630 cpu3:456 
+S260 LOAD thread=5 Mops=8247 ran_on=cpu4:13 cpu6:53 cpu7:8181 
+S260 LOAD thread=6 Mops=5673 ran_on=cpu0:1496 cpu1:1029 cpu2:3111 cpu3:37 
+S260 LOAD thread=7 Mops=8233 ran_on=cpu4:4586 cpu5:2214 cpu6:1433 
+S260 LOAD seconds=20 threads=8 total_Mops=55656 Mops_per_s=2782
+NWSTAT-MARK w0s0-load8hi-end
+NWSTAT-MARK w0s0-io-begin
+S260 IO volume=C: bytes=81462820864 seconds_per_test=5
+S260 IO rand4k qd=1 bytes_per_io=4096 ios=35761 iops=7152 MBps=29.2 lat_mean_us=138 lat_max_us=142350 hist<50,100,200,500,1k,2k,5k,inf=101,15100,20274,173,4,2,23,84
+S260 IO rand4k qd=8 bytes_per_io=4096 ios=8289 iops=1656 MBps=6.7 lat_mean_us=4825 lat_max_us=242519 hist<50,100,200,500,1k,2k,5k,inf=0,10,38,170,5458,1219,256,1138
+S260 IO rand4k qd=32 bytes_per_io=4096 ios=48399 iops=9674 MBps=39.6 lat_mean_us=3304 lat_max_us=91573 hist<50,100,200,500,1k,2k,5k,inf=0,3,8,56,101,61,46225,1945
+S260 IO seq1m qd=4 bytes_per_io=1048576 ios=7383 iops=1476 MBps=1547.8 lat_mean_us=2704 lat_max_us=49404 hist<50,100,200,500,1k,2k,5k,inf=0,0,0,1,14,3007,4005,356
+NWSTAT-MARK w0s0-io-end
+NWSTAT-SET wfi=1 sectick=0
+S260 H4 PHASE w1s0
+S260 IDLE cpu=0 busy_pct=43.7 dpc_pct=1.0 intr_pct=1.0 interrupts_per_s=6445
+S260 IDLE cpu=1 busy_pct=46.3 dpc_pct=0.0 intr_pct=2.6 interrupts_per_s=1839
+S260 IDLE cpu=2 busy_pct=40.6 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=1685
+S260 IDLE cpu=3 busy_pct=32.8 dpc_pct=0.0 intr_pct=1.0 interrupts_per_s=1643
+S260 IDLE cpu=4 busy_pct=19.3 dpc_pct=0.0 intr_pct=0.5 interrupts_per_s=1430
+S260 IDLE cpu=5 busy_pct=18.3 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=1329
+S260 IDLE cpu=6 busy_pct=15.7 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=1062
+S260 IDLE cpu=7 busy_pct=10.9 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=706
+S260 IDLE seconds_measured_ms=3000 cpus=8 interrupts_per_s_total=16142
+NWSTAT-MARK w1s0-load8-begin
+S260 LOAD mode=default prio_class_before=0x00004000 set_prio_ok=1 set_throttle_ok=1
+S260 LOAD thread=0 Mops=5643 ran_on=cpu0:1395 cpu1:960 cpu2:1387 cpu3:1896 cpu4:4 cpu7:1 
+S260 LOAD thread=1 Mops=5640 ran_on=cpu0:1139 cpu1:1629 cpu2:1671 cpu3:1201 
+S260 LOAD thread=2 Mops=5636 ran_on=cpu0:1615 cpu1:1209 cpu2:1544 cpu3:1268 
+S260 LOAD thread=3 Mops=8137 ran_on=cpu4:2335 cpu5:2569 cpu6:2343 cpu7:890 
+S260 LOAD thread=4 Mops=8166 ran_on=cpu4:1470 cpu5:1572 cpu6:2253 cpu7:2871 
+S260 LOAD thread=5 Mops=6144 ran_on=cpu0:970 cpu1:1521 cpu2:844 cpu3:1065 cpu4:221 cpu5:578 cpu6:509 cpu7:436 
+S260 LOAD thread=6 Mops=7660 ran_on=cpu0:246 cpu1:307 cpu2:243 cpu3:257 cpu4:1302 cpu5:1634 cpu6:1218 cpu7:2453 
+S260 LOAD thread=7 Mops=8131 ran_on=cpu4:2749 cpu5:1826 cpu6:1938 cpu7:1618 
+S260 LOAD seconds=20 threads=8 total_Mops=55157 Mops_per_s=2757
+NWSTAT-MARK w1s0-load8-end
+NWSTAT-MARK w1s0-load8hi-begin
+S260 LOAD mode=hi prio_class_before=0x00004000 set_prio_ok=1 set_throttle_ok=1
+S260 LOAD thread=0 Mops=5900 ran_on=cpu0:1271 cpu1:1190 cpu2:749 cpu3:1304 cpu4:170 cpu5:248 cpu6:558 cpu7:410 
+S260 LOAD thread=1 Mops=7960 ran_on=cpu0:18 cpu1:44 cpu2:19 cpu3:37 cpu4:2420 cpu5:1810 cpu6:2792 cpu7:820 
+S260 LOAD thread=2 Mops=5427 ran_on=cpu0:1168 cpu1:1765 cpu2:1418 cpu3:1076 
+S260 LOAD thread=3 Mops=5450 ran_on=cpu0:1274 cpu1:851 cpu2:1866 cpu3:1459 
+S260 LOAD thread=4 Mops=5894 ran_on=cpu0:985 cpu1:1105 cpu2:748 cpu3:1427 cpu4:592 cpu5:403 cpu6:308 cpu7:326 
+S260 LOAD thread=5 Mops=7108 ran_on=cpu0:348 cpu1:425 cpu2:761 cpu3:329 cpu4:1519 cpu5:1102 cpu6:1718 cpu7:906 
+S260 LOAD thread=6 Mops=8014 ran_on=cpu4:1578 cpu5:1375 cpu6:1356 cpu7:3705 
+S260 LOAD thread=7 Mops=8021 ran_on=cpu4:1459 cpu5:3069 cpu6:1444 cpu7:2049 
+S260 LOAD seconds=20 threads=8 total_Mops=53774 Mops_per_s=2688
+NWSTAT-MARK w1s0-load8hi-end
+NWSTAT-MARK w1s0-io-begin
+S260 IO volume=C: bytes=81462820864 seconds_per_test=5
+S260 IO rand4k qd=1 bytes_per_io=4096 ios=46294 iops=9258 MBps=37.9 lat_mean_us=106 lat_max_us=92051 hist<50,100,200,500,1k,2k,5k,inf=810,22377,22834,176,31,13,23,30
+S260 IO rand4k qd=8 bytes_per_io=4096 ios=47505 iops=9499 MBps=38.9 lat_mean_us=840 lat_max_us=95071 hist<50,100,200,500,1k,2k,5k,inf=0,46,114,252,46306,180,110,497
+S260 IO rand4k qd=32 bytes_per_io=4096 ios=57935 iops=11580 MBps=47.4 lat_mean_us=2760 lat_max_us=31654 hist<50,100,200,500,1k,2k,5k,inf=0,2,8,5,55,100,57110,655
+S260 IO seq1m qd=4 bytes_per_io=1048576 ios=8170 iops=1633 MBps=1712.8 lat_mean_us=2444 lat_max_us=97769 hist<50,100,200,500,1k,2k,5k,inf=0,0,0,21,186,3903,3880,180
+NWSTAT-MARK w1s0-io-end
+NWSTAT-SET wfi=1 sectick=1
+S260 H4 PHASE w1s1
+S260 IDLE cpu=0 busy_pct=19.2 dpc_pct=0.5 intr_pct=0.0 interrupts_per_s=1707
+S260 IDLE cpu=1 busy_pct=26.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=709
+S260 IDLE cpu=2 busy_pct=23.2 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=586
+S260 IDLE cpu=3 busy_pct=18.9 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=349
+S260 IDLE cpu=4 busy_pct=11.2 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=799
+S260 IDLE cpu=5 busy_pct=13.7 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=383
+S260 IDLE cpu=6 busy_pct=6.8 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=290
+S260 IDLE cpu=7 busy_pct=3.1 dpc_pct=0.0 intr_pct=0.5 interrupts_per_s=223
+S260 IDLE seconds_measured_ms=3000 cpus=8 interrupts_per_s_total=5048
+NWSTAT-MARK w1s1-load8-begin
+S260 LOAD mode=default prio_class_before=0x00004000 set_prio_ok=1 set_throttle_ok=1
+S260 LOAD thread=0 Mops=5655 ran_on=cpu0:1096 cpu1:1577 cpu2:1428 cpu3:1554 
+S260 LOAD thread=1 Mops=6237 ran_on=cpu0:868 cpu1:941 cpu2:1129 cpu3:1465 cpu4:340 cpu5:180 cpu6:633 cpu7:681 
+S260 LOAD thread=2 Mops=6213 ran_on=cpu0:1318 cpu1:1226 cpu2:1369 cpu3:429 cpu4:546 cpu5:702 cpu6:293 cpu7:330 
+S260 LOAD thread=3 Mops=7641 ran_on=cpu0:511 cpu1:156 cpu2:291 cpu3:295 cpu4:1324 cpu5:833 cpu6:2488 cpu7:1743 
+S260 LOAD thread=4 Mops=8237 ran_on=cpu4:2345 cpu5:2393 cpu6:1446 cpu7:2053 
+S260 LOAD thread=5 Mops=7681 ran_on=cpu0:199 cpu1:449 cpu2:361 cpu3:239 cpu4:1822 cpu5:1733 cpu6:1593 cpu7:1285 
+S260 LOAD thread=6 Mops=5640 ran_on=cpu0:1439 cpu1:1283 cpu2:1142 cpu3:1776 
+S260 LOAD thread=7 Mops=8245 ran_on=cpu1:9 cpu2:18 cpu4:1816 cpu5:2365 cpu6:1839 cpu7:2198 
+S260 LOAD seconds=20 threads=8 total_Mops=55549 Mops_per_s=2777
+NWSTAT-MARK w1s1-load8-end
+NWSTAT-MARK w1s1-load8hi-begin
+S260 LOAD mode=hi prio_class_before=0x00004000 set_prio_ok=1 set_throttle_ok=1
+S260 LOAD thread=0 Mops=5627 ran_on=cpu0:873 cpu1:1165 cpu2:1859 cpu3:1396 cpu4:82 cpu5:88 cpu6:56 cpu7:108 
+S260 LOAD thread=1 Mops=5557 ran_on=cpu0:1474 cpu1:1495 cpu2:1550 cpu3:1038 
+S260 LOAD thread=2 Mops=5572 ran_on=cpu0:1143 cpu1:1307 cpu2:817 cpu3:2305 
+S260 LOAD thread=3 Mops=8252 ran_on=cpu4:2464 cpu5:1407 cpu6:1591 cpu7:2790 
+S260 LOAD thread=4 Mops=8224 ran_on=cpu4:1719 cpu5:3252 cpu6:2295 cpu7:958 
+S260 LOAD thread=5 Mops=5543 ran_on=cpu0:1544 cpu1:1557 cpu2:1451 cpu3:978 cpu6:13 
+S260 LOAD thread=6 Mops=8223 ran_on=cpu4:2521 cpu5:1587 cpu6:1468 cpu7:2647 
+S260 LOAD thread=7 Mops=8238 ran_on=cpu4:1400 cpu5:2001 cpu6:2951 cpu7:1886 
+S260 LOAD seconds=20 threads=8 total_Mops=55236 Mops_per_s=2761
+NWSTAT-MARK w1s1-load8hi-end
+NWSTAT-MARK w1s1-io-begin
+S260 IO volume=C: bytes=81462820864 seconds_per_test=5
+S260 IO rand4k qd=1 bytes_per_io=4096 ios=40507 iops=8096 MBps=33.1 lat_mean_us=121 lat_max_us=79372 hist<50,100,200,500,1k,2k,5k,inf=385,21438,18140,453,12,3,6,70
+S260 IO rand4k qd=8 bytes_per_io=4096 ios=57380 iops=11474 MBps=46.9 lat_mean_us=695 lat_max_us=37873 hist<50,100,200,500,1k,2k,5k,inf=8,166,285,590,55754,240,141,196
+S260 IO rand4k qd=32 bytes_per_io=4096 ios=60079 iops=12009 MBps=49.1 lat_mean_us=2661 lat_max_us=52054 hist<50,100,200,500,1k,2k,5k,inf=3,25,46,96,182,443,58731,553
+S260 IO seq1m qd=4 bytes_per_io=1048576 ios=8504 iops=1700 MBps=1782.7 lat_mean_us=2348 lat_max_us=52239 hist<50,100,200,500,1k,2k,5k,inf=0,0,0,11,81,4247,4019,146
+NWSTAT-MARK w1s1-io-end
+NWSTAT-SET wfi=0 sectick=1
+S260 H4 PHASE w0s1
+S260 IDLE cpu=0 busy_pct=11.4 dpc_pct=0.0 intr_pct=6.7 interrupts_per_s=27368
+S260 IDLE cpu=1 busy_pct=5.7 dpc_pct=0.0 intr_pct=1.5 interrupts_per_s=25784
+S260 IDLE cpu=2 busy_pct=6.2 dpc_pct=0.0 intr_pct=3.1 interrupts_per_s=12403
+S260 IDLE cpu=3 busy_pct=2.0 dpc_pct=0.0 intr_pct=1.1 interrupts_per_s=12441
+S260 IDLE cpu=4 busy_pct=0.2 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=355
+S260 IDLE cpu=5 busy_pct=0.6 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=171
+S260 IDLE cpu=6 busy_pct=0.2 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=183
+S260 IDLE cpu=7 busy_pct=0.0 dpc_pct=0.0 intr_pct=0.0 interrupts_per_s=99
+S260 IDLE seconds_measured_ms=3000 cpus=8 interrupts_per_s_total=78806
+NWSTAT-MARK w0s1-load8-begin
+S260 LOAD mode=default prio_class_before=0x00004000 set_prio_ok=1 set_throttle_ok=1
+S260 LOAD thread=0 Mops=8474 ran_on=cpu4:1546 cpu5:2734 cpu6:2637 cpu7:1557 
+S260 LOAD thread=1 Mops=5797 ran_on=cpu0:991 cpu1:1160 cpu2:1690 cpu3:1956 
+S260 LOAD thread=2 Mops=8469 ran_on=cpu4:2994 cpu5:1291 cpu6:2998 cpu7:1186 
+S260 LOAD thread=3 Mops=8467 ran_on=cpu0:6 cpu4:1690 cpu5:3009 cpu6:1512 cpu7:2250 
+S260 LOAD thread=4 Mops=5787 ran_on=cpu0:1230 cpu1:1388 cpu2:1864 cpu3:1305 
+S260 LOAD thread=5 Mops=8477 ran_on=cpu4:2235 cpu5:1432 cpu6:1332 cpu7:3478 
+S260 LOAD thread=6 Mops=5788 ran_on=cpu0:1618 cpu1:1472 cpu2:1209 cpu3:1489 
+S260 LOAD thread=7 Mops=5771 ran_on=cpu0:1851 cpu1:1730 cpu2:1086 cpu3:1104 
+S260 LOAD seconds=20 threads=8 total_Mops=57030 Mops_per_s=2851
+NWSTAT-MARK w0s1-load8-end
+NWSTAT-MARK w0s1-load8hi-begin
+S260 LOAD mode=hi prio_class_before=0x00004000 set_prio_ok=1 set_throttle_ok=1
+S260 LOAD thread=0 Mops=8487 ran_on=cpu4:1598 cpu5:1979 cpu6:2334 cpu7:2576 
+S260 LOAD thread=1 Mops=5815 ran_on=cpu0:1325 cpu1:1088 cpu2:2936 cpu3:466 
+S260 LOAD thread=2 Mops=5802 ran_on=cpu0:1541 cpu1:1866 cpu2:460 cpu3:1935 
+S260 LOAD thread=3 Mops=8494 ran_on=cpu4:2915 cpu5:2614 cpu6:2220 cpu7:745 
+S260 LOAD thread=4 Mops=5809 ran_on=cpu0:1324 cpu1:1329 cpu2:1372 cpu3:1784 
+S260 LOAD thread=5 Mops=8490 ran_on=cpu4:2737 cpu5:2017 cpu6:1970 cpu7:1766 
+S260 LOAD thread=6 Mops=8487 ran_on=cpu0:7 cpu4:1220 cpu5:1883 cpu6:1964 cpu7:3413 
+S260 LOAD thread=7 Mops=5802 ran_on=cpu0:1530 cpu1:1500 cpu2:1095 cpu3:1677 
+S260 LOAD seconds=20 threads=8 total_Mops=57186 Mops_per_s=2859
+NWSTAT-MARK w0s1-load8hi-end
+NWSTAT-MARK w0s1-io-begin
+S260 IO volume=C: bytes=81462820864 seconds_per_test=5
+S260 IO rand4k qd=1 bytes_per_io=4096 ios=47125 iops=9424 MBps=38.6 lat_mean_us=104 lat_max_us=45155 hist<50,100,200,500,1k,2k,5k,inf=1274,16682,28996,143,16,0,0,14
+S260 IO rand4k qd=8 bytes_per_io=4096 ios=57439 iops=11486 MBps=47.0 lat_mean_us=694 lat_max_us=12828 hist<50,100,200,500,1k,2k,5k,inf=0,2,5,39,57301,9,28,55
+S260 IO rand4k qd=32 bytes_per_io=4096 ios=57080 iops=11409 MBps=46.7 lat_mean_us=2794 lat_max_us=1984389 hist<50,100,200,500,1k,2k,5k,inf=3,2070,6122,7065,4090,1702,35179,849
+S260 IO seq1m qd=4 bytes_per_io=1048576 ios=8528 iops=1704 MBps=1787.7 lat_mean_us=2341 lat_max_us=11495 hist<50,100,200,500,1k,2k,5k,inf=0,0,0,0,0,4073,4323,132
+NWSTAT-MARK w0s1-io-end
+NWSTAT-SET wfi=1 sectick=1
+S260 H4 DONE

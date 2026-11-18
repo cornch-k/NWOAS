@@ -51,3 +51,15 @@
 | 제어 페이지 설정 공간 쓰기가 실제로 먹는가 | `NwoaPciCommand`, `NwoaDevCtlAfter`, `NwoaChipId`(창이 바뀌어야 읽힘) |
 | DMA가 실제로 RAM에 닿는가 | `NwoaStage=fail_first_ioctl`이면 링·DMA 길이 막힌 것(S257의 `IOCTL_NO_REPLY`와 같은 뜻) |
 | 인터럽트 695가 들어오는가 | `UseInterrupt`=1로 바꾼 뒤 `NwoaCntIsr` |
+
+## s258k (2026-11-19) — 약 250초마다 끊겼다 다시 붙는 문제
+
+결론: s258j 기록만으로는 끊는 쪽을 하나로 정할 수 없어, 가려낼 기록을 넣고 근거가 있는 고침 세 가지를 함께 넣었다. 하드웨어 확인 전이다.
+
+- 코드로 확인한 것: 펌웨어 이벤트 `11/0/8`(E_DISASSOC, 사유 8 "떠남")은 우리 쪽 `NB_C_DISASSOC`로 나는 모양이고, 2.4초 뒤 이벤트 끝의 `0/0/0`(E_SET_SSID)은 호스트가 낸 join의 완료다. 즉 다시 붙는 것은 Windows가 낸 WDI_TASK_CONNECT 처리(JobConnect)다.
+- 가려지지 않은 것: (가) Windows가 연결된 채 CONNECT를 보내 JobConnect가 먼저 끊었는지, (나) 펌웨어가 스스로 끊고(그때 `NwoaLostReasonWdi`=0xE가 남음) 우리가 알린 뒤 Windows가 다시 CONNECT를 보냈는지.
+- 넣은 기록(레지스트리, SSID·BSSID·키 값 없음): `NwoaCmdLog`(명령 id/연결 여부/M3 상태/정보@ms), `NwoaCmdHist`(명령 id별 횟수), `NwoaCmdBeforeLoss`(마지막 끊김 직전 명령 10개), `NwoaHostDisassocLog`(우리가 끊은 출처@ms: 1 CONNECT, 2 ROAM, 3 DISCONNECT, 4 RESET, 5 무선 끔, 6 연결 실패 정리, 7 종료), `NwoaLossLog`(펌웨어 끊김 이벤트 종류/사유/그때 연결 중이었나/우리 끊기 뒤 ms/RSSI@ms), `NwoaRssiLast/Min/Max`, `NwoaCntLinkStateInd`, `NwoaCntRoamStay/Move`, `NwoaCntConnWhileConn`, `NwoaCntD0Entry/Exit`, 펌웨어 기본값 `NwoaFwRoamOffWas`, `NwoaFwBcnTimeout`, `NwoaFwRoamTrigger`, `NwoaFwRoamDelta`, `NwoaFwRoamScanPeriod`.
+- 고침 1: 링크 품질 알림. Microsoft 문서는 링크 품질이 5 넘게 바뀌면 LINK_STATE_CHANGE를 보내라고 하는데 s258j는 연결 순간 한 번만 보냈다. 2초마다 RSSI를 읽어 5 이상 바뀌면 보낸다(`LinkQualityUpdates`, 기본 1).
+- 고침 2: WDI_TASK_ROAM 처리. s258j는 NOT_SUPPORTED였다. 지금 AP로의 로밍이면 끊지 않고 완료만 보내고(문서: "로밍하지 않고 현재 AP에 머물 수 있으며 그때는 작업만 완료"), 다른 AP면 옛 AP 해제 알림 + join + ROAM_COMPLETE(`RoamStay`, 기본 1).
+- 고침 3: 펌웨어 `roam_off` 1. WDI에서는 로밍을 호스트가 정하므로 펌웨어가 혼자 BSSID를 옮기지 않게 한다(`FwRoamOff`, 기본 1).
+- 이 셋이 250초 주기를 없앤다는 것은 가설이다. 다음 기록으로 (가)/(나)를 가린 뒤 원인에 맞게 다시 고친다.

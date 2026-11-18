@@ -86,8 +86,12 @@ static NTSTATUS ReadFw(PNWOA_DEVICE Dev, PCWSTR Name, PUCHAR* Out, ULONG* Len, U
     return ReadFileFrom(NULL, L"\\SystemRoot\\System32\\drivers\\nwoa4378", Name, Out, Len, Max);
 }
 
+// Firmware, NVRAM, CLM, txcap and board data are read from disk once (first PrepareHardware)
+// and kept in non-paged pool: D0Entry after a sleep re-uses them without file I/O.
 void NwoaFreeFiles(PNWOA_DEVICE Dev)
 {
+    if (Dev->FwImg) { ExFreePoolWithTag(Dev->FwImg, NWOA_TAG); Dev->FwImg = NULL; }
+    if (Dev->NvTxt) { ExFreePoolWithTag(Dev->NvTxt, NWOA_TAG); Dev->NvTxt = NULL; }
     if (Dev->Clm)   { ExFreePoolWithTag(Dev->Clm, NWOA_TAG);   Dev->Clm = NULL; }
     if (Dev->Txcap) { ExFreePoolWithTag(Dev->Txcap, NWOA_TAG); Dev->Txcap = NULL; }
     if (Dev->Board) { ExFreePoolWithTag(Dev->Board, NWOA_TAG); Dev->Board = NULL; }
@@ -100,8 +104,15 @@ NTSTATUS NwoaLoadFiles(PNWOA_DEVICE Dev, PUCHAR* Fw, ULONG* FwLen, PUCHAR* Nv, U
     char name[64];
     WCHAR wname[64];
 
+    if (Dev->FwImg && Dev->NvTxt && Dev->Clm && Dev->Txcap) {
+        *Fw = Dev->FwImg; *FwLen = Dev->FwImgLen;
+        *Nv = Dev->NvTxt; *NvLen = Dev->NvTxtLen;
+        NwoaDiagDword(Dev, L"NwoaFilesCached", 1);
+        return STATUS_SUCCESS;
+    }
     NwoaFreeFiles(Dev);
     st = ReadFw(Dev, kFwName, Fw, FwLen, NWOA_FW_MAX);
+    if (NT_SUCCESS(st)) { Dev->FwImg = *Fw; Dev->FwImgLen = *FwLen; }
     NwoaDiagDword(Dev, L"NwoaFwFileStatus", (ULONG)st);
     if (!NT_SUCCESS(st))
         return st;
@@ -118,6 +129,7 @@ NTSTATUS NwoaLoadFiles(PNWOA_DEVICE Dev, PUCHAR* Fw, ULONG* FwLen, PUCHAR* Nv, U
             break;
     }
     st = ReadFw(Dev, wname, Nv, NvLen, 64 * 1024);
+    if (NT_SUCCESS(st)) { Dev->NvTxt = *Nv; Dev->NvTxtLen = *NvLen; }
     NwoaDiagDword(Dev, L"NwoaNvramFileStatus", (ULONG)st);
     if (!NT_SUCCESS(st))
         return st;
@@ -286,8 +298,8 @@ NTSTATUS NwoaFirmwareBoot(PNWOA_DEVICE Dev)
     Dev->FwUp = TRUE;
     st = STATUS_SUCCESS;
 out:
-    FreeBuf(fw);
-    FreeBuf(nvtxt);
+    UNREFERENCED_PARAMETER(fw);                            // fw / nvtxt are the cached copies
+    UNREFERENCED_PARAMETER(nvtxt);
     FreeBuf(nv);
     return st;
 }
