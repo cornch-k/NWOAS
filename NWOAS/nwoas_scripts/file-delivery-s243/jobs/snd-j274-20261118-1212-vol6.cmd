@@ -1,0 +1,17 @@
+@echo off
+echo S243 DELIVER BEGIN 4 file(s) to C:\NWOAS\drop\snd-j274-20261118-1212-vol6
+set "T=C:\NWOAS\drop\snd-j274-20261118-1212-vol6"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "$ErrorActionPreference='Stop'; $p=$env:T; while($p){ if(Test-Path -LiteralPath $p){ $x=Get-Item -LiteralPath $p -Force; if(-not $x.PSIsContainer -or ($x.Attributes -band [IO.FileAttributes]::ReparsePoint)){ throw ('unsafe path component '+$p) } }; $p=Split-Path -Parent $p }; New-Item -ItemType Directory -Force -Path $env:T | Out-Null; 'S243 DIR READY '+$env:T" 2>&1
+if errorlevel 1 (echo S243 DELIVER FAIL dir & exit /b 1)
+"%~d0\NWGET243.EXE" 0 c1e7bda0c40a407e65ed3753f7d0b96438f83cd9225e4387cdd8065d95887406 "%T%\NwoasAudio.inf" 2>&1
+if errorlevel 1 (echo S243 DELIVER FAIL index 0 & exit /b 1)
+"%~d0\NWGET243.EXE" 1 ce5b65d240e90f26d059428c5927df2740e8ee8cb13ab27db73f92d5e503f4b9 "%T%\NwoasAudio.sys" 2>&1
+if errorlevel 1 (echo S243 DELIVER FAIL index 1 & exit /b 1)
+"%~d0\NWGET243.EXE" 2 d69a14e91400bd13098840d2594c23ad323e99631ef6a7b30523132f6f07820d "%T%\nwoasaudio.cat" 2>&1
+if errorlevel 1 (echo S243 DELIVER FAIL index 2 & exit /b 1)
+"%~d0\NWGET243.EXE" 3 ff995663f61f8cf0f2eb8898858575dc7766feb48327fa66edb344ae4e3ad096 "%T%\nwoas-tone-quiet.wav" 2>&1
+if errorlevel 1 (echo S243 DELIVER FAIL index 3 & exit /b 1)
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "$n=@('NwoasAudio.inf','NwoasAudio.sys','nwoasaudio.cat','nwoas-tone-quiet.wav'); $h=@('c1e7bda0c40a407e65ed3753f7d0b96438f83cd9225e4387cdd8065d95887406','ce5b65d240e90f26d059428c5927df2740e8ee8cb13ab27db73f92d5e503f4b9','d69a14e91400bd13098840d2594c23ad323e99631ef6a7b30523132f6f07820d','ff995663f61f8cf0f2eb8898858575dc7766feb48327fa66edb344ae4e3ad096'); $bad=0; for($i=0;$i -lt $n.Count;$i++){ $f=Join-Path $env:T $n[$i]; $g=(Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLower(); $l=(Get-Item -LiteralPath $f).Length; if($g -eq $h[$i]){ 'S243 READBACK MATCH '+$n[$i]+' '+$l+' '+$g } else { 'S243 READBACK MISMATCH '+$n[$i]+' '+$l+' '+$g; $bad=1 } }; exit $bad" 2>&1
+if errorlevel 1 (echo S243 DELIVER FAIL readback & exit /b 1)
+echo S243 DELIVER COMPLETE
+exit /b 0

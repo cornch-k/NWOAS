@@ -1,0 +1,108 @@
+;
+; NwoasAudio.inf - NWOAS Mac mini (J274) internal speaker, ACPI\NWAU0001
+; (\_SB.SPK0 in the S256 firmware SSDT).  PortCls WaveRT, render only.
+; Based on Microsoft SimpleAudioSample (MS-PL).  Contract:
+; research-20261116/sound/PLAN-S256.md
+;
+
+[Version]
+Signature="$WINDOWS NT$"
+Class=MEDIA
+ClassGuid={4d36e96c-e325-11ce-bfc1-08002be10318}
+Provider=%ProviderName%
+DriverVer=
+CatalogFile=NwoasAudio.cat
+PnpLockdown=1
+
+[SourceDisksNames]
+222=%DiskName%,,,
+
+[SourceDisksFiles]
+NwoasAudio.sys=222
+
+[DestinationDirs]
+NwoasAudio.CopyList=13
+
+[Manufacturer]
+%MfgName%=NwoasAudio,NT$ARCH$.10.0...16299
+
+[NwoasAudio.NT$ARCH$.10.0...16299]
+%NwoasAudio.DeviceDesc%=NwoasAudio_Device,ACPI\NWAU0001
+
+;------------------------------------------------------------------------------
+[NwoasAudio_Device.NT]
+Include=ks.inf,wdmaudio.inf
+Needs=KS.Registration,WDMAUDIO.Registration
+CopyFiles=NwoasAudio.CopyList
+AddReg=NwoasAudio.AddReg
+
+[NwoasAudio.CopyList]
+NwoasAudio.sys
+
+[NwoasAudio.AddReg]
+HKR,,AssociatedFilters,,"wdmaud"
+HKR,,Driver,,NwoasAudio.sys
+HKR,Drivers,SubClasses,,"wave,mixer"
+HKR,Drivers\wave\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\mixer\wdmaud.drv,Driver,,wdmaud.drv
+HKR,Drivers\wave\wdmaud.drv,Description,,%NwoasAudio.DeviceDesc%
+HKR,Drivers\mixer\wdmaud.drv,Description,,%NwoasAudio.DeviceDesc%
+
+;------------------------------------------------------------------------------
+; Interfaces: reference strings must match minipairs.h (WaveSpeaker / TopologySpeaker)
+[NwoasAudio_Device.NT.Interfaces]
+AddInterface=%KSCATEGORY_AUDIO%,%KSNAME_WaveSpeaker%,NwoasAudio.I.WaveSpeaker
+AddInterface=%KSCATEGORY_RENDER%,%KSNAME_WaveSpeaker%,NwoasAudio.I.WaveSpeaker
+AddInterface=%KSCATEGORY_REALTIME%,%KSNAME_WaveSpeaker%,NwoasAudio.I.WaveSpeaker
+AddInterface=%KSCATEGORY_AUDIO%,%KSNAME_TopologySpeaker%,NwoasAudio.I.TopologySpeaker
+AddInterface=%KSCATEGORY_TOPOLOGY%,%KSNAME_TopologySpeaker%,NwoasAudio.I.TopologySpeaker
+
+[NwoasAudio.I.WaveSpeaker]
+AddReg=NwoasAudio.I.WaveSpeaker.AddReg
+
+[NwoasAudio.I.WaveSpeaker.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%NwoasAudio.WaveSpeaker.szPname%
+
+[NwoasAudio.I.TopologySpeaker]
+AddReg=NwoasAudio.I.TopologySpeaker.AddReg
+
+[NwoasAudio.I.TopologySpeaker.AddReg]
+HKR,,CLSID,,%Proxy.CLSID%
+HKR,,FriendlyName,,%NwoasAudio.TopologySpeaker.szPname%
+
+;------------------------------------------------------------------------------
+[NwoasAudio_Device.NT.Services]
+AddService=NwoasAudio,0x00000002,NwoasAudio_Service_Inst
+
+[NwoasAudio_Service_Inst]
+DisplayName=%NwoasAudio.SvcDesc%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%13%\NwoasAudio.sys
+
+[NwoasAudio_Device.NT.Wdf]
+KmdfService=NwoasAudio,NwoasAudio_WdfSect
+
+[NwoasAudio_WdfSect]
+KmdfLibraryVersion=$KMDFVERSION$
+
+;------------------------------------------------------------------------------
+[Strings]
+ProviderName="NWOAS"
+MfgName="NWOAS"
+DiskName="NWOAS Audio Installation Disk"
+NwoasAudio.DeviceDesc="NWOAS Mac mini Speaker (NWAU0001)"
+NwoasAudio.SvcDesc="NWOAS Mac mini Speaker"
+NwoasAudio.WaveSpeaker.szPname="NWOAS Speaker Wave"
+NwoasAudio.TopologySpeaker.szPname="Speakers"
+
+Proxy.CLSID="{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KSCATEGORY_AUDIO="{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_RENDER="{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_REALTIME="{EB115FFC-10C8-4964-831D-6DCB02E6F23F}"
+KSCATEGORY_TOPOLOGY="{DDA54A40-1E4C-11D1-A050-405705C10000}"
+
+KSNAME_WaveSpeaker="WaveSpeaker"
+KSNAME_TopologySpeaker="TopologySpeaker"

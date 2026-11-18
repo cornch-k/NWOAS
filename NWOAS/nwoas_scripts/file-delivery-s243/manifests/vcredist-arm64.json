@@ -1,0 +1,11 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "vc_redist.arm64.exe",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/agx-s248/redist/vc_redist.arm64.exe",
+   "bytes": 11722336,
+   "sha256": "5139e1440c3a20b92153a4db561c069a0175aaf76c276c3e5b6f56099edcf4b0"
+  }
+ ]
+}

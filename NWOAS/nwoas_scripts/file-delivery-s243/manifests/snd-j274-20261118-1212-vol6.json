@@ -1,0 +1,29 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "NwoasAudio.inf",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/sound/nwoas-audio/out/20261118-1212-vol6/package/NwoasAudio.inf",
+   "bytes": 3585,
+   "sha256": "c1e7bda0c40a407e65ed3753f7d0b96438f83cd9225e4387cdd8065d95887406"
+  },
+  {
+   "name": "NwoasAudio.sys",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/sound/nwoas-audio/out/20261118-1212-vol6/package/NwoasAudio.sys",
+   "bytes": 80736,
+   "sha256": "ce5b65d240e90f26d059428c5927df2740e8ee8cb13ab27db73f92d5e503f4b9"
+  },
+  {
+   "name": "nwoasaudio.cat",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/sound/nwoas-audio/out/20261118-1212-vol6/package/nwoasaudio.cat",
+   "bytes": 2603,
+   "sha256": "d69a14e91400bd13098840d2594c23ad323e99631ef6a7b30523132f6f07820d"
+  },
+  {
+   "name": "nwoas-tone-quiet.wav",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/sound-s256/media/nwoas-tone-quiet.wav",
+   "bytes": 364844,
+   "sha256": "ff995663f61f8cf0f2eb8898858575dc7766feb48327fa66edb344ae4e3ad096"
+  }
+ ]
+}

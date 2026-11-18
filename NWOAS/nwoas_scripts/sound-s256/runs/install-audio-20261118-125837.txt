@@ -1,0 +1,197 @@
+12:58:37 START old=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261118-125619.6Oqgrt.link pkg=snd-j274-20261118-1256-prot
+12:58:51 old launcher exited
+12:59:01 launched /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-agxdcp256-audio-20261118-125901.out
+12:59:31 worker connected link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261118-125901.iIQzvx.link
+12:59:31 audio module: /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261118-125901.iIQzvx:[S256-audio] READY: hardware prepared, nothing playing 
+12:59:41 deliver: S243 READBACK MATCH NwoasAudio.inf 3585 56c918cf86dca9c538c2ff4644507035587564d9411c173799cb92c0dedda21f S243 READBACK MATCH NwoasAudio.sys 91592 a7603464fdd9983bde678fc048f48cad02523d6d7ab530a3068ea214fcb31dc4 S243 READBACK MATCH nwoasaudio.cat 2603 7567c8125cf500a639ec9f4a1b76813d7690952c50cb323f87bc7e2bebc8b9cb S243 READBACK MATCH prot-tone.ps1 6409 31f80ef3d8dfdd00ac3e99ef429199090cc01a56ef4c2285255e08deb713539f 
+S248 D28 REARM + RESTART
+작업을 완료했습니다.
+Microsoft PnP 유틸리티
+
+장치를 다시 시작하는 중:         ACPI\APPL0002\0
+장치를 다시 시작했습니다.
+
+DEV OK CM_PROB_NONE
+Wom1StartStage = 12
+Wom1StartStatus = 0
+Wom1GpuvaArmPhase = 6
+Wom1GpuvaArmStatus = 0
+NWSOFT 4e5350310400000000366e0100000000801400000000000056675801000000008000000000000000f83d5401000000008000000000000000d1c8781700000000801300000000000094bb93580500000002010000000000000a00000000000000000000000000000007000000000000008014000000000000c40a000000000000
+DWM CRASHES 0
+13:00:31 D28 done
+S256 A1 INSTALL AUDIO 20261118-1256-prot (ACPI\NWAU0001)
+Microsoft PnP 유틸리티
+
+드라이버 패키지를 추가하는 중:  NwoasAudio.inf
+드라이버 패키지를 추가했습니다.
+게시된 이름:         oem20.inf
+드라이버 패키지가 장치에 설치됨: ACPI\NWAU0001\0
+
+총 드라이버 패키지:  1
+추가된 드라이버 패키지:  1
+S256 A1 PNPUTIL EXIT 0
+DEV OK problem=CM_PROB_NONE class=MEDIA name=NWOAS Mac mini Speaker (NWAU0001)
+PROP DEVPKEY_Device_DriverInfPath = oem20.inf
+PROP DEVPKEY_Device_DriverVersion = 12.56.43.848
+PROP DEVPKEY_Device_ProblemStatus = 
+
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\NWAU0001\0\Device Parameters
+    FirmwareIdentified    REG_DWORD    0x1
+    NwAudioStartStatus    REG_DWORD    0x0
+    NwAudioState    REG_DWORD    0x1
+    NwAudioHeader    REG_BINARY    4E5741550200000000100080000000000000020080BB0000010000000000000000000000310000000C00000003000000001002800000000000000100030000000200000000000000C9000000
+    NwAudioWindowIpa    REG_QWORD    0x340000000
+    NwAudioStarts    REG_DWORD    0x0
+    NwAudioStops    REG_DWORD    0x0
+    NwAudioLastStopReason    REG_DWORD    0x0
+    NwAudioLastRunStatus    REG_DWORD    0x0
+    NwAudioStartFails    REG_DWORD    0x0
+    NwAudioDescSubmitted    REG_DWORD    0x0
+    NwAudioDescCompleted    REG_DWORD    0x0
+    NwAudioStrayReports    REG_DWORD    0x0
+    NwAudioReportFaults    REG_DWORD    0x0
+    NwAudioRingErrors    REG_DWORD    0x0
+    NwAudioPadChunks    REG_DWORD    0x0
+    NwAudioPadBytes    REG_DWORD    0x0
+    NwAudioPushBytes    REG_DWORD    0x0
+    NwAudioDropBytes    REG_DWORD    0x0
+    NwAudioDmaRanDry    REG_DWORD    0x0
+    NwAudioOsStarved    REG_DWORD    0x0
+    NwAudioI2cErrors    REG_DWORD    0x0
+    NwAudioAmpVerifyFails    REG_DWORD    0x0
+    NwAudioAmpState    REG_DWORD    0xe
+    NwAudioVolReg    REG_DWORD    0x2c
+    NwAudioMaxServiceGapUs    REG_DWORD    0x0
+    NwAudioOfUf    REG_DWORD    0x0
+    NwAudioSwitch1    REG_DWORD    0x40102040
+    NwAudioSense    REG_DWORD    0x1
+    NwAudioProtState    REG_DWORD    0x0
+    NwAudioProtTripReason    REG_DWORD    0x0
+    NwAudioProtTrips    REG_DWORD    0x0
+    NwAudioProtVerified    REG_DWORD    0x0
+    NwAudioProtRaises    REG_DWORD    0x0
+    NwAudioProtDrops    REG_DWORD    0x0
+    NwAudioProtFloor    REG_DWORD    0x0
+    NwAudioGainReg    REG_DWORD    0x0
+    NwAudioCoilTempMilliC    REG_DWORD    0x1d0d8
+    NwAudioMagnetTempMilliC    REG_DWORD    0x15ec8
+    NwAudioMaxCoilTempMilliC    REG_DWORD    0x1d0d8
+    NwAudioSensePowerUw    REG_DWORD    0x0
+    NwAudioSenseVrmsMv    REG_DWORD    0x0
+    NwAudioSenseIrmsMa    REG_DWORD    0x0
+    NwAudioSenseZMilliohm    REG_DWORD    0x0
+    NwAudioSenseRMilliohm    REG_DWORD    0x0
+    NwAudioSenseRMinMilliohm    REG_DWORD    0x0
+    NwAudioSenseRTempMilliC    REG_DWORD    0x0
+    NwAudioSenseRatioPermille    REG_DWORD    0x0
+    NwAudioSenseExpMv2    REG_DWORD    0x0
+    NwAudioSenseSat    REG_DWORD    0x0
+    NwAudioSenseBlocks    REG_DWORD    0x0
+    NwAudioSenseBadStale    REG_DWORD    0x0
+    NwAudioSenseBadUnwritten    REG_DWORD    0x0
+    NwAudioSenseBadSaturated    REG_DWORD    0x0
+    NwAudioSenseBadNegPower    REG_DWORD    0x0
+    NwAudioSenseBadImpedance    REG_DWORD    0x0
+    NwAudioSenseBadDead    REG_DWORD    0x0
+    NwAudioSenseBadOvertemp    REG_DWORD    0x0
+    NwAudioRxDescSubmitted    REG_DWORD    0x0
+    NwAudioRxDescCompleted    REG_DWORD    0x0
+    NwAudioRxStrayReports    REG_DWORD    0x0
+    NwAudioRxReportFaults    REG_DWORD    0x0
+    NwAudioRxRingErrors    REG_DWORD    0x0
+    NwAudioRxOfUf    REG_DWORD    0x0
+    NwAudioRxSetupFails    REG_DWORD    0x0
+    NwAudioSenseCfgFails    REG_DWORD    0x0
+    NwAudioAmpTdm4    REG_DWORD    0x0
+    NwAudioTxCarveout    REG_DWORD    0x0
+    NwAudioRxCarveout    REG_DWORD    0x0
+    NwAudioRxConf    REG_DWORD    0x1b44f
+    NwAudioThermRestored    REG_DWORD    0x0
+    NwAudioThermSave    REG_BINARY    4E57545301000000C0CB170700000000403D5A0500000000BA5F5A2A00000000
+
+S256 A1 DONE
+S256 A2 AUDIO STATUS
+DEV OK problem=CM_PROB_NONE name=NWOAS Mac mini Speaker (NWAU0001)
+PROP DEVPKEY_Device_DriverInfPath = oem20.inf
+PROP DEVPKEY_Device_ProblemStatus = 
+
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\NWAU0001\0\Device Parameters
+    FirmwareIdentified    REG_DWORD    0x1
+    NwAudioStartStatus    REG_DWORD    0x0
+    NwAudioState    REG_DWORD    0x1
+    NwAudioHeader    REG_BINARY    4E5741550200000000100080000000000000020080BB0000010000000000000000000000310000000C00000003000000001002800000000000000100030000000200000000000000C9000000
+    NwAudioWindowIpa    REG_QWORD    0x340000000
+    NwAudioStarts    REG_DWORD    0x0
+    NwAudioStops    REG_DWORD    0x0
+    NwAudioLastStopReason    REG_DWORD    0x0
+    NwAudioLastRunStatus    REG_DWORD    0x0
+    NwAudioStartFails    REG_DWORD    0x0
+    NwAudioDescSubmitted    REG_DWORD    0x0
+    NwAudioDescCompleted    REG_DWORD    0x0
+    NwAudioStrayReports    REG_DWORD    0x0
+    NwAudioReportFaults    REG_DWORD    0x0
+    NwAudioRingErrors    REG_DWORD    0x0
+    NwAudioPadChunks    REG_DWORD    0x0
+    NwAudioPadBytes    REG_DWORD    0x0
+    NwAudioPushBytes    REG_DWORD    0x0
+    NwAudioDropBytes    REG_DWORD    0x0
+    NwAudioDmaRanDry    REG_DWORD    0x0
+    NwAudioOsStarved    REG_DWORD    0x0
+    NwAudioI2cErrors    REG_DWORD    0x0
+    NwAudioAmpVerifyFails    REG_DWORD    0x0
+    NwAudioAmpState    REG_DWORD    0xe
+    NwAudioVolReg    REG_DWORD    0x2c
+    NwAudioMaxServiceGapUs    REG_DWORD    0x0
+    NwAudioOfUf    REG_DWORD    0x0
+    NwAudioSwitch1    REG_DWORD    0x40102040
+    NwAudioSense    REG_DWORD    0x1
+    NwAudioProtState    REG_DWORD    0x0
+    NwAudioProtTripReason    REG_DWORD    0x0
+    NwAudioProtTrips    REG_DWORD    0x0
+    NwAudioProtVerified    REG_DWORD    0x0
+    NwAudioProtRaises    REG_DWORD    0x0
+    NwAudioProtDrops    REG_DWORD    0x0
+    NwAudioProtFloor    REG_DWORD    0x0
+    NwAudioGainReg    REG_DWORD    0x0
+    NwAudioCoilTempMilliC    REG_DWORD    0x1d0d8
+    NwAudioMagnetTempMilliC    REG_DWORD    0x15ec8
+    NwAudioMaxCoilTempMilliC    REG_DWORD    0x1d0d8
+    NwAudioSensePowerUw    REG_DWORD    0x0
+    NwAudioSenseVrmsMv    REG_DWORD    0x0
+    NwAudioSenseIrmsMa    REG_DWORD    0x0
+    NwAudioSenseZMilliohm    REG_DWORD    0x0
+    NwAudioSenseRMilliohm    REG_DWORD    0x0
+    NwAudioSenseRMinMilliohm    REG_DWORD    0x0
+    NwAudioSenseRTempMilliC    REG_DWORD    0x0
+    NwAudioSenseRatioPermille    REG_DWORD    0x0
+    NwAudioSenseExpMv2    REG_DWORD    0x0
+    NwAudioSenseSat    REG_DWORD    0x0
+    NwAudioSenseBlocks    REG_DWORD    0x0
+    NwAudioSenseBadStale    REG_DWORD    0x0
+    NwAudioSenseBadUnwritten    REG_DWORD    0x0
+    NwAudioSenseBadSaturated    REG_DWORD    0x0
+    NwAudioSenseBadNegPower    REG_DWORD    0x0
+    NwAudioSenseBadImpedance    REG_DWORD    0x0
+    NwAudioSenseBadDead    REG_DWORD    0x0
+    NwAudioSenseBadOvertemp    REG_DWORD    0x0
+    NwAudioRxDescSubmitted    REG_DWORD    0x0
+    NwAudioRxDescCompleted    REG_DWORD    0x0
+    NwAudioRxStrayReports    REG_DWORD    0x0
+    NwAudioRxReportFaults    REG_DWORD    0x0
+    NwAudioRxRingErrors    REG_DWORD    0x0
+    NwAudioRxOfUf    REG_DWORD    0x0
+    NwAudioRxSetupFails    REG_DWORD    0x0
+    NwAudioSenseCfgFails    REG_DWORD    0x0
+    NwAudioAmpTdm4    REG_DWORD    0x0
+    NwAudioTxCarveout    REG_DWORD    0x0
+    NwAudioRxCarveout    REG_DWORD    0x0
+    NwAudioRxConf    REG_DWORD    0x1b44f
+    NwAudioThermRestored    REG_DWORD    0x0
+    NwAudioThermSave    REG_BINARY    4E57545301000000C0CB170700000000403D5A0500000000BA5F5A2A00000000
+
+EP OK 스피커(NWOAS Mac mini Speaker (NWAU0001)) SWD\MMDEVAPI\{0.0.0.00000000}.{9C829465-9A7F-4172-9C2C-A276D32E2023}
+MEDIA OK NWOAS Mac mini Speaker (NWAU0001) ACPI\NWAU0001\0
+SVC AudioEndpointBuilder Running
+SVC Audiosrv Running
+S256 A2 DONE
+13:00:57 AUDIO INSTALL DONE link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261118-125901.iIQzvx.link out=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-agxdcp256-audio-20261118-125901.out

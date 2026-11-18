@@ -1,0 +1,155 @@
+== /arm-io/i2c1
+   gpio-iic_scl = c90000000201010041500000
+   compatible = i2c,t8101|i2c,s5l8940x|iic,soft|
+   gpio-iic_sda = c70000000201010041500000
+   interrupt-parent = _|||
+   interrupts = 74020000
+   clock-gates = (|||
+   clock-ids = 04000000
+   #address-cels = 01000000
+   reg = 00400135000000000040000000000000
+   device_type = i2c|
+   #size-cells = 03000000
+   AAPL,phandle = "|||
+   function-device_reset = p|||TSRA(|||
+== /arm-io/i2c1/audio-tas5770L-speaker
+   private = 1|
+   compatible = audio-control,tas5770|
+   interrupt-parent = f|||
+   interrupts = b600000001000000
+   reg = 31000000c40900000000000000000000
+   speaker-config = 00140000
+   bop-config = 820650040000000000000000
+   AAPL,phandle = #|||
+   device_type = audio-control|
+   iboot-audio-volume = 
+   function-reset = 660000004f495047b500000001000100
+   speaker-protection = ||||
+   external-power-provider = e3000000
+== /arm-io/sio
+   map-range = 4353494d00000035020000000040000000000000
+   compatible = iop,ascwrap-v4|
+   iommu-parent = 85000000
+   interrupt-parent = _|||
+   interrupts = 81020000800200008302000082020000
+   clock-gates = 24010000
+   clock-ids = 4c0100004d01000051010000
+   reg = 000040360000000000c006000000000000000536000000000040000000000000
+   device-type = 49505364050000000000000052415564090000000000000041504464020000000c000000
+   iop-version = 01000000
+   device_type = sio|
+   AAPL,phandle = 81000000
+   dmashim = 49505353000010350200000000001000000000000d0000000e0000000f0000000040000052415553000020350200000000001000000000000100000002000000...(108)
+   power-gates = 24010000
+   role = SIO|
+   segment-names = __TEXT;__DATA|
+   segment-ranges = 00c0b000080000000000000000000000000020000000000000c001000100000000c012010800000000c0010000000000000022000000000000800f0000000000
+   asio-ascwrap-tunables = 400000000400000000ff00000000000000040000000000000c0800000400000001000060000000000100006000000000
+== /arm-io/sio/iop-sio-nub
+   coredump-enable = @|||
+   no-firmware-service = 
+   user-power-managed = 01000000
+   compatible = iop-nub,rtbuddy-v2|
+   AAPL,phandle = 82000000
+   segment-names = __TEXT;__DATA|
+   segment-ranges = 00c0b000080000000000000000000000000020000000000000c001000100000000c012010800000000c0010000000000000022000000000000800f0000000000
+   pre-loaded = 01000000
+== /arm-io/sio/iop-sio-nub/sio-dma
+   AAPL,phandle = 83000000
+   compatible = sio-dma-controller|
+   device_type = sio-dma|
+== /arm-io/dart-sio
+   bypass-address = 00000000000000000000000000000002
+   bypass = 00800000
+   compatible = dart,t8020|
+   page-size = |@||
+   interrupt-parent = _|||
+   interrupts = 7b020000
+   clock-gates = 41010000
+   reg = |@|5|||||@||||||
+   AAPL,phandle = 84000000
+   error-reflector = 00c0ff3c02000000
+   device_type = dart|
+   dart-options = 05000000
+   vm-base = 00c02100
+   diag-config = 00210080
+   instance = TRADDART||||
+   power-gates = 41010000
+   sids = 07800000
+   tlb-invalid-refetch = 
+   dart-tunables-instance-0 = 60000000040000000061008000000000006100800000000068000000040000000f0f0f00000000000f0f0f00000000006c00000004000000ffffff0000000000...(456)
+   dart-id = 0a000000
+== /arm-io/dart-sio/mapper-sio
+   device_type = dart-mapper|
+   reg = ||||
+   AAPL,phandle = 85000000
+   compatible = iommu-mapper|
+   allow-subpage-mapping = 
+== /arm-io/dart-sio/mapper-aes
+   device_type = dart-mapper|
+   reg = 01000000
+   AAPL,phandle = 86000000
+   compatible = iommu-mapper|
+   allow-subpage-mapping = 
+== /arm-io/dart-sio/mapper-admac
+   device_type = dart-mapper|
+   reg = 02000000
+   AAPL,phandle = 87000000
+   compatible = iommu-mapper|
+   allow-subpage-mapping = 
+== /arm-io/admac-sio
+   compatible = admac,t8103|
+   iommu-parent = 87000000
+   interrupt-parent = _|||
+   interrupts = 72020000
+   #dma-channels = 0c000000
+   clock-gates = 2f00000058010000
+   channels-offset = (|||
+   clock-ids = 4d0100004e010000
+   device_type = admac|
+   channel-buffer-allocation = |@||||||
+   irq-destination-index = 01000000
+   reg = 0000203800000000004003000000000000802a3d000000000800000000000000
+   AAPL,phandle = 9a000000
+   power-gates = 2f00000058010000
+   role = 204f4953
+   irq-destinations = 555043532043494144534e554b4c4353
+== /arm-io/mca-switch
+   compatible = mca-switch,t8103|
+   numClusters = 06000000
+   regStride = 00400000004000000400000004000000
+   AAPL,phandle = de000000
+   clock-gates = ?|||@|||A|||B|||C|||D|||
+   device_type = mca-switch|
+   mca-identity = 2e307773
+   reg = 0000403800000000008001000000000000003038000000000000030000000000d400043b00000000180000000000000000005038000000000040000000000000
+== /arm-io/mca1
+   mca-identity = 2e316c63
+   compatible = mcaCluster,t8103|
+   sio_mca-version = 02000000
+   interrupt-parent = _|||
+   interrupts = 6c020000
+   reg = 004040380000000000400000000000000080303800000000004000000000000000c03038000000000040000000000000
+   AAPL,phandle = e2000000
+   device_type = i2s|
+   mca_dma-version = 01000000
+   #size-cells = 0c000000
+   function-switch_config = de0000004361636d2e316c63
+   #address-cells = ||||
+== /arm-io/mca1/mca1a
+   mclk-config = 01000000ffffffff
+   mca-identity = 6131636d
+   compatible = mca,t8103|
+   function-mclk_frequency = 74000000664f434e01000000
+   AAPL,phandle = e3000000
+   function-i2s_route = de0000005273326932647561306e697002020200
+   dma-channels = 2c0000002100000000000000c000000060000000000000000000000000000000ffffffff00000000000000000000000000000000000000000000000000000000...(128)
+   function-admac_powerswitch = 9a00000043535061
+   device_type = i2s|
+   dma-parent = 9a000000
+   external-power-provider = 9a000000
+== /arm-io/mca1/mca1a/audio-tas5770L-speaker
+   AAPL,phandle = e4000000
+   reg = 010200000820000000000000000101000000000001000000000000000100200000000000
+   compatible = audio-data,tas5770|
+   device_type = audio-data|

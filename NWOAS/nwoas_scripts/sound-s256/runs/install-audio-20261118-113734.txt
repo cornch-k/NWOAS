@@ -1,0 +1,111 @@
+11:37:34 START old=- pkg=snd-j274-20261118-1131
+Fetching ADT (0x00058000 bytes)...
+m1n1 base: 0x80313c000
+11:37:35 idle start: m1n1 rebooted (proxy device gone after 2s)
+11:37:45 launched /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-agxdcp256-audio-20261118-113745.out
+11:38:21 worker connected link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261118-113745.WE8zjQ.link
+11:38:21 audio module: /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261118-113745.WE8zjQ:[S256-audio] READY: hardware prepared, nothing playing 
+11:38:31 deliver: S243 READBACK MATCH NwoasAudio.inf 3585 b3edb2ac5dd33fca17013b4b6261f6f97ec1a1253f82d6e4f7cb8253b6cafe60 S243 READBACK MATCH NwoasAudio.sys 80736 dab60f39fd4cc372b3eeb39de725019239c786c9cadb5c6cbe12e6fd297232ff S243 READBACK MATCH nwoasaudio.cat 2603 cafaf2e1d925e95a65753599f848a876d6e0750e1ea57d5fb9853955a51e7ac5 S243 READBACK MATCH nwoas-tone-quiet.wav 364844 ff995663f61f8cf0f2eb8898858575dc7766feb48327fa66edb344ae4e3ad096 
+S248 D28 REARM + RESTART
+작업을 완료했습니다.
+Microsoft PnP 유틸리티
+
+장치를 다시 시작하는 중:         ACPI\APPL0002\0
+장치를 다시 시작했습니다.
+
+DEV OK CM_PROB_NONE
+Wom1StartStage = 12
+Wom1StartStatus = 0
+Wom1GpuvaArmPhase = 6
+Wom1GpuvaArmStatus = 0
+NWSOFT 4e5350310400000000366e0100000000801400000000000056675801000000008000000000000000f83d5401000000008000000000000000d1c8781700000000801300000000000094bb93580500000002010000000000000a00000000000000000000000000000007000000000000008014000000000000c40a000000000000
+DWM CRASHES 0
+11:39:21 D28 done
+S256 A1 INSTALL AUDIO 20261118-1131 (ACPI\NWAU0001)
+Microsoft PnP 유틸리티
+
+드라이버 패키지를 추가하는 중:  NwoasAudio.inf
+드라이버 패키지를 추가했습니다.
+게시된 이름:         oem17.inf
+드라이버 패키지가 장치에 설치됨: ACPI\NWAU0001\0
+
+총 드라이버 패키지:  1
+추가된 드라이버 패키지:  1
+S256 A1 PNPUTIL EXIT 0
+DEV OK problem=CM_PROB_NONE class=MEDIA name=NWOAS Mac mini Speaker (NWAU0001)
+PROP DEVPKEY_Device_DriverInfPath = oem17.inf
+PROP DEVPKEY_Device_DriverVersion = 11.31.48.383
+PROP DEVPKEY_Device_ProblemStatus = 
+
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\NWAU0001\0\Device Parameters
+    FirmwareIdentified    REG_DWORD    0x1
+    NwAudioStartStatus    REG_DWORD    0x0
+    NwAudioState    REG_DWORD    0x1
+    NwAudioHeader    REG_BINARY    4E5741550100000000100080000000000000020080BB0000010000000000000000000000310000003000000001000000
+    NwAudioWindowIpa    REG_QWORD    0x340000000
+    NwAudioStarts    REG_DWORD    0x0
+    NwAudioStops    REG_DWORD    0x0
+    NwAudioLastStopReason    REG_DWORD    0x0
+    NwAudioLastRunStatus    REG_DWORD    0x0
+    NwAudioStartFails    REG_DWORD    0x0
+    NwAudioDescSubmitted    REG_DWORD    0x0
+    NwAudioDescCompleted    REG_DWORD    0x0
+    NwAudioStrayReports    REG_DWORD    0x0
+    NwAudioReportFaults    REG_DWORD    0x0
+    NwAudioRingErrors    REG_DWORD    0x0
+    NwAudioPadChunks    REG_DWORD    0x0
+    NwAudioPadBytes    REG_DWORD    0x0
+    NwAudioPushBytes    REG_DWORD    0x0
+    NwAudioDropBytes    REG_DWORD    0x0
+    NwAudioDmaRanDry    REG_DWORD    0x0
+    NwAudioOsStarved    REG_DWORD    0x0
+    NwAudioI2cErrors    REG_DWORD    0x0
+    NwAudioAmpVerifyFails    REG_DWORD    0x0
+    NwAudioAmpState    REG_DWORD    0xe
+    NwAudioVolReg    REG_DWORD    0x50
+    NwAudioMaxServiceGapUs    REG_DWORD    0x0
+    NwAudioOfUf    REG_DWORD    0x0
+    NwAudioSwitch1    REG_DWORD    0x40102048
+
+S256 A1 DONE
+S256 A2 AUDIO STATUS
+DEV OK problem=CM_PROB_NONE name=NWOAS Mac mini Speaker (NWAU0001)
+PROP DEVPKEY_Device_DriverInfPath = oem17.inf
+PROP DEVPKEY_Device_ProblemStatus = 
+
+HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Enum\ACPI\NWAU0001\0\Device Parameters
+    FirmwareIdentified    REG_DWORD    0x1
+    NwAudioStartStatus    REG_DWORD    0x0
+    NwAudioState    REG_DWORD    0x1
+    NwAudioHeader    REG_BINARY    4E5741550100000000100080000000000000020080BB0000010000000000000000000000310000003000000001000000
+    NwAudioWindowIpa    REG_QWORD    0x340000000
+    NwAudioStarts    REG_DWORD    0x0
+    NwAudioStops    REG_DWORD    0x0
+    NwAudioLastStopReason    REG_DWORD    0x0
+    NwAudioLastRunStatus    REG_DWORD    0x0
+    NwAudioStartFails    REG_DWORD    0x0
+    NwAudioDescSubmitted    REG_DWORD    0x0
+    NwAudioDescCompleted    REG_DWORD    0x0
+    NwAudioStrayReports    REG_DWORD    0x0
+    NwAudioReportFaults    REG_DWORD    0x0
+    NwAudioRingErrors    REG_DWORD    0x0
+    NwAudioPadChunks    REG_DWORD    0x0
+    NwAudioPadBytes    REG_DWORD    0x0
+    NwAudioPushBytes    REG_DWORD    0x0
+    NwAudioDropBytes    REG_DWORD    0x0
+    NwAudioDmaRanDry    REG_DWORD    0x0
+    NwAudioOsStarved    REG_DWORD    0x0
+    NwAudioI2cErrors    REG_DWORD    0x0
+    NwAudioAmpVerifyFails    REG_DWORD    0x0
+    NwAudioAmpState    REG_DWORD    0xe
+    NwAudioVolReg    REG_DWORD    0x50
+    NwAudioMaxServiceGapUs    REG_DWORD    0x0
+    NwAudioOfUf    REG_DWORD    0x0
+    NwAudioSwitch1    REG_DWORD    0x40102048
+
+EP OK 스피커(NWOAS Mac mini Speaker (NWAU0001)) SWD\MMDEVAPI\{0.0.0.00000000}.{541A822F-CD76-4D91-85D9-88BD19BF64B3}
+MEDIA OK NWOAS Mac mini Speaker (NWAU0001) ACPI\NWAU0001\0
+SVC AudioEndpointBuilder Running
+SVC Audiosrv Running
+S256 A2 DONE
+11:39:46 AUDIO INSTALL DONE link=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/agxmed1g-s249-20261118-113745.WE8zjQ.link out=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/logs/launcher-agxdcp256-audio-20261118-113745.out

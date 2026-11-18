@@ -1,0 +1,107 @@
+;
+; nwoa4378.inf - NWOAS Broadcom BCM4378 B1 Wi-Fi (Mac mini M1, J274), WiFiCx client driver.
+; Test-signed, for the owner's own machine only.  The firmware files are Apple's
+; (macOS /usr/share/firmware/wifi/C-4378__s-B1) and are not redistributable.
+;
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = Net
+ClassGuid   = {4d36e972-e325-11ce-bfc1-08002be10318}
+Provider    = %ProviderName%
+CatalogFile = nwoa4378.cat
+DriverVer   =
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 13
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+nwoa4378.sys = 1,,
+atlantisb-X3.trx = 1,,
+atlantisb-X3.clmb = 1,,
+atlantisb-X3.txcb = 1,,
+P-atlantisb_M-RASP_V-m.txt = 1,,
+P-atlantisb_M-RASP_V-u.txt = 1,,
+nwoas-bcm4378-board.bin = 1,,
+
+[Manufacturer]
+%ProviderName% = Nwoas,NTarm64.10.0...16299
+
+[Nwoas.NTarm64.10.0...16299]
+; PCI function 0 of the chip (S240/S257: id 0x442514e4, subsystem 0x4378106b, rev 3)
+%Nwoa.DeviceDesc% = Nwoa.ndi, PCI\VEN_14E4&DEV_4425&SUBSYS_4378106B&REV_03
+%Nwoa.DeviceDesc% = Nwoa.ndi, PCI\VEN_14E4&DEV_4425
+; S259: ACPI \_SB.NWC0.WLN0 (PCI root hidden): BAR0 64 KiB, BAR2 8 MiB, control page 16 KiB, INTx 695
+%Nwoa.DeviceDesc% = Nwoa.ndi, ACPI\NWOA4378
+
+[Nwoa.ndi.NT]
+CopyFiles       = Nwoa.Files
+Characteristics = 0x84          ; NCF_HAS_UI | NCF_PHYSICAL
+BusType         = 0             ; Internal (ACPI node; PCI IDs kept for a later PCI path)
+AddReg          = Nwoa.Reg
+*IfType         = 71            ; IF_TYPE_IEEE80211
+*MediaType      = 16            ; NdisMediumNative802_11
+*PhysicalMediaType = 9          ; NdisPhysicalMediumNative802_11
+
+[Nwoa.ndi.NT.HW]
+AddReg = Nwoa.HwReg
+
+[Nwoa.HwReg]
+; defaults read by diag.cpp NwoaReadConfig (Device Parameters)
+HKR,, PollIntervalMs, 0x00010003, 10
+HKR,, UseInterrupt,   0x00010003, 0
+HKR,, ScanPassive,    0x00010003, 1
+HKR,, RxFrameFormat,  0x00010003, 0
+; bisect switch (diag.cpp): 1 = stop after chip id + EROM (no wrapper access). Not overwritten on reinstall.
+HKR,, StopAfter,      0x00010003, 1
+HKR,, SettleMs,       0x00010003, 0
+HKR,, AccessDelayUs,  0x00010003, 0
+HKR,, PostWriteRead,  0x00010003, 0
+HKR,, VerifyFirmware, 0x00010003, 1
+HKR,, DmaMode,        0x00010003, 0
+HKR,, LinkUpAtStart,  0x00010003, 0
+
+[Nwoa.Files]
+nwoa4378.sys
+atlantisb-X3.trx
+atlantisb-X3.clmb
+atlantisb-X3.txcb
+P-atlantisb_M-RASP_V-m.txt
+P-atlantisb_M-RASP_V-u.txt
+nwoas-bcm4378-board.bin
+
+[Nwoa.Reg]
+HKR, Ndi,             Service,    0, "nwoa4378"
+HKR, Ndi\Interfaces,  UpperRange, 0, "ndis5"
+HKR, Ndi\Interfaces,  LowerRange, 0, "wlan,ethernet"
+HKR, NetworkInterface, *IfConnectorPresent, 0x00010001, 1
+HKR, NetworkInterface, *ConnectionType,     0x00010001, 1
+HKR, NetworkInterface, *DirectionType,      0x00010001, 0
+HKR, NetworkInterface, *AccessType,         0x00010001, 2
+HKR, NetworkInterface, *HardwareLoopback,   0x00010001, 0
+HKR, , NumberOfNetworkInterfaces, 0x00010001, 5
+
+[Nwoa.ndi.NT.Services]
+AddService = nwoa4378, 2, Nwoa.Service
+
+[Nwoa.Service]
+DisplayName    = %Nwoa.SvcDesc%
+ServiceType    = 1
+StartType      = 3
+ErrorControl   = 1
+ServiceBinary  = %13%\nwoa4378.sys
+
+[Nwoa.ndi.NT.Wdf]
+KmdfService = nwoa4378, Nwoa.WdfSect
+
+[Nwoa.WdfSect]
+KmdfLibraryVersion = $KMDFVERSION$
+
+[Strings]
+ProviderName      = "NWOAS"
+DiskName          = "NWOAS BCM4378 Wi-Fi"
+Nwoa.DeviceDesc   = "NWOAS Broadcom BCM4378 Wi-Fi (WiFiCx)"
+Nwoa.SvcDesc      = "NWOAS BCM4378 WiFiCx driver"

@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- nwoa4378.sys: KMDF 1.33 + NetAdapterCx 2.4 + WiFiCx 1.0, Release|ARM64 only.
+     Built in the Parallels VM by build/build-wifi.ps1 (port-j274/wifi/bcm4378-wificx/build-wifi.sh). -->
+<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|ARM64">
+      <Configuration>Release</Configuration>
+      <Platform>ARM64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{6B2E4A1C-4378-4F1B-9A57-0E1D5A4E4378}</ProjectGuid>
+    <TemplateGuid>{1bc93793-694f-48fe-9372-81e2b05556fd}</TemplateGuid>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
+    <Configuration>Release</Configuration>
+    <Platform>ARM64</Platform>
+    <RootNamespace>nwoa4378</RootNamespace>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'" Label="Configuration">
+    <TargetVersion>Windows10</TargetVersion>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <ConfigurationType>Driver</ConfigurationType>
+    <DriverType>KMDF</DriverType>
+    <DriverTargetPlatform>Windows Driver</DriverTargetPlatform>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>33</KMDF_VERSION_MINOR>
+    <KMDF_MINIMUM_VERSION_REQUIRED>33</KMDF_MINIMUM_VERSION_REQUIRED>
+    <NetAdapterDriver>true</NetAdapterDriver>
+    <NETADAPTER_VERSION_MAJOR>2</NETADAPTER_VERSION_MAJOR>
+    <NETADAPTER_VERSION_MINOR>4</NETADAPTER_VERSION_MINOR>
+    <WifiDriver>true</WifiDriver>
+    <WIFI_VERSION_MAJOR>1</WIFI_VERSION_MAJOR>
+    <WIFI_VERSION_MINOR>0</WIFI_VERSION_MINOR>
+    <SupportsPackaging>false</SupportsPackaging>
+    <SpectreMitigation>false</SpectreMitigation>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
+    <TargetName>nwoa4378</TargetName>
+    <EnableInf2cat>false</EnableInf2cat>
+    <RunCodeAnalysis>false</RunCodeAnalysis>
+    <SignMode>Off</SignMode>
+    <ApiValidator_Enable>false</ApiValidator_Enable>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
+    <ClCompile>
+      <WppEnabled>false</WppEnabled>
+      <AdditionalIncludeDirectories>$(DDK_INC_PATH)wlan\2.0;$(MSBuildProjectDirectory)\core;$(MSBuildProjectDirectory)\driver;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_HAS_EXCEPTIONS=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <WarningLevel>Level4</WarningLevel>
+      <DisableSpecificWarnings>4201;4214;4324;4100;4189;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>$(DDK_LIB_PATH)wlan\2.0\WificxTLVGenParse.lib;$(DDK_LIB_PATH)cng.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <GenerateMapFile>true</GenerateMapFile>
+    </Link>
+    <Inf>
+      <TimeStamp>1.0.0.8</TimeStamp>
+    </Inf>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <Inf Include="nwoa4378.inf" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="core\nwbc_core.c" />
+    <ClCompile Include="driver\driver.cpp" />
+    <ClCompile Include="driver\hw.cpp" />
+    <ClCompile Include="driver\chip.cpp" />
+    <ClCompile Include="driver\fw.cpp" />
+    <ClCompile Include="driver\msgbuf.cpp" />
+    <ClCompile Include="driver\events.cpp" />
+    <ClCompile Include="driver\wifi.cpp" />
+    <ClCompile Include="driver\datapath.cpp" />
+    <ClCompile Include="driver\diag.cpp" />
+    <ClCompile Include="driver\memory.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="core\nwbc_core.h" />
+    <ClInclude Include="driver\precomp.h" />
+    <ClInclude Include="driver\nwoa.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
