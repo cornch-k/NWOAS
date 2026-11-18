@@ -20,7 +20,31 @@ not as hypervisor-free bare-metal Windows. A second Mac still supplies boot
 orchestration and runtime service transport. Native driver and standalone boot
 support are goals, not completed outcomes.
 
-## Current status — 2026-09-10
+## Current status — 2026-11-19
+
+Windows 11 ARM64 still runs as a guest under m1n1 EL2 mediation, with a second
+Mac (a MacBook) hosting the hypervisor run and service transport. The items
+below are what has been observed on the Mac mini itself; "built" means compiled
+and host-tested only, not yet run on the hardware.
+
+| Area | State on the Mac mini (J274) |
+|---|---|
+| Display | HV-owned DCP scanout, selectable resolutions, HDMI monitor reconnect |
+| GPU | WDDM driver based on [windows-on-m1](https://github.com/paulsmir/windows-on-m1) (patch series P22-P35 in `NWOAS/port-j274/gpu/driver-p15`). D3D11 feature level 11_1 and D3D12 12_1 for ARM64 apps; desktop, Cinebench 2026 UI and D3D11/D3D12 draw tests render. Edge renders through `--use-angle=d3d11on12`; the default Edge path crashed because the D3D11 format answers lacked MULTISAMPLE_RENDERTARGET, fixed in 2771 (built). No OpenGL, Vulkan, x64 user-mode driver or video decode yet |
+| Internal speaker | Works (PortCls driver, speaker thermal protection from the amp V/I sense, 21 dB gain stage) |
+| Wi-Fi (BCM4378) | WiFiCx driver: WPA2-Personal connection, internet access, 433 Mbps link, 200-450 Mbps downloads. The link re-associates about every 250 s; fix built (s258k) |
+| Bluetooth | Firmware boot and rings up from the hypervisor (S261 stages 1-8); the Windows Bluetooth stack does not start yet |
+| CPU | All eight cores. Cinebench 2026 (11-18): multi-core 1952, single-thread 272 with the core-class table off. Windows shows the processor as "Not Specified"; SMBIOS fix built |
+| Power | Opt-in HV changes (S260): idle 13.7 W -> 10.85 W with WFI |
+| Storage | Emulated NVMe, one command at a time (about 11k random 4K IOPS); concurrent queue (g262P) under test |
+
+Details: [handoff 2026-11-18](NWOAS/HANDOFF-2026-11-18.md),
+[roadmap](NWOAS/ROADMAP-2026-11-17.md),
+[GPU plan](NWOAS/research-20261118/gpu/GPU-REAL-DRIVER-PLAN.md).
+Remaining: standalone boot without the second Mac, USB-C, sleep, x64 apps on
+the GPU, OpenGL/Vulkan, video decode.
+
+## Earlier status — 2026-09-10
 
 Windows 11 ARM64 boots from the Mac mini M1 internal SSD with Tahoe firmware
 retained. All eight CPU cores execute Windows workloads, and Windows sees
