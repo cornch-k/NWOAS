@@ -1,0 +1,2588 @@
+diff -ruN --exclude=build m1n1-standalone-s264-base/src-g262Q/Makefile m1n1-standalone-s264/Makefile
+--- m1n1-standalone-s264-base/src-g262Q/Makefile	2026-11-18 16:36:19
++++ m1n1-standalone-s264/Makefile	2026-11-19 02:42:19
+@@ -135,7 +135,7 @@
+ 	heapblock.o \
+ 	nwoas_frontend/model.o nwoas_frontend/admin_payload.o nwoas_frontend/admin_state.o nwoas_frontend/admin_ring.o nwoas_frontend/frontend.o \
+ 	hv.o hv_vm.o hv_exc.o hv_vuart.o hv_wdt.o hv_asm.o hv_aic.o hv_virtio.o hv_psci.o hv_vgic.o \
+-	nwoas_pwr.o \
++	nwoas_pwr.o nwoas_s264.o nwoas_s264_plan.o \
+ 	i2c.o \
+ 	iodev.o \
+ 	iova.o \
+File m1n1-standalone-s264-base/src-g262Q/data/bootlogo_128.png is a unknown type while file m1n1-standalone-s264/data/bootlogo_128.png is a unknown type
+File m1n1-standalone-s264-base/src-g262Q/data/bootlogo_256.png is a unknown type while file m1n1-standalone-s264/data/bootlogo_256.png is a unknown type
+File m1n1-standalone-s264-base/src-g262Q/data/bootlogo_48.png is a unknown type while file m1n1-standalone-s264/data/bootlogo_48.png is a unknown type
+diff -ruN --exclude=build m1n1-standalone-s264-base/src-g262Q/src/hv_exc.c m1n1-standalone-s264/src/hv_exc.c
+--- m1n1-standalone-s264-base/src-g262Q/src/hv_exc.c	2026-11-19 02:15:22
++++ m1n1-standalone-s264/src/hv_exc.c	2026-11-19 02:42:19
+@@ -15,6 +15,7 @@
+ #include "adt.h"
+ #include "nwoas_pwr.h" /* NWOAS S260 */
+ #include "nvme.h"      /* NWOAS S262: nwoas_nvmeqd_irq_live */
++#include "nwoas_s264.h" /* NWOAS S264: C launcher trap table */
+ void nwoas_nvmeqd_irq(struct exc_info *ctx); /* NWOAS S262, hv_vm.c */
+ 
+ // NWOAS: quiet mode. Silences the heavy per-SMC / periodic diagnostic dumps (guest PC-ring,
+@@ -1892,6 +1893,41 @@
+             }
+             return true;
+ #endif
++    }
++
++    /* NWOAS S264: the CPU-config sysregs the guest m1n1 prefix touches, handled here
++     * instead of by Python handle_msr (hv/__init__.py:1110-1129 "Pass" = mrs/msr on this
++     * CPU; ACC_CFG_EL1 write = "Skip", 1131-1139).  Only after a S264 launch armed it. */
++    if (nwoas_s264_traps_armed) {
++#define S264_PASS(sr)                                                                              \
++    case SYSREG_ISS(sr):                                                                           \
++        if (is_read)                                                                               \
++            regs[rt] = _mrs(sr_tkn(sr));                                                           \
++        else                                                                                       \
++            _msr(sr_tkn(sr), regs[rt]);                                                            \
++        nwoas_s264_cnt.msr_pass++;                                                                 \
++        return true;
++        switch (reg) {
++            S264_PASS(SYS_IMP_APL_HID5)
++            S264_PASS(SYS_IMP_APL_EHID9)
++            S264_PASS(SYS_IMP_APL_EHID10)
++            S264_PASS(SYS_IMP_APL_EHID20)
++            case SYSREG_ISS(sys_reg(2, 0, 1, 0, 4)): /* OSLAR_EL1 is write-only */
++                if (is_read)
++                    break;
++                _msr(sr_tkn(sys_reg(2, 0, 1, 0, 4)), regs[rt]);
++                nwoas_s264_cnt.msr_pass++;
++                return true;
++            case SYSREG_ISS(SYS_IMP_APL_ACC_CFG):
++                if (is_read) {
++                    regs[rt] = _mrs(sr_tkn(SYS_IMP_APL_ACC_CFG));
++                    nwoas_s264_cnt.msr_pass++;
++                } else {
++                    nwoas_s264_cnt.msr_skip++;
++                }
++                return true;
++        }
++#undef S264_PASS
+     }
+ 
+     return false;
+diff -ruN --exclude=build m1n1-standalone-s264-base/src-g262Q/src/hv_vm.c m1n1-standalone-s264/src/hv_vm.c
+--- m1n1-standalone-s264-base/src-g262Q/src/hv_vm.c	2026-11-19 02:15:22
++++ m1n1-standalone-s264/src/hv_vm.c	2026-11-19 02:42:19
+@@ -1417,6 +1417,10 @@
+ #define NWOAS_NVME_EXEC_FATAL (-1)
+ #define NWOAS_NVME_EXEC_CANCELLED (-2)
+ 
++/* NWOAS S264: set by the C launcher (fast-path action 27): NS2 is not advertised and an
++ * nsid 2 command never reaches the MacBook; it completes with Invalid Namespace. */
++bool nwoas_s264_ns1_only;
++
+ static int nwoas_nvme_link_execute(struct exc_info *ctx,
+                                    const struct nwoas_nvme_guest_cmd *cmd,
+                                    u32 *completion_result)
+@@ -1470,7 +1474,7 @@
+             return NWOAS_NVME_SC_INVALID_FIELD;
+         return nvme_flush(1) ? NWOAS_NVME_SC_SUCCESS : NWOAS_NVME_EXEC_FATAL;
+     }
+-    if (cmd->nsid == 2)
++    if (cmd->nsid == 2 && !nwoas_s264_ns1_only)
+         return nwoas_nvme_link_execute(ctx, cmd, completion_result);
+     if (cmd->nsid != 1)
+         return NWOAS_NVME_SC_INVALID_NSID;
+@@ -1666,6 +1670,7 @@
+ {
+     if(action==23)return 0x5332333000000001ULL;
+     if(action==16)return s229_enable(sq_base,sq_size);
++    if(action==27)return s229_enable_ns1(sq_base,sq_size); /* NWOAS S264: (0, mdts) */
+     if(action==17)return 0x5332323900000001ULL;
+     if(action==18)return s229_reg_reads;
+     if(action==19)return s229_reg_writes;
+@@ -1847,6 +1852,13 @@
+         return true;
+     }
+     return false;
++}
++
++/* NWOAS S264: the C launcher maps s93-nvme-ecam/bar as C hooks that land here (the
++ * SPTE_PROXY_HOOK path calls the same function before it would ask the MacBook). */
++bool nwoas_s264_nvme_mmio(struct exc_info *ctx, u64 ipa, u64 *val, bool write, int width)
++{
++    return nwoas_nvme_fastpath_mmio(ctx, ipa, val, write, (u64)width);
+ }
+ 
+ // Cache-maintain [addr,addr+len) under exc_guard (a stray fault is skipped, not a reboot).
+diff -ruN --exclude=build m1n1-standalone-s264-base/src-g262Q/src/nwoas_nvmeqd.inc m1n1-standalone-s264/src/nwoas_nvmeqd.inc
+--- m1n1-standalone-s264-base/src-g262Q/src/nwoas_nvmeqd.inc	2026-11-19 02:15:22
++++ m1n1-standalone-s264/src/nwoas_nvmeqd.inc	2026-11-19 02:42:19
+@@ -292,7 +292,7 @@
+                 status = NWOAS_NVME_SC_INVALID_FIELD;
+             else
+                 flush = true;
+-        } else if (cmd.nsid == 2) {
++        } else if (cmd.nsid == 2 && !nwoas_s264_ns1_only) {
+             if (where != NWOAS_QD_CTX_SQDB && where != NWOAS_QD_CTX_TICK) {
+                 nwoas_qd.st.stall_link++;
+                 break;
+diff -ruN --exclude=build m1n1-standalone-s264-base/src-g262Q/src/nwoas_s229_adapter.inc m1n1-standalone-s264/src/nwoas_s229_adapter.inc
+--- m1n1-standalone-s264-base/src-g262Q/src/nwoas_s229_adapter.inc	2026-09-10 11:00:38
++++ m1n1-standalone-s264/src/nwoas_s229_adapter.inc	2026-11-19 02:42:19
+@@ -118,6 +118,20 @@
+     s229_enabled=true;nwoas_nvme_set_irq(0);
+     printf("NWOAS-S229 local control/admin owner enabled\n");return true;
+ }
++/* NWOAS S264: same owner as s229_enable, but the identity policy is not paired: Identify
++ * reports one namespace (admin_payload.c paired=false) and no NS2 transport exists. */
++extern bool nwoas_s264_ns1_only;
++static bool s229_enable_ns1(u64 link_lbas,u64 mdts)
++{
++    if(s229_enabled || nwoas_nvme_fp.armed || nwoas_nvme_fp.faulted || mdts>8 || link_lbas)return false;
++    struct nwoas_frontend_ops ops={0,s229_contains,s229_read,s229_write,s229_barrier,s229_reconcile,
++        s229_reset_io,s229_flush,s229_set_cache,s229_get_cache,s229_irq};
++    struct nwoas_identity_policy policy={NWOAS_NVME_NAMESPACE_LBAS,0,(uint8_t)mdts,false,false,true};
++    s229_cache=true;
++    if(!nwoas_frontend_init(&s229_front,NWOAS_NVME_BAR,ops,policy))return false;
++    s229_enabled=true;nwoas_s264_ns1_only=true;nwoas_nvme_set_irq(0);
++    printf("NWOAS-S229 local control/admin owner enabled (S264 NS1 only, no NS2)\n");return true;
++}
+ static bool s229_fast_irq_update(void)
+ {
+     if(!s229_enabled)return false;
+diff -ruN --exclude=build m1n1-standalone-s264-base/src-g262Q/src/nwoas_s264.c m1n1-standalone-s264/src/nwoas_s264.c
+--- m1n1-standalone-s264-base/src-g262Q/src/nwoas_s264.c	1970-01-01 09:00:00
++++ m1n1-standalone-s264/src/nwoas_s264.c	2026-11-19 02:41:40
+@@ -0,0 +1,745 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * NWOAS S264: C guest launcher, executor half.
++ *
++ * Builds the plan (nwoas_s264_plan.c, the same code the host model compiles) and
++ * either returns it (S264_OP_DRYRUN: no MMIO, no sysreg writes, no stage-2 changes)
++ * or executes it and enters the guest (S264_OP_LAUNCH), replacing
++ *   run_guest.py -> hv.init / load_raw / modules / hv.start
++ * for the first milestone configuration: S259 payload, no sound (S256 window with
++ * header status 0), no NS2 transport (NS1-only NVMe), Wi-Fi control page with
++ * NWOAS_WIFI=0 contents, GPU mediation as agx_hv2_module.py.
++ *
++ * The Python trap handlers the guest m1n1 prefix needs (PMGR state reads/writes,
++ * CPU_START writes, CPU-config sysregs) are C handlers here / in hv_exc.c with
++ * counters that match the Python log counts (S259 01:00 log: pass 14, skip 1,
++ * PMGR reads 39 / writes 2, CPU_START writes 14, 7 gated starts).
++ *
++ * HARDWARE-UNVERIFIED.  Building this is not a boot result.
++ */
++#include "nwoas_s264.h"
++#include "nwoas_s264_plan.h"
++
++#include "adt.h"
++#include "cpu_regs.h"
++#include "fb.h"
++#include "heapblock.h"
++#include "hv.h"
++#include "iodev.h"
++#include "mcc.h"
++#include "memory.h"
++#include "nvme.h"
++#include "pcie.h"
++#include "string.h"
++#include "tinf/tinf.h"
++#include "uartproxy.h"
++#include "utils.h"
++#include "xnuboot.h"
++
++#if defined(NWOAS_AGX) && NWOAS_AGX
++#include "nwoas_agx.h"
++#endif
++
++bool nwoas_s264_traps_armed;
++struct nwoas_s264_counters nwoas_s264_cnt;
++
++extern u64 nwoas_nvme_fastpath_control(u64 action, u64 sq_base, u64 sq_size, u64 cq_base,
++                                       u64 cq_size, u64 flags);
++extern bool nwoas_s264_nvme_mmio(struct exc_info *ctx, u64 ipa, u64 *val, bool write, int width);
++
++#define S264_MAX_OPS 640
++static struct s264_op s264_ops[S264_MAX_OPS];
++static struct s264_plan s264_pl;
++static struct s264_config s264_cfg;
++static struct s264_inputs s264_in;
++static u64 s264_carve[2 * 64];
++static struct s264_wifi_page s264_wifi;
++static bool s264_launched;
++
++/* --------------------------------------------------------------- C hooks */
++#define PMGR_MAX 32
++static struct {
++    u64 addr;
++    u32 val;
++    bool have;
++} s264_pmgr_cache[PMGR_MAX];
++
++static u32 *pmgr_slot(u64 addr, bool *have)
++{
++    for (int i = 0; i < PMGR_MAX; i++) {
++        if (s264_pmgr_cache[i].addr == addr) {
++            *have = s264_pmgr_cache[i].have;
++            s264_pmgr_cache[i].have = true;
++            return &s264_pmgr_cache[i].val;
++        }
++    }
++    for (int i = 0; i < PMGR_MAX; i++) {
++        if (!s264_pmgr_cache[i].addr) {
++            s264_pmgr_cache[i].addr = addr;
++            *have = false;
++            s264_pmgr_cache[i].have = true;
++            return &s264_pmgr_cache[i].val;
++        }
++    }
++    return NULL;
++}
++
++/* hv/__init__.py:1970-1979: reads report the first value seen (or what the last write
++ * asked for); writes go to the hardware with the target forced to 0xf and bits 31/10
++ * cleared ("Dangerous write"). */
++static bool s264_hook_pmgr(struct exc_info *ctx, u64 addr, u64 *val, bool write, int width)
++{
++    UNUSED(ctx);
++    UNUSED(width);
++    bool have;
++    if (write) {
++        u32 data = (u32)val[0];
++        nwoas_s264_cnt.pmgr_writes++;
++        if (nwoas_s264_cnt.pmgr_writes <= 64)
++            printf("HVLOG: S264 PMGR W %lx = 0x%x: Dangerous write\n", addr, data);
++        mask32(addr, 0x3ff, (data | 0xf) & ~0x80000400u);
++        u32 *slot = pmgr_slot(addr, &have);
++        if (slot)
++            *slot = (data & 0xfffffc0fu) | ((data & 0xf) << 4);
++    } else {
++        u32 data = read32(addr);
++        u32 *slot = pmgr_slot(addr, &have);
++        u32 ret = data;
++        if (slot) {
++            if (!have)
++                *slot = data;
++            ret = *slot;
++        }
++        nwoas_s264_cnt.pmgr_reads++;
++        if (nwoas_s264_cnt.pmgr_reads <= 64)
++            printf("HVLOG: S264 PMGR R %lx = 0x%x -> 0x%x\n", addr, data, ret);
++        val[0] = ret;
++    }
++    return true;
++}
++
++/* hv/__init__.py:2019-2026: read-only override, writes pass through (SPTE_PROXY_HOOK_R) */
++static bool s264_hook_pg(struct exc_info *ctx, u64 addr, u64 *val, bool write, int width)
++{
++    if (write)
++        return hv_pa_write(ctx, addr, val, width);
++    nwoas_s264_cnt.pg_reads++;
++    val[0] = 0xc000000;
++    return true;
++}
++
++/* hv/__init__.py:2043-2054: CPU state reads for CPUs Python never started lose bits 7:0 */
++static bool s264_hook_cpustate(struct exc_info *ctx, u64 addr, u64 *val, bool write, int width)
++{
++    if (write)
++        return hv_pa_write(ctx, addr, val, width);
++    if (!hv_pa_read(ctx, addr, val, width))
++        return false;
++    u64 data = val[0];
++    val[0] &= ~0xffULL;
++    nwoas_s264_cnt.cpustate_reads++;
++    if (nwoas_s264_cnt.cpustate_reads <= 16)
++        printf("HVLOG: S264 CPU STATE R %lx = 0x%lx -> 0x%lx\n", addr, data, val[0]);
++    return true;
++}
++
++static u64 s264_cpustart_base;
++static u64 s264_cpustate_done[16];
++
++static void s264_tlbi(void)
++{
++    sysop("dsb ishst");
++    sysop("tlbi vmalls12e1is");
++    sysop("dsb ish");
++    sysop("isb");
++}
++
++/* hv/__init__.py:2056-2087 with smp-s133/pmgr_gate.py as start_secondary: the write is
++ * dropped (never reaches PMGR), APs stay parked for PSCI CPU_ON (hv_psci.c). */
++static bool s264_hook_cpustart(struct exc_info *ctx, u64 addr, u64 *val, bool write, int width)
++{
++    if (!write) /* SPTE_PROXY_HOOK_W read path = plain pass-through */
++        return hv_pa_read(ctx, addr, val, width);
++    u64 off = addr - s264_cpustart_base;
++    u32 data = (u32)val[0];
++    nwoas_s264_cnt.cpustart_writes++;
++    if (nwoas_s264_cnt.cpustart_writes <= 32)
++        printf("HVLOG: S264 CPUSTART W %lx+%lx:%d = 0x%x\n", s264_cpustart_base, off, 8 << width,
++               data);
++    if (off >= 8) {
++        if (width != 2) {
++            printf("HVLOG: S264 CPUSTART W width %d ignored (Python asserts 32-bit)\n", 8 << width);
++            return true;
++        }
++        u32 cluster = (u32)(off - 8) / 4;
++        for (u32 i = 0; i < 32; i++) {
++            if (!(data & BIT(i)))
++                continue;
++            nwoas_s264_cnt.cpustart_gated++;
++            if (nwoas_s264_cnt.cpustart_gated <= 16)
++                printf("HVLOG: NWOAS-S133 gate PMGR AP start 0:%u:%u; waiting for PSCI CPU_ON "
++                       "(S264 C gate)\n",
++                       cluster, i);
++            u64 cs = 0x210050100ULL | ((u64)cluster << 24) | ((u64)i << 20);
++            bool seen = false;
++            for (u32 k = 0; k < nwoas_s264_cnt.cpustate_hooks && k < 16; k++)
++                seen |= s264_cpustate_done[k] == cs;
++            if (!seen && nwoas_s264_cnt.cpustate_hooks < 16) {
++                s264_cpustate_done[nwoas_s264_cnt.cpustate_hooks++] = cs;
++                hv_map_hook(cs, s264_hook_cpustate, 8);
++                s264_tlbi();
++            }
++        }
++    }
++    return true;
++}
++
++void nwoas_s264_print_counters(const char *why)
++{
++    struct nwoas_s264_counters *c = &nwoas_s264_cnt;
++    printf("HVLOG: S264 COUNTERS (%s) msr_pass=%lu msr_skip=%lu pmgr_r=%lu pmgr_w=%lu pg_r=%lu "
++           "cpustart_w=%lu gated=%lu cpustate_r=%lu nvme_unhandled=%lu wifi_r=%lu wifi_w=%lu "
++           "wifi_cmd=%lu (Python S259 01:00 log: pass 14 skip 1 pmgr_r 39 pmgr_w 2 cpustart_w 14 "
++           "gated 7)\n",
++           why, c->msr_pass, c->msr_skip, c->pmgr_reads, c->pmgr_writes, c->pg_reads,
++           c->cpustart_writes, c->cpustart_gated, c->cpustate_reads, c->nvme_unhandled,
++           c->wifi_reads, c->wifi_writes, c->wifi_cmds);
++}
++
++/* s93-nvme-ecam / s93-nvme-bar after layout-s231/module.py: the C fast path owns every
++ * access; Python's handlers only raised "unexpected host NVMe access". */
++static bool s264_hook_nvme(struct exc_info *ctx, u64 addr, u64 *val, bool write, int width)
++{
++    if (!nwoas_s264_cnt.nvme_first_seen) {
++        nwoas_s264_cnt.nvme_first_seen = 1;
++        nwoas_s264_print_counters("first guest NVMe access");
++    }
++    if (nwoas_s264_nvme_mmio(ctx, addr, val, write, width))
++        return true;
++    nwoas_s264_cnt.nvme_unhandled++;
++    if (nwoas_s264_cnt.nvme_unhandled <= 8)
++        printf("HVLOG: S264 unexpected NVMe %s %lx/%d (Python S230 would raise)\n",
++               write ? "write" : "read", addr, 8 << width);
++    return false;
++}
++
++/* wifi-s259 control page, NWOAS_WIFI=0 (nwoas_wifi_s259.py hook_read/hook_write) */
++static bool s264_hook_wifi(struct exc_info *ctx, u64 addr, u64 *val, bool write, int width)
++{
++    UNUSED(ctx);
++    u32 off = (u32)(addr - 0x348000000ULL);
++    if (write) {
++        nwoas_s264_cnt.wifi_writes++;
++        if (off == 0x10)
++            nwoas_s264_cnt.wifi_cmds++;
++        if (width == 2 && !(off & 3)) {
++            s264_wifi_reg_write(&s264_wifi, off, (u32)val[0]);
++        } else if (width == 3 && !(off & 7)) {
++            s264_wifi_reg_write(&s264_wifi, off, (u32)val[0]);
++            s264_wifi_reg_write(&s264_wifi, off + 4, (u32)(val[0] >> 32));
++        }
++        return true;
++    }
++    nwoas_s264_cnt.wifi_reads++;
++    u32 base = off & ~3u;
++    if (width == 3) {
++        val[0] = (u64)s264_wifi_reg_read(&s264_wifi, base) |
++                 ((u64)s264_wifi_reg_read(&s264_wifi, base + 4) << 32);
++    } else {
++        u64 v = s264_wifi_reg_read(&s264_wifi, base) >> (8 * (off & 3));
++        val[0] = v & ((1ULL << (8 << width)) - 1);
++    }
++    return true;
++}
++
++static hv_hook_t *s264_hook_fn(u32 id)
++{
++    switch (id) {
++        case S264_HOOK_PMGR:
++            return s264_hook_pmgr;
++        case S264_HOOK_PG_OVR:
++            return s264_hook_pg;
++        case S264_HOOK_CPUSTART:
++            return s264_hook_cpustart;
++        case S264_HOOK_CPUSTATE:
++            return s264_hook_cpustate;
++        case S264_HOOK_NVME:
++            return s264_hook_nvme;
++        case S264_HOOK_WIFI_CTL:
++            return s264_hook_wifi;
++    }
++    return NULL;
++}
++
++/* --------------------------------------------------------------- hardware steps */
++static int hexval(char c)
++{
++    if (c >= '0' && c <= '9')
++        return c - '0';
++    if (c >= 'a' && c <= 'f')
++        return c - 'a' + 10;
++    return -1;
++}
++static bool unhex(const char *s, u8 *out, u32 n)
++{
++    for (u32 i = 0; i < n; i++) {
++        int h = hexval(s[2 * i]), l = hexval(s[2 * i + 1]);
++        if (h < 0 || l < 0)
++            return false;
++        out[i] = (u8)(h << 4 | l);
++    }
++    return s[2 * n] == 0;
++}
++
++/* layout-s231/guest_module.py:173-186 (raw entries, ans2-s87/run-20261115-180239/lba-2.bin) */
++static const char *const s264_protected_hex[4] = {
++    "616964690067aa11aa1100306543ecac448ff356555cda48aff097af9bb0a578060000000000000005f40100000000000000000000000000690042006f006f007400530079007300740065006d0043006f006e007400610069006e00650072000000000000000000000000000000000000000000000000000000000000000000",
++    "ef57347c0000aa11aa1100306543ecac70fd24c6bd53274cadc71ac2f9288cbc06f4010000000000119c5202000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
++    "a2a0d0ebe5b9334487c068b6b72699c7edc4178de20df04b884f5477b004da66009d520200000000ff8161020000000000000000000000d0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
++    "727663520079aa11aa1100306543ecac350d13593224cb4f82067efdf9903d4d760c9303000000006a0ca7030000000000000000000000005200650063006f0076006500720079004f00530043006f006e007400610069006e006500720000000000000000000000000000000000000000000000000000000000000000000000",
++};
++static const char *const s264_stub135_hex =
++    "ef57347c0000aa11aa1100306543ecacedc4178de20df04b884f5477b004da66009d520200000000ff816102000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
++
++#define GPT_DISK_BLOCKS 61279344ULL
++#define GPT_ZONE_FIRST  39944960ULL
++#define GPT_ZONE_LAST   59968629ULL
++
++struct s264_gpt_hdr {
++    u64 cur, alt, first, last, ent;
++    u32 cnt, esz, ecrc;
++    u8 guid[16];
++};
++
++static bool gpt_hdr(const u8 *b, struct s264_gpt_hdr *h)
++{
++    if (memcmp(b, "EFI PART", 8))
++        return false;
++    u32 size, crc;
++    memcpy(&size, b + 12, 4);
++    memcpy(&crc, b + 16, 4);
++    if (size < 92 || size > 4096)
++        return false;
++    static u8 tmp[4096];
++    memcpy(tmp, b, size);
++    memset(tmp + 16, 0, 4);
++    if (tinf_crc32(tmp, size) != crc)
++        return false;
++    memcpy(&h->cur, b + 24, 8);
++    memcpy(&h->alt, b + 32, 8);
++    memcpy(&h->first, b + 40, 8);
++    memcpy(&h->last, b + 48, 8);
++    memcpy(h->guid, b + 56, 16);
++    memcpy(&h->ent, b + 72, 8);
++    memcpy(&h->cnt, b + 80, 4);
++    memcpy(&h->esz, b + 84, 4);
++    memcpy(&h->ecrc, b + 88, 4);
++    return true;
++}
++
++static bool s264_read(u8 *buf, u64 lba, u32 n)
++{
++    dc_civac_range(buf, n * 4096);
++    bool ok = nvme_read_n(1, lba, buf, n);
++    dc_civac_range(buf, n * 4096);
++    return ok;
++}
++
++/* guest_module.py:158-196 (identity + GptGuard construction).  Returns 0 or a reason. */
++static int s264_gpt_check(u8 *buf)
++{
++    static const u8 disk_guid[16] = {0x2d, 0x17, 0x8f, 0x89, 0xbf, 0x77, 0x07, 0x40,
++                                     0xb8, 0x65, 0xac, 0x81, 0xa1, 0x41, 0xeb, 0x3c};
++    u8 prot[4][128], stub[128];
++    for (int i = 0; i < 4; i++)
++        if (!unhex(s264_protected_hex[i], prot[i], 128))
++            return 1;
++    if (!unhex(s264_stub135_hex, stub, 128))
++        return 1;
++    struct s264_gpt_hdr h, bh;
++    if (!s264_read(buf, 1, 1))
++        return 2;
++    if (memcmp(buf, "EFI PART", 8) || memcmp(buf + 56, disk_guid, 16))
++        return 3;
++    if (!gpt_hdr(buf, &h))
++        return 4;
++    if (!s264_read(buf, 2, 1))
++        return 2;
++    const u8 *slot3 = buf + 256;
++    bool is_stub = !memcmp(slot3, stub, 128);
++    if (!is_stub && memcmp(slot3, prot[2], 128))
++        return 5; /* neither the NWSTUB placeholder nor the recorded 13.5 stub entry */
++    if (is_stub)
++        memcpy(prot[2], stub, 128);
++    printf("[stub-135] GPT slot 3 = %s (S264 C check)\n",
++           is_stub ? "13.5 stub APFS" : "NWSTUB placeholder");
++    u32 eb = (h.cnt * h.esz + 4095) / 4096;
++    if (!eb || eb > 4)
++        return 6;
++    if (!s264_read(buf, h.alt, 1) || !gpt_hdr(buf, &bh) || bh.ent + eb > h.alt)
++        return 7;
++    /* gpt_lbas must be {0..5} u {61279339..61279343} (guest_module.py:196) */
++    if (!(h.ent == 2 && eb == 4 && h.alt == GPT_DISK_BLOCKS - 1 && bh.ent == GPT_DISK_BLOCKS - 5))
++        return 8;
++    if (!s264_read(buf, h.ent, eb))
++        return 2;
++    if ((u64)h.cnt * h.esz > (u64)eb * 4096 || tinf_crc32(buf, h.cnt * h.esz) != h.ecrc)
++        return 9;
++    u32 seen = 0;
++    for (u32 i = 0; i < h.cnt; i++) {
++        const u8 *e = buf + (u64)i * h.esz;
++        static const u8 zero16[16];
++        if (!memcmp(e, zero16, 16))
++            continue;
++        int p = -1;
++        for (int k = 0; k < 4; k++)
++            if (!memcmp(e, prot[k], 128))
++                p = k;
++        if (p >= 0) {
++            if (seen & BIT(p))
++                return 10;
++            seen |= BIT(p);
++            continue;
++        }
++        for (int k = 0; k < 4; k++)
++            if (!memcmp(e + 16, prot[k] + 16, 16))
++                return 11;
++        u64 s, en;
++        memcpy(&s, e + 32, 8);
++        memcpy(&en, e + 40, 8);
++        if (!(GPT_ZONE_FIRST <= s && s <= en && en <= GPT_ZONE_LAST))
++            return 12;
++    }
++    if (seen != 0xf)
++        return 13;
++    return 0;
++}
++
++/* proxyclient m1n1/hw/pmu.py reset_panic_counter + hw/spmi.py write (write8 0) */
++static int s264_pmu_reset(u64 base, u32 slave, u32 reg)
++{
++    for (int i = 0; i < 64 && !(read32(base + 0x00) & BIT(24)); i++)
++        read32(base + 0x08);
++    if (!(read32(base + 0x00) & BIT(24)))
++        return -1;
++    write32(base + 0x04, (reg << 16) | BIT(15) | (slave << 8) | 0x30);
++    write32(base + 0x04, 0);
++    if (poll32(base + 0x00, BIT(24), 0, 100000) < 0)
++        return -2;
++    return (int)(read32(base + 0x08) & 0x7fffffff);
++}
++
++/* --------------------------------------------------------------- executor */
++static void step_result(u32 id, u32 status, u64 val)
++{
++    struct s264_plan *pl = &s264_pl;
++    if (pl->n_steps < sizeof(pl->steps) / sizeof(pl->steps[0])) {
++        pl->steps[pl->n_steps].id = id;
++        pl->steps[pl->n_steps].status = status;
++        pl->steps[pl->n_steps].val = val;
++        pl->n_steps++;
++    }
++}
++
++static void do_msr(u32 id, u64 v)
++{
++    switch (id) {
++        case S264_MSR_HACR_EL2:
++            msr(HACR_EL2, v);
++            break;
++        case S264_MSR_MDCR_EL2:
++            msr(MDCR_EL2, v);
++            break;
++        case S264_MSR_MDSCR_EL1:
++            msr(MDSCR_EL1, v);
++            break;
++        case S264_MSR_AMX_CONFIG_EL1:
++            msr(sys_reg(3, 4, 15, 1, 4), v);
++            break;
++        case S264_MSR_VMKEYLO_EL2:
++            msr(SYS_IMP_APL_APVMKEYLO_EL2, v);
++            break;
++        case S264_MSR_VMKEYHI_EL2:
++            msr(SYS_IMP_APL_APVMKEYHI_EL2, v);
++            break;
++        case S264_MSR_APSTS_EL12:
++            msr(SYS_IMP_APL_APSTS_EL12, v);
++            break;
++        case S264_MSR_ACTLR_EL12:
++            msr(SYS_ACTLR_EL12, v);
++            break;
++        case S264_MSR_ACTLR_EL12_PRE:
++            msr(SYS_IMP_APL_ACTLR_EL12, v);
++            break;
++        case S264_MSR_SPRR_CONFIG_EL1:
++            msr(SYS_IMP_APL_SPRR_CONFIG_EL1, v);
++            break;
++        case S264_MSR_GXF_CONFIG_EL1:
++            msr(SYS_IMP_APL_GXF_CONFIG_EL1, v);
++            break;
++    }
++    sysop("isb");
++}
++
++/* returns 0, or -(1000 + op index) on the first failing op */
++static int s264_execute(void)
++{
++    struct s264_plan *pl = &s264_pl;
++    const struct s264_layout *L = &pl->L;
++    for (u32 i = 0; i < pl->n_ops; i++) {
++        const struct s264_op *o = &pl->ops[i];
++        switch (o->kind) {
++            case S264_OP_IODEV:
++                iodev_set_usage((iodev_id_t)o->a, (iodev_usage_t)o->b);
++                break;
++            case S264_OP_MSR:
++                do_msr(o->id, o->b);
++                break;
++            case S264_OP_MAP:
++                if (hv_map(o->a, o->b, o->c, o->d) < 0)
++                    return -(1000 + (int)i);
++                break;
++            case S264_OP_HOOK: {
++                hv_hook_t *fn = s264_hook_fn(o->id);
++                if (!fn || hv_map_hook(o->a, fn, o->c) < 0)
++                    return -(1000 + (int)i);
++                if (o->id == S264_HOOK_CPUSTART)
++                    s264_cpustart_base = o->a;
++                break;
++            }
++            case S264_OP_VUART:
++                hv_map_vuart(o->a, (int)o->b, (iodev_id_t)o->c);
++                break;
++            case S264_OP_W64:
++                write64(o->a, o->b);
++                if (o->id == 1)
++                    dc_civac_range((void *)o->a, 8);
++                break;
++            case S264_OP_COPY:
++                if (o->id == 0) {
++                    if (!s264_cfg.payload_ptr)
++                        return -(1000 + (int)i);
++                    memcpy((void *)o->a, (void *)s264_cfg.payload_ptr, o->c);
++                    dc_cvau_range((void *)o->a, o->c);
++                    ic_ivau_range((void *)o->a, o->c);
++                } else {
++                    memcpy((void *)o->a, (void *)o->b, o->c);
++                    dc_civac_range((void *)o->a, o->c);
++                }
++                break;
++            case S264_OP_STEP: {
++                u32 st = S264_ST_OK;
++                u64 v = 0;
++                switch (o->id) {
++                    case S264_STEP_HV_INIT:
++                        hv_init();
++                        break;
++                    case S264_STEP_WRITE_BOOTARGS:
++                        memcpy((void *)o->a, pl->ba, pl->ba_len);
++                        dc_civac_range((void *)o->a, pl->ba_len);
++                        break;
++                    case S264_STEP_PMU_RESET: {
++                        int r = s264_pmu_reset(o->a, (u32)o->b, (u32)o->c);
++                        v = (u64)(s64)r;
++                        if (r < 0)
++                            st = S264_ST_FAIL; /* Python would spin forever; not fatal */
++                        break;
++                    }
++                    case S264_STEP_PCIE_INIT:
++                        v = (u64)(s64)pcie_init();
++                        printf("[s174] pcie_init -> %ld (S264 C)\n", (long)(s64)v);
++                        break;
++                    case S264_STEP_NVME_CHECKS:
++                        break; /* IRQ900 / BAR / carveout table: done by the planner */
++                    case S264_STEP_NVME_INIT:
++                        if (!nvme_init()) {
++                            step_result(o->id, S264_ST_FAIL, 0);
++                            return -(1000 + (int)i);
++                        }
++                        nvme_set_guest_map(o->a, o->b, o->c);
++                        break;
++                    case S264_STEP_GPT_CHECK: {
++                        int r = s264_gpt_check((u8 *)o->a);
++                        v = (u64)r;
++                        if (r) {
++                            printf("HVLOG: S264 GPT check FAILED reason %d\n", r);
++                            step_result(o->id, S264_ST_FAIL, v);
++                            return -(1000 + (int)i);
++                        }
++                        break;
++                    }
++                    case S264_STEP_NVME_TAKEOVER: {
++                        u64 cap = nwoas_nvme_fastpath_control(23, 0, 0, 0, 0, 0);
++                        u64 r = cap == 0x5332333000000001ULL
++                                    ? nwoas_nvme_fastpath_control(27, o->a, o->b, 0, 0, 0)
++                                    : 0;
++                        v = r;
++                        if (r != 1) {
++                            step_result(o->id, S264_ST_FAIL, cap);
++                            return -(1000 + (int)i);
++                        }
++                        printf("[S230] target owns PCI/control/admin; NS1 only (S264, no NS2)\n");
++                        break;
++                    }
++                    case S264_STEP_AGX_CONFIG:
++#if defined(NWOAS_AGX) && NWOAS_AGX
++                        v = nwoas_agx_configure(pl->agx, sizeof(pl->agx));
++                        printf("HVLOG: NWOAS-AGX config (S264 C) ret=%lu heap_limit=0x%lx\n", v,
++                               L->py_heap_base);
++                        if (v != 1) {
++                            step_result(o->id, S264_ST_FAIL, v);
++                            return -(1000 + (int)i);
++                        }
++#else
++                        st = S264_ST_SKIP;
++#endif
++                        break;
++                    case S264_STEP_AUDIO_A:
++                        memset((void *)o->b, 0, o->c);
++                        memcpy((void *)o->b, pl->audio_hdr, sizeof(pl->audio_hdr));
++                        dc_civac_range((void *)o->b, o->c);
++                        printf("[S256-audio] S264: window %lx -> %lx, header status 0 "
++                               "(no sound: stage B not ported)\n",
++                               o->a, o->b);
++                        break;
++                    case S264_STEP_WIFI:
++                        if (s264_wifi_page_init((const u8 *)s264_in.adt, s264_in.adt_size,
++                                                &s264_wifi)) {
++                            step_result(o->id, S264_ST_FAIL, 0);
++                            return -(1000 + (int)i);
++                        }
++                        printf("[s259] BOOT NWOAS_WIFI=0 (S264 C): control page DISABLED\n");
++                        break;
++                    case S264_STEP_WRITE_ADT:
++                        memcpy((void *)o->a, pl->adt, pl->adt_len);
++                        dc_civac_range((void *)o->a, pl->adt_len);
++                        break;
++                    case S264_STEP_TLBI:
++                        s264_tlbi();
++                        break;
++                    case S264_STEP_FB:
++                        fb_improve_logo();
++                        fb_shutdown(true);
++                        break;
++                    case S264_STEP_ARM_TRAPS:
++                        memset(&nwoas_s264_cnt, 0, sizeof(nwoas_s264_cnt));
++                        nwoas_s264_traps_armed = true;
++                        break;
++                    case S264_STEP_HV_START: {
++                        step_result(o->id, S264_ST_OK, o->a);
++                        u64 regs[4] = {o->b, 0, 0, 0};
++                        printf("HVLOG: S264 entering guest entry=0x%lx x0=0x%lx\n", o->a, o->b);
++                        s264_launched = true;
++                        hv_start((void *)o->a, regs);
++                        nwoas_s264_traps_armed = false;
++                        nwoas_s264_print_counters("hv_start returned");
++                        return 1;
++                    }
++                }
++                step_result(o->id, st, v);
++                break;
++            }
++        }
++    }
++    UNUSED(L);
++    return 0;
++}
++
++static int s264_prepare(u64 cfg_ptr, u64 cfg_size)
++{
++    if (cfg_ptr) {
++        if (cfg_size != sizeof(s264_cfg))
++            return -2;
++        memcpy(&s264_cfg, (void *)cfg_ptr, sizeof(s264_cfg));
++    } else {
++        s264_default_config(&s264_cfg);
++    }
++    struct s264_inputs *in = &s264_in;
++    memset(in, 0, sizeof(*in));
++    const u8 *ba = (const u8 *)boot_args_addr;
++    u64 virt, phys, devtree;
++    u32 dsize;
++    memcpy(&virt, ba + 8, 8);
++    memcpy(&phys, ba + 16, 8);
++    memcpy(&devtree, ba + 96, 8);
++    memcpy(&dsize, ba + 104, 4);
++    in->adt = (const u8 *)(devtree - virt + phys); /* proxyutils.py get_adt() */
++    in->adt_size = dsize;
++    in->ba_raw = ba;
++    in->ba_rev = cur_boot_args.revision;
++    in->heapblock_top = (u64)heapblock_alloc(0);
++    u32 n = 0;
++    while (n < 64 && mcc_carveouts[n].base) {
++        s264_carve[2 * n] = mcc_carveouts[n].base;
++        s264_carve[2 * n + 1] = mcc_carveouts[n].size;
++        n++;
++    }
++    if (n >= 64)
++        return -3; /* guest_module.py:30 'unterminated carveout table' */
++    in->carveouts = s264_carve;
++    in->n_carveouts = n;
++    in->iodev = uartproxy_iodev; /* run from the proxy: the MacBook's iodev */
++    in->midr = mrs(MIDR_EL1);
++    in->amx_config_cur = mrs(sys_reg(3, 4, 15, 1, 4));
++    if (((in->midr >> 4) & 0xfff) >= 0x30)
++        in->actlr_cur = mrs(SYS_ACTLR_EL12);
++    else
++        in->actlr_cur = mrs(SYS_IMP_APL_ACTLR_EL12);
++
++    memset(&s264_pl, 0, sizeof(s264_pl));
++    s264_pl.ops = s264_ops;
++    s264_pl.cap_ops = S264_MAX_OPS;
++    s264_pl.adt = (u8 *)s264_adt_scratch(in, &s264_cfg);
++    s264_pl.adt_cap = 0x400000;
++    return s264_plan_build(in, &s264_cfg, &s264_pl) ? -(100 + (int)s264_pl.err) : 0;
++}
++
++static u64 s264_write_result(u32 mode, u64 out_ptr, u64 out_size)
++{
++    if (!out_ptr || out_size < S264_RESULT_HDR || out_size > 0x1000000)
++        return 0;
++    return s264_result_write(&s264_in, &s264_cfg, &s264_pl, mode, (u8 *)out_ptr, (u32)out_size);
++}
++
++u64 nwoas_s264_proxy(u64 op, u64 a0, u64 a1, u64 a2, u64 a3)
++{
++    switch (op) {
++        case S264_OP_QUERY:
++            return S264_QUERY_MAGIC;
++        case S264_OP_DRYRUN: {
++            if (s264_launched)
++                return (u64)-1;
++            int r = s264_prepare(a0, a1);
++            for (u32 i = 0; i < s264_pl.n_ops; i++)
++                if (s264_pl.ops[i].kind == S264_OP_STEP)
++                    step_result(s264_pl.ops[i].id, S264_ST_DRY, 0);
++            u64 w = s264_write_result(1, a2, a3);
++            printf("HVLOG: S264 dry-run plan err=%u ops=%u adt=%u bytes result=%lu\n",
++                   s264_pl.err, s264_pl.n_ops, s264_pl.adt_len, w);
++            return r < 0 ? (u64)(s64)r : w;
++        }
++        case S264_OP_LAUNCH: {
++            if (s264_launched)
++                return (u64)-1;
++            int r = s264_prepare(a0, a1);
++            if (r < 0) {
++                s264_write_result(2, a2, a3);
++                return (u64)(s64)r;
++            }
++            if (!s264_cfg.payload_ptr || !s264_cfg.payload_size)
++                return (u64)-4;
++            printf("HVLOG: S264 C launcher: %u ops, phys_base=0x%lx entry=0x%lx\n",
++                   s264_pl.n_ops, s264_pl.L.phys_base, s264_pl.L.entry);
++            r = s264_execute();
++            s264_write_result(2, a2, a3);
++            return (u64)(s64)r;
++        }
++        case S264_OP_COUNTERS:
++            if (!a0 || a1 < sizeof(nwoas_s264_cnt))
++                return 0;
++            memcpy((void *)a0, &nwoas_s264_cnt, sizeof(nwoas_s264_cnt));
++            return sizeof(nwoas_s264_cnt);
++    }
++    UNUSED(a3);
++    return (u64)-1;
++}
+diff -ruN --exclude=build m1n1-standalone-s264-base/src-g262Q/src/nwoas_s264.h m1n1-standalone-s264/src/nwoas_s264.h
+--- m1n1-standalone-s264-base/src-g262Q/src/nwoas_s264.h	1970-01-01 09:00:00
++++ m1n1-standalone-s264/src/nwoas_s264.h	2026-11-19 02:39:33
+@@ -0,0 +1,32 @@
++/* SPDX-License-Identifier: MIT */
++/* NWOAS S264: C guest launcher (executor half).  HARDWARE-UNVERIFIED. */
++#ifndef NWOAS_S264_H
++#define NWOAS_S264_H
++
++#include "types.h"
++
++/* P_HV_NWOAS_S264 (0xc3e) sub-operations: request args = (op, a0, a1, a2, a3) */
++#define S264_OP_QUERY    0 /* -> 0x5332363400000001 ('S264' v1) */
++#define S264_OP_DRYRUN   1 /* (cfg_ptr, cfg_size, out_ptr, out_size) -> result bytes or -err */
++#define S264_OP_LAUNCH   2 /* same args; does not return while the guest runs */
++#define S264_OP_COUNTERS 3 /* (out_ptr, out_size) -> bytes */
++
++#define S264_QUERY_MAGIC 0x5332363400000001ULL
++
++u64 nwoas_s264_proxy(u64 op, u64 a0, u64 a1, u64 a2, u64 a3);
++
++/* Armed only by a S264 launch (S264_STEP_ARM_TRAPS); off = byte-identical behaviour. */
++extern bool nwoas_s264_traps_armed;
++/* hv_exc.c: CPU-config sysregs the guest m1n1 prefix touches (Python handle_msr "Pass"/"Skip") */
++struct nwoas_s264_counters {
++    u64 msr_pass, msr_skip;
++    u64 pmgr_reads, pmgr_writes;
++    u64 pg_reads;
++    u64 cpustart_writes, cpustart_gated, cpustate_reads, cpustate_hooks;
++    u64 nvme_unhandled, nvme_first_seen;
++    u64 wifi_reads, wifi_writes, wifi_cmds;
++};
++extern struct nwoas_s264_counters nwoas_s264_cnt;
++void nwoas_s264_print_counters(const char *why);
++
++#endif
+diff -ruN --exclude=build m1n1-standalone-s264-base/src-g262Q/src/nwoas_s264_plan.c m1n1-standalone-s264/src/nwoas_s264_plan.c
+--- m1n1-standalone-s264-base/src-g262Q/src/nwoas_s264_plan.c	1970-01-01 09:00:00
++++ m1n1-standalone-s264/src/nwoas_s264_plan.c	2026-11-19 02:39:13
+@@ -0,0 +1,1358 @@
++/* SPDX-License-Identifier: MIT */
++/* NWOAS S264: pure planning half of the C guest launcher.  See nwoas_s264_plan.h.
++ * HARDWARE-UNVERIFIED. */
++#include "nwoas_s264_plan.h"
++
++#ifndef S264_HOST
++#include "string.h"
++#endif
++
++/* ------------------------------------------------------------------ small helpers */
++static u32 rd32(const u8 *p)
++{
++    return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24);
++}
++static u64 rd64(const u8 *p)
++{
++    return (u64)rd32(p) | ((u64)rd32(p + 4) << 32);
++}
++static void wr32(u8 *p, u32 v)
++{
++    p[0] = (u8)v;
++    p[1] = (u8)(v >> 8);
++    p[2] = (u8)(v >> 16);
++    p[3] = (u8)(v >> 24);
++}
++static void wr64(u8 *p, u64 v)
++{
++    wr32(p, (u32)v);
++    wr32(p + 4, (u32)(v >> 32));
++}
++static u32 s264_strnlen(const u8 *s, u32 max)
++{
++    u32 n = 0;
++    while (n < max && s[n])
++        n++;
++    return n;
++}
++static bool streq_n(const u8 *a, u32 alen, const char *b)
++{
++    u32 bl = (u32)strlen(b);
++    return alen == bl && !memcmp(a, b, bl);
++}
++
++/* ------------------------------------------------------------------ raw ADT reader */
++#define PROP_HDR 36u
++
++static int prop_next(const u8 *adt, u32 len, u32 off)
++{
++    if (off + PROP_HDR > len)
++        return -1;
++    u32 sz = rd32(adt + off + 32) & 0x7fffffffu;
++    u64 end = (u64)off + PROP_HDR + ((sz + 3u) & ~3u);
++    if (end > len)
++        return -1;
++    return (int)end;
++}
++
++/* offset of the first child (after the properties) */
++static int node_children(const u8 *adt, u32 len, int node)
++{
++    if (node < 0 || (u32)node + 8 > len)
++        return -1;
++    u32 pc = rd32(adt + node);
++    int off = node + 8;
++    for (u32 i = 0; i < pc; i++) {
++        off = prop_next(adt, len, (u32)off);
++        if (off < 0)
++            return -1;
++    }
++    return off;
++}
++
++static int node_end_depth(const u8 *adt, u32 len, int node, int depth)
++{
++    if (depth > 32)
++        return -1;
++    int off = node_children(adt, len, node);
++    if (off < 0)
++        return -1;
++    u32 cc = rd32(adt + node + 4);
++    for (u32 i = 0; i < cc; i++) {
++        off = node_end_depth(adt, len, off, depth + 1);
++        if (off < 0)
++            return -1;
++    }
++    return off;
++}
++static int node_end(const u8 *adt, u32 len, int node)
++{
++    return node_end_depth(adt, len, node, 0);
++}
++
++const u8 *s264_adt_prop(const u8 *adt, u32 len, int node, const char *name, u32 *plen)
++{
++    if (node < 0 || (u32)node + 8 > len)
++        return NULL;
++    u32 pc = rd32(adt + node);
++    int off = node + 8;
++    u32 nl = (u32)strlen(name);
++    for (u32 i = 0; i < pc; i++) {
++        if ((u32)off + PROP_HDR > len)
++            return NULL;
++        const u8 *pn = adt + off;
++        if (nl < 32 && !memcmp(pn, name, nl) && pn[nl] == 0) {
++            if (plen)
++                *plen = rd32(adt + off + 32) & 0x7fffffffu;
++            return adt + off + PROP_HDR;
++        }
++        off = prop_next(adt, len, (u32)off);
++        if (off < 0)
++            return NULL;
++    }
++    return NULL;
++}
++
++const char *s264_adt_name(const u8 *adt, u32 len, int node)
++{
++    u32 n = 0;
++    const u8 *v = s264_adt_prop(adt, len, node, "name", &n);
++    if (!v || !n || v[n - 1] != 0)
++        return NULL;
++    return (const char *)v;
++}
++
++static bool node_name_is(const u8 *adt, u32 len, int node, const u8 *comp, u32 clen)
++{
++    u32 n = 0;
++    const u8 *v = s264_adt_prop(adt, len, node, "name", &n);
++    if (!v)
++        return false;
++    return s264_strnlen(v, n) == clen && !memcmp(v, comp, clen);
++}
++
++/* Deleted-node set (offsets) used while resolving paths for deletions. */
++struct s264_marks {
++    int off[32];
++    u32 n;
++};
++static bool marked(const struct s264_marks *m, int off)
++{
++    if (!m)
++        return false;
++    for (u32 i = 0; i < m->n; i++)
++        if (m->off[i] == off)
++            return true;
++    return false;
++}
++
++static int child_by_name(const u8 *adt, u32 len, int node, const u8 *comp, u32 clen,
++                         const struct s264_marks *m)
++{
++    int off = node_children(adt, len, node);
++    if (off < 0)
++        return -1;
++    u32 cc = rd32(adt + node + 4);
++    for (u32 i = 0; i < cc; i++) {
++        if (!marked(m, off) && node_name_is(adt, len, off, comp, clen))
++            return off;
++        off = node_end(adt, len, off);
++        if (off < 0)
++            return -1;
++    }
++    return -1;
++}
++
++static int path_lookup(const u8 *adt, u32 len, const char *path, const struct s264_marks *m)
++{
++    int node = 0;
++    const char *p = path;
++    while (*p == '/')
++        p++;
++    while (*p) {
++        const char *e = p;
++        while (*e && *e != '/')
++            e++;
++        node = child_by_name(adt, len, node, (const u8 *)p, (u32)(e - p), m);
++        if (node < 0)
++            return -1;
++        p = e;
++        while (*p == '/')
++            p++;
++    }
++    return node;
++}
++
++int s264_adt_path(const u8 *adt, u32 len, const char *path)
++{
++    return path_lookup(adt, len, path, NULL);
++}
++
++bool s264_adt_reg(const u8 *adt, u32 len, int node, u32 idx, u64 *addr, u64 *size)
++{
++    /* Only /arm-io children (#address-cells = #size-cells = 2), as Python get_reg +
++     * translate: one level of /arm-io "ranges", root has no ranges. */
++    u32 rl = 0;
++    const u8 *reg = s264_adt_prop(adt, len, node, "reg", &rl);
++    if (!reg || rl < (idx + 1) * 16)
++        return false;
++    u64 a = rd64(reg + idx * 16), s = rd64(reg + idx * 16 + 8);
++    int io = s264_adt_path(adt, len, "/arm-io");
++    u32 nl = 0;
++    const u8 *r = s264_adt_prop(adt, len, io, "ranges", &nl);
++    if (r) {
++        for (u32 o = 0; o + 24 <= nl; o += 24) {
++            u64 ba = rd64(r + o), pa = rd64(r + o + 8), sz = rd64(r + o + 16);
++            if (ba <= a && a < ba + sz) {
++                a = a - ba + pa;
++                break;
++            }
++        }
++    }
++    if (addr)
++        *addr = a;
++    if (size)
++        *size = s;
++    return true;
++}
++
++/* ------------------------------------------------------------------ ADT rewrite */
++#define S264_MAX_SET 12
++struct s264_set {
++    int node;
++    const char *name;
++    const u8 *val;
++    u32 len;
++};
++
++struct s264_rw {
++    const u8 *src;
++    u32 srclen;
++    u8 *dst;
++    u32 cap, pos;
++    struct s264_marks del;
++    struct s264_set set[S264_MAX_SET];
++    u32 n_set;
++    int root_extra_val; /* -1 = none, else pmgr-u8id value */
++    int arm_io;
++    bool overflow;
++    /* scratch for __OS_LOG edits */
++    u8 seg_names[512];
++    u8 seg_ranges[1024];
++};
++
++static void out_bytes(struct s264_rw *w, const void *p, u32 n)
++{
++    if (w->overflow || w->pos + n > w->cap) {
++        w->overflow = true;
++        return;
++    }
++    if (p)
++        memcpy(w->dst + w->pos, p, n);
++    else
++        memset(w->dst + w->pos, 0, n);
++    w->pos += n;
++}
++
++static void out_prop(struct s264_rw *w, const u8 *name32, u32 sizefield_flags, const u8 *val,
++                     u32 vlen)
++{
++    u8 hdr[PROP_HDR];
++    memcpy(hdr, name32, 32);
++    wr32(hdr + 32, vlen | sizefield_flags);
++    out_bytes(w, hdr, PROP_HDR);
++    out_bytes(w, val, vlen);
++    u32 pad = ((vlen + 3u) & ~3u) - vlen;
++    if (pad)
++        out_bytes(w, NULL, pad);
++}
++
++static void out_prop_named(struct s264_rw *w, const char *name, const u8 *val, u32 vlen)
++{
++    u8 n32[32];
++    memset(n32, 0, sizeof(n32));
++    memcpy(n32, name, strlen(name));
++    out_prop(w, n32, 0, val, vlen);
++}
++
++/* segment-names "a;b;__OS_LOG;c" -> drop the first exact __OS_LOG element and the matching
++ * 32 bytes of segment-ranges (hv/__init__.py:2252-2261).  Returns false if not applicable. */
++static bool oslog_edit(struct s264_rw *w, int node, u32 *nlen, u32 *rlen)
++{
++    u32 sl = 0, rl = 0;
++    const u8 *s = s264_adt_prop(w->src, w->srclen, node, "segment-names", &sl);
++    const u8 *r = s264_adt_prop(w->src, w->srclen, node, "segment-ranges", &rl);
++    if (!s || !r)
++        return false;
++    u32 n = s264_strnlen(s, sl);
++    if (n + 1 > sizeof(w->seg_names) || rl > sizeof(w->seg_ranges))
++        return false;
++    /* names = s.split(";"); idx = names.index("__OS_LOG") */
++    u32 idx = 0, start = 0, found = 0xffffffffu;
++    for (u32 i = 0; i <= n; i++) {
++        if (i == n || s[i] == ';') {
++            if (found == 0xffffffffu && streq_n(s + start, i - start, "__OS_LOG"))
++                found = idx;
++            idx++;
++            start = i + 1;
++        }
++    }
++    if (found == 0xffffffffu)
++        return false;
++    /* ";".join(names[:idx] + names[idx+1:]) */
++    u32 o = 0, k = 0;
++    bool first = true;
++    start = 0;
++    for (u32 i = 0; i <= n; i++) {
++        if (i == n || s[i] == ';') {
++            if (k != found) {
++                if (!first)
++                    w->seg_names[o++] = ';';
++                memcpy(w->seg_names + o, s + start, i - start);
++                o += i - start;
++                first = false;
++            }
++            k++;
++            start = i + 1;
++        }
++    }
++    w->seg_names[o++] = 0;
++    *nlen = o;
++    /* Python: segment_ranges[:idx*32] + segment_ranges[32+idx*32:] (bytes) */
++    u32 cut = found * 32;
++    u32 ro = 0;
++    u32 keep1 = cut < rl ? cut : rl;
++    memcpy(w->seg_ranges, r, keep1);
++    ro = keep1;
++    if (cut + 32 < rl) {
++        memcpy(w->seg_ranges + ro, r + cut + 32, rl - cut - 32);
++        ro += rl - cut - 32;
++    }
++    *rlen = ro;
++    return true;
++}
++
++static int emit_node(struct s264_rw *w, int node, int depth, int parent, int grandparent)
++{
++    const u8 *src = w->src;
++    u32 len = w->srclen;
++    if (depth > 32 || node < 0 || (u32)node + 8 > len)
++        return -1;
++    u32 pc = rd32(src + node), cc = rd32(src + node + 4);
++
++    bool oslog = false;
++    u32 seg_nlen = 0, seg_rlen = 0;
++    if ((depth == 2 && parent == w->arm_io) || (depth == 3 && grandparent == w->arm_io))
++        oslog = oslog_edit(w, node, &seg_nlen, &seg_rlen);
++
++    /* child count after deletions */
++    u32 cc_out = 0;
++    {
++        int off = node_children(src, len, node);
++        if (off < 0)
++            return -1;
++        for (u32 i = 0; i < cc; i++) {
++            if (!marked(&w->del, off))
++                cc_out++;
++            off = node_end(src, len, off);
++            if (off < 0)
++                return -1;
++        }
++    }
++    u8 hdr[8];
++    wr32(hdr, pc + (depth == 0 && w->root_extra_val >= 0 ? 1 : 0));
++    wr32(hdr + 4, cc_out);
++    out_bytes(w, hdr, 8);
++
++    int off = node + 8;
++    for (u32 i = 0; i < pc; i++) {
++        int next = prop_next(src, len, (u32)off);
++        if (next < 0)
++            return -1;
++        const u8 *name = src + off;
++        u32 raw = rd32(src + off + 32);
++        u32 flags = raw & 0x80000000u, sz = raw & 0x7fffffffu;
++        const u8 *val = src + off + PROP_HDR;
++        bool done = false;
++        for (u32 k = 0; k < w->n_set && !done; k++) {
++            u32 kl = (u32)strlen(w->set[k].name);
++            if (w->set[k].node == node && kl < 32 && !memcmp(name, w->set[k].name, kl) &&
++                name[kl] == 0) {
++                out_prop(w, name, flags, w->set[k].val, w->set[k].len);
++                done = true;
++            }
++        }
++        if (!done && oslog && !memcmp(name, "segment-names", 14)) {
++            out_prop(w, name, flags, w->seg_names, seg_nlen);
++            done = true;
++        }
++        if (!done && oslog && !memcmp(name, "segment-ranges", 15)) {
++            out_prop(w, name, flags, w->seg_ranges, seg_rlen);
++            done = true;
++        }
++        if (!done)
++            out_prop(w, name, flags, val, sz);
++        off = next;
++    }
++    if (depth == 0 && w->root_extra_val >= 0) {
++        u8 v[4];
++        wr32(v, (u32)w->root_extra_val);
++        out_prop_named(w, "pmgr-u8id", v, 4);
++    }
++    for (u32 i = 0; i < cc; i++) {
++        int end = node_end(src, len, off);
++        if (end < 0)
++            return -1;
++        if (!marked(&w->del, off) && emit_node(w, off, depth + 1, node, parent) < 0)
++            return -1;
++        off = end;
++    }
++    return off;
++}
++
++/* ------------------------------------------------------------------ PMGR hook list */
++#define PMGR_DEV_SIZE 48u
++struct s264_pmgr {
++    const u8 *adt;
++    u32 len;
++    const u8 *devs;
++    u32 ndev;
++    const u8 *ps;
++    u32 nps;
++    int pmgr;
++    bool u8id;
++    u64 *out;
++    u32 n, cap;
++    bool err;
++};
++
++static u32 pm_id(const struct s264_pmgr *p, const u8 *d)
++{
++    return p->u8id ? d[3] : (u32)d[26] | ((u32)d[27] << 8);
++}
++static const u8 *pm_by_id(const struct s264_pmgr *p, u32 id)
++{
++    const u8 *hit = NULL; /* Python dict comprehension: the LAST device with this id wins */
++    for (u32 i = 0; i < p->ndev; i++)
++        if (pm_id(p, p->devs + i * PMGR_DEV_SIZE) == id)
++            hit = p->devs + i * PMGR_DEV_SIZE;
++    return hit;
++}
++static const u8 *pm_by_name(const struct s264_pmgr *p, const char *name)
++{
++    const u8 *hit = NULL;
++    u32 nl = (u32)strlen(name);
++    for (u32 i = 0; i < p->ndev; i++) {
++        const u8 *d = p->devs + i * PMGR_DEV_SIZE;
++        if (s264_strnlen(d + 32, 16) == nl && !memcmp(d + 32, name, nl))
++            hit = d;
++    }
++    return hit;
++}
++static void pm_hook(struct s264_pmgr *p, const u8 *d, int depth)
++{
++    if (depth > 16 || p->err)
++        return;
++    u32 psidx = d[10], psreg = d[11];
++    if (psreg >= p->nps) { /* Python: pmgr.ps_regs[dev.psreg] raises IndexError */
++        p->err = true;
++        return;
++    }
++    if (!(psidx || psreg))
++        return;
++    u32 reg = rd32(p->ps + psreg * 12), off = rd32(p->ps + psreg * 12 + 4);
++    u64 base;
++    if (!s264_adt_reg(p->adt, p->len, p->pmgr, reg, &base, NULL)) {
++        p->err = true;
++        return;
++    }
++    u64 addr = base + off + (u64)psidx * 8;
++    bool dup = false;
++    for (u32 i = 0; i < p->n; i++)
++        dup |= p->out[i] == addr;
++    if (!dup) {
++        if (p->n >= p->cap) {
++            p->err = true;
++            return;
++        }
++        p->out[p->n++] = addr;
++    }
++    u32 par[2];
++    if (p->u8id) {
++        par[0] = d[4];
++        par[1] = d[5];
++    } else {
++        par[0] = (u32)d[4] | ((u32)d[5] << 8);
++        par[1] = (u32)d[6] | ((u32)d[7] << 8);
++    }
++    for (int j = 0; j < 2; j++) {
++        const u8 *pd = pm_by_id(p, par[j]);
++        if (pd)
++            pm_hook(p, pd, depth + 1);
++    }
++}
++
++/* ------------------------------------------------------------------ ops */
++static void op(struct s264_plan *pl, u32 kind, u32 id, u64 a, u64 b, u64 c, u64 d)
++{
++    if (pl->n_ops >= pl->cap_ops) {
++        if (!pl->err)
++            pl->err = S264_E_OPS_FULL;
++        return;
++    }
++    struct s264_op *o = &pl->ops[pl->n_ops++];
++    o->kind = kind;
++    o->id = id;
++    o->a = a;
++    o->b = b;
++    o->c = c;
++    o->d = d;
++}
++
++/* hv/__init__.py map_hw/map_sw/unmap reduce to these raw hv_map arguments */
++#define PTE_VALID      1ULL
++#define PTE_ATTRIBUTES ((1ULL << 10) | (3ULL << 8) | (3ULL << 6) | (0xfULL << 2))
++static void op_map_hw(struct s264_plan *pl, u64 ipa, u64 pa, u64 size)
++{
++    op(pl, S264_OP_MAP, 0, ipa, pa | PTE_ATTRIBUTES | PTE_VALID, size, 1);
++}
++static void op_map_sw(struct s264_plan *pl, u64 ipa, u64 pa, u64 size)
++{
++    op(pl, S264_OP_MAP, 0, ipa, pa, size, 1); /* SPTE_MAP = type 0, no trace bits */
++}
++static void op_unmap(struct s264_plan *pl, u64 ipa, u64 size)
++{
++    op(pl, S264_OP_MAP, 0, ipa, 0, size, 0);
++}
++static void op_step(struct s264_plan *pl, u32 id, u64 a, u64 b, u64 c, u64 d)
++{
++    op(pl, S264_OP_STEP, id, a, b, c, d);
++}
++
++/* ------------------------------------------------------------------ config */
++void s264_default_config(struct s264_config *c)
++{
++    memset(c, 0, sizeof(*c));
++    c->magic = S264_MAGIC;
++    c->version = S264_VERSION;
++    c->size = sizeof(*c);
++    c->flags = S264_CFG_F_DEFAULT;
++    c->payload_size = 33669120; /* fw-wifi-s259 payload, agxdcp-s259-guest-test.sh:116 */
++    c->entry_offset = 0x800;
++    c->py_heap_size = 768ULL << 20;
++    c->m1n1_heap_reserve = 128ULL << 20;
++    c->win_base = 0;
++    c->win_size = 0x100000000ULL;
++    c->win_skew = 0x34000;
++    c->exclude_window = 1;
++    c->max_transfer = 1048576;
++    c->agx_mode = 2;                /* NWOAS_AGX_MODE=mediate */
++    c->agx_local_ipa = 0xa00000000ULL;
++    c->agx_pool_ipa = 0;
++    c->agx_scanout_intid = 889;
++    c->agx_base_pstate = 3;
++    c->agx_cfg_flags = 0x2;         /* NWOAS_AGX_DCP_SERVICE=1 */
++    c->agx_dcp_latch_us = 0;
++    c->link_lbas = 0;               /* NS1 only */
++}
++
++/* ------------------------------------------------------------------ IRQ 900 check */
++static bool irq900_walk(const u8 *adt, u32 len, int node, int depth)
++{
++    if (depth > 32)
++        return false;
++    u32 il = 0;
++    const u8 *irq = s264_adt_prop(adt, len, node, "interrupts", &il);
++    if (irq)
++        for (u32 o = 0; o + 4 <= il; o += 4)
++            if (rd32(irq + o) == 900)
++                return false;
++    int off = node_children(adt, len, node);
++    if (off < 0)
++        return false;
++    u32 cc = rd32(adt + node + 4);
++    for (u32 i = 0; i < cc; i++) {
++        if (!irq900_walk(adt, len, off, depth + 1))
++            return false;
++        off = node_end(adt, len, off);
++        if (off < 0)
++            return false;
++    }
++    return true;
++}
++
++static bool overlap(u64 a, u64 n, u64 b, u64 m)
++{
++    return a < b + m && b < a + n;
++}
++
++/* ------------------------------------------------------------------ Wi-Fi page */
++#define W_R_MAGIC     0x00
++#define W_R_VERSION   0x04
++#define W_R_STATE     0x08
++#define W_R_ERROR     0x0c
++#define W_R_CMD       0x10
++#define W_R_SEQ       0x14
++#define W_R_AVAIL     0x18
++#define W_R_IDS       0x1c
++#define W_R_CFG_OFF   0x20
++#define W_R_CFG_DATA  0x24
++#define W_R_CFG_ERR   0x28
++#define W_R_BAR0WIN   0x4c
++#define W_R_CMD_COUNT 0x50
++#define W_R_MAC_LO    0x60
++#define W_R_MAC_HI    0x64
++#define W_R_CAL_LEN   0x68
++#define W_R_ANTENNA   0x6c
++#define W_R_BOARD     0x70
++#define W_CAL_OFF     0x1000
++#define W_CAL_MAX     0x1000
++
++int s264_wifi_page_init(const u8 *adt, u32 len, struct s264_wifi_page *w)
++{
++    memset(w, 0, sizeof(*w));
++    w->state = 3; /* STATE_FAILED */
++    w->error = 1; /* ERR DISABLED */
++    int n = s264_adt_path(adt, len, "/arm-io/wlan");
++    if (n < 0)
++        return -1;
++    u32 bl = 0, al = 0, ml = 0, cl = 0;
++    const u8 *board = s264_adt_prop(adt, len, n, "module-instance", &bl);
++    const u8 *ant = s264_adt_prop(adt, len, n, "wifi-antenna-sku-info", &al);
++    const u8 *mac = s264_adt_prop(adt, len, n, "local-mac-address", &ml);
++    const u8 *cal = s264_adt_prop(adt, len, n, "wifi-calibration-msf", &cl);
++    /* wifi_up.py wlan_info: board = str(prop).strip('\0').strip(); antenna = raw[8:16]
++     * up to NUL; mac must be 6 bytes; wifi_module.py:84-87 refuses otherwise */
++    u8 b16[16], a4[4];
++    memset(b16, 0, sizeof(b16));
++    memset(a4, 0, sizeof(a4));
++    u32 blen = board ? s264_strnlen(board, bl) : 0;
++    if (!board || blen != 9 || memcmp(board, "atlantisb", 9))
++        return -2;
++    memcpy(b16, board, blen);
++    if (!ant || al < 10)
++        return -3;
++    u32 alen = s264_strnlen(ant + 8, al - 8 < 8 ? al - 8 : 8);
++    if (alen != 2 || memcmp(ant + 8, "X3", 2))
++        return -3;
++    memcpy(a4, ant + 8, alen);
++    if (!mac || ml != 6)
++        return -4;
++    if (!cal || !cl || cl > W_CAL_MAX)
++        return -5;
++    w->mac_lo = rd32(mac);
++    w->mac_hi = (u32)mac[4] | ((u32)mac[5] << 8);
++    w->cal_len = cl;
++    w->antenna = rd32(a4);
++    for (u32 i = 0; i < 4; i++)
++        w->board[i] = rd32(b16 + 4 * i);
++    u8 *cp = (u8 *)w->cal;
++    memcpy(cp, cal, cl);
++    return 0;
++}
++
++u32 s264_wifi_reg_read(struct s264_wifi_page *w, u32 off)
++{
++    if (off == W_R_CFG_DATA || off == W_R_BAR0WIN) {
++        w->cfg_reads++;
++        w->cfg_err = 1; /* CFG_NOT_UP */
++        return 0xffffffffu;
++    }
++    if (off == W_R_MAC_LO)
++        return w->mac_lo;
++    if (off == W_R_MAC_HI)
++        return w->mac_hi;
++    if (off == W_R_CAL_LEN)
++        return w->cal_len;
++    if (off == W_R_ANTENNA)
++        return w->antenna;
++    if (off >= W_R_BOARD && off < W_R_BOARD + 16)
++        return w->board[(off - W_R_BOARD) / 4];
++    if (off >= W_CAL_OFF && off < W_CAL_OFF + ((w->cal_len + 3) & ~3u))
++        return w->cal[(off - W_CAL_OFF) / 4];
++    switch (off) {
++        case W_R_MAGIC:
++            return 0x4657574eu;
++        case W_R_VERSION:
++            return 1;
++        case W_R_STATE:
++            return w->state;
++        case W_R_ERROR:
++            return w->error;
++        case W_R_CMD:
++            return w->last_cmd;
++        case W_R_SEQ:
++            return w->seq;
++        case W_R_CFG_OFF:
++            return w->cfg_off;
++        case W_R_CFG_ERR:
++            return w->cfg_err;
++        case W_R_CMD_COUNT:
++            return w->cmd_count;
++        default:
++            return 0; /* AVAIL, IDS, BAR0/2, LINKSTS, DEVCTL, EPCMD, DART, CHIPID: 0 when not UP */
++    }
++}
++
++void s264_wifi_reg_write(struct s264_wifi_page *w, u32 off, u32 val)
++{
++    if (off == W_R_CMD) {
++        w->last_cmd = val;
++        w->cmd_count++;
++        /* power_up(): returns at once when not enabled; power_down(): nothing powered */
++        w->seq++;
++    } else if (off == W_R_CFG_OFF) {
++        w->cfg_off = val & 0xfff;
++        w->cfg_err = (val == w->cfg_off && !(val & 3)) ? 0 : 3;
++    } else if (off == W_R_CFG_DATA || off == W_R_BAR0WIN) {
++        w->cfg_writes++;
++        w->cfg_err = 1; /* CFG_NOT_UP */
++    }
++    /* everything else: "ignored (read-only)" */
++}
++
++/* ------------------------------------------------------------------ the plan */
++u64 s264_phys_base(const struct s264_inputs *in, const struct s264_config *cfg)
++{
++    return in->heapblock_top + cfg->m1n1_heap_reserve + cfg->py_heap_size;
++}
++u64 s264_adt_scratch(const struct s264_inputs *in, const struct s264_config *cfg)
++{
++    return (s264_phys_base(in, cfg) - 0x800000) & ~(S264_SZ_16K - 1);
++}
++static const char *const usb_nodes[] = {
++    /* hv/__init__.py:2115-2133, %d = iodev - USB0 */
++    "/arm-io/dart-usb%",       "/arm-io/atc-phy%",      "/arm-io/usb-drd%",
++    "/arm-io/acio%",           "/arm-io/acio-cpu%",     "/arm-io/dart-acio%",
++    "/arm-io/apciec%",         "/arm-io/dart-apciec%",  "/arm-io/apciec%-piodma",
++    "/arm-io/i2c0/hpmBusManager/hpm%", "/arm-io/i2c0/hpmBusManager1/hpm%",
++    "/arm-io/i2c3/hpmBusManager0/hpm%", "/arm-io/nub-spmi-a0/hpm%",
++    "/arm-io/atc%-dpxbar",     "/arm-io/atc%-dpphy",    "/arm-io/atc%-dpin0",
++    "/arm-io/atc%-dpin1",      "/arm-io/atc-phy%",
++};
++
++static void fmt_path(char *out, u32 cap, const char *tmpl, u32 idx)
++{
++    u32 o = 0;
++    for (const char *p = tmpl; *p && o + 4 < cap; p++) {
++        if (*p == '%') {
++            if (idx >= 10)
++                out[o++] = (char)('0' + idx / 10);
++            out[o++] = (char)('0' + idx % 10);
++        } else {
++            out[o++] = *p;
++        }
++    }
++    out[o] = 0;
++}
++
++static bool memmap_get(const u8 *adt, u32 len, int mm, const char *name, u64 *base, u64 *size)
++{
++    u32 l = 0;
++    const u8 *v = s264_adt_prop(adt, len, mm, name, &l);
++    if (!v || l != 16)
++        return false;
++    *base = rd64(v);
++    *size = rd64(v + 8);
++    return true;
++}
++
++int s264_plan_build(const struct s264_inputs *in, const struct s264_config *cfg,
++                    struct s264_plan *pl)
++{
++    struct s264_layout *L = &pl->L;
++    const u8 *adt = in->adt;
++    u32 alen = in->adt_size;
++    pl->n_ops = 0;
++    pl->err = 0;
++    pl->err_arg = 0;
++    memset(L, 0, sizeof(*L));
++
++    if (!cfg || cfg->magic != S264_MAGIC || cfg->version != S264_VERSION ||
++        cfg->size != sizeof(*cfg) || cfg->link_lbas != 0 ||
++        (cfg->max_transfer != 65536 && cfg->max_transfer != 1048576))
++        return pl->err = S264_E_CFG;
++    if (!adt || alen < 8 || node_end(adt, alen, 0) < 0)
++        return pl->err = S264_E_ADT;
++
++    /* ---- boot args (proxyutils.py:85-92 readstruct + tgtypes.py layout) */
++    u32 cmdlen = in->ba_rev <= 1 ? 256 : in->ba_rev == 2 ? 608 : in->ba_rev == 3 ? 1024 : 0;
++    if (!cmdlen || !in->ba_raw)
++        return pl->err = S264_E_BA;
++    u32 ba_len = 108 + cmdlen + 4 + 16;
++    const u8 *ba = in->ba_raw;
++    L->ba_len = ba_len;
++    L->ba_virt_base = rd64(ba + 8);
++    L->ba_phys_base = rd64(ba + 16);
++    L->ba_mem_size = rd64(ba + 24);
++    L->video_base = rd64(ba + 40);
++    L->video_stride = rd64(ba + 56);
++    L->video_height = rd64(ba + 72);
++    L->ba_mem_size_actual = rd64(ba + 108 + cmdlen + 4 + 8);
++    L->iodev = in->iodev;
++
++    /* ---- chosen / memory-map of THIS HV's ADT (u.adt) */
++    int chosen = s264_adt_path(adt, alen, "/chosen");
++    int mm = s264_adt_path(adt, alen, "/chosen/memory-map");
++    u32 cl = 0;
++    const u8 *chip = s264_adt_prop(adt, alen, chosen, "chip-id", &cl);
++    if (mm < 0 || !chip || cl < 4)
++        return pl->err = S264_E_MEMMAP;
++    L->chip_id = rd32(chip);
++    u64 tmp;
++    if (!memmap_get(adt, alen, mm, "SEPFW", &L->sepfw_src, &L->sepfw_size) ||
++        !memmap_get(adt, alen, mm, "TrustCache", &L->tc_src, &L->tc_size) ||
++        !memmap_get(adt, alen, mm, "DeviceTree", &tmp, &tmp) ||
++        !memmap_get(adt, alen, mm, "BootArgs", &tmp, &tmp))
++        return pl->err = S264_E_MEMMAP;
++    bool have_preoslog = memmap_get(adt, alen, mm, "preoslog", &L->preoslog_src, &L->preoslog_size);
++    if (!have_preoslog)
++        L->preoslog_size = 0;
++    bool have_kmh = s264_adt_prop(adt, alen, mm, "Kernel-mach_header", NULL) != NULL;
++
++    /* ---- layout: hv/__init__.py:2186-2249 */
++    L->payload_size = cfg->payload_size;
++    u64 image_size = S264_ALIGN(cfg->payload_size);
++    u64 sepfw_off = image_size;
++    image_size += S264_ALIGN(L->sepfw_size);
++    u64 preoslog_off = image_size;
++    image_size += L->preoslog_size;
++    u64 bootargs_off = image_size;
++    L->bootargs_size = 0x4000;
++    image_size += L->bootargs_size;
++    L->image_size = image_size;
++
++    L->py_heap_base = in->heapblock_top + cfg->m1n1_heap_reserve; /* proxyutils.py:102,111 */
++    L->py_heap_top = L->py_heap_base + cfg->py_heap_size;
++    L->phys_base = L->py_heap_top;
++    L->ram_base = L->phys_base & ~0xffffffffULL;
++    u64 g = L->phys_base + (16ULL << 20);
++    L->adt_base = g;
++    L->adt_region = S264_ALIGN((u64)alen);
++    g += L->adt_region;
++    L->tc_base = g;
++    g += S264_ALIGN(L->tc_size);
++    L->guest_base = g;
++    L->mem_top = L->ba_phys_base + L->ba_mem_size;
++    if (L->mem_top <= L->phys_base + image_size + (1ULL << 32))
++        return pl->err = S264_E_LAYOUT;
++    L->mem_size = L->mem_top - L->phys_base;
++    L->entry = g + cfg->entry_offset;
++    L->sepfw_base = g + sepfw_off;
++    L->preoslog_base = g + preoslog_off;
++    L->bootargs_base = g + bootargs_off;
++    L->virt_base = 0xfffffe0010000000ULL + (L->phys_base & ((32ULL << 20) - 1));
++    L->devtree_va = L->adt_base - L->phys_base + L->virt_base;
++    L->top_of_kernel_data = g + image_size;
++
++    /* ---- guest_map.py:11-15 low window, guest_module.py:44-55 exclusion */
++    L->win_backing = L->ba_phys_base + L->ba_mem_size - cfg->win_size - cfg->win_skew;
++    L->low_backing = L->ba_phys_base + L->ba_mem_size - 0x100000000ULL - 0x34000;
++    L->mem_size_patched = L->mem_size;
++    if (cfg->exclude_window) {
++        u64 nw = L->low_backing - L->phys_base + 0x34000;
++        if (!(0x100000000ULL < nw && nw < L->mem_size))
++            return pl->err = S264_E_LAYOUT;
++        L->mem_size_patched = nw;
++    }
++    /* launcher scratch: inside the Python heap range, just below guest RAM */
++    L->audio_buf = (L->phys_base - 0x100000) & ~(S264_SZ_16K - 1);
++    L->nvme_buf = (L->phys_base - 0x200000) & ~(S264_SZ_16K - 1);
++    L->adt_scratch = s264_adt_scratch(in, cfg);
++
++    /* ---- guest ADT: setup_adt (2107-2156) + load_raw memory-map/__OS_LOG (2238-2266) */
++    static struct s264_rw w; /* large scratch; plan is single-shot under the proxy lock */
++    memset(&w, 0, sizeof(w));
++    w.src = adt;
++    w.srclen = alen;
++    w.dst = pl->adt;
++    w.cap = pl->adt_cap;
++    w.arm_io = s264_adt_path(adt, alen, "/arm-io");
++    if (w.arm_io < 0)
++        return pl->err = S264_E_ADT;
++    if (in->iodev != S264_IODEV_NONE && in->iodev >= S264_IODEV_USB0) {
++        u32 idx = in->iodev - S264_IODEV_USB0;
++        for (u32 i = 0; i < sizeof(usb_nodes) / sizeof(usb_nodes[0]); i++) {
++            char path[96];
++            fmt_path(path, sizeof(path), usb_nodes[i], idx);
++            /* del self.adt[path]: parent by first-match, delete its FIRST child of that name */
++            const char *slash = path + strlen(path);
++            while (slash > path && *slash != '/')
++                slash--;
++            char parent[96];
++            u32 pl_len = (u32)(slash - path);
++            memcpy(parent, path, pl_len);
++            parent[pl_len] = 0;
++            int pn = pl_len ? path_lookup(adt, alen, parent, &w.del) : 0;
++            if (pn < 0)
++                continue;
++            int c = child_by_name(adt, alen, pn, (const u8 *)slash + 1, (u32)strlen(slash + 1),
++                                  &w.del);
++            if (c < 0 || w.del.n >= 32)
++                continue;
++            w.del.off[w.del.n++] = c;
++        }
++    }
++    int product = s264_adt_path(adt, alen, "/product");
++    if (product < 0)
++        return pl->err = S264_E_ADT;
++    static u8 pname[160], pdesc[160], psoc[160];
++    const char *suffix = " on m1n1 hypervisor";
++    u32 sl = (u32)strlen(suffix);
++    struct {
++        const char *prop;
++        u8 *buf;
++        const char *prefix;
++    } prod[3] = {{"product-name", pname, ""},
++                 {"product-description", pdesc, ""},
++                 {"product-soc-name", psoc, "Virtual "}};
++    for (int i = 0; i < 3; i++) {
++        u32 vl = 0;
++        const u8 *v = s264_adt_prop(adt, alen, product, prod[i].prop, &vl);
++        if (!v)
++            return pl->err = S264_E_ADT;
++        u32 n = s264_strnlen(v, vl), pre = (u32)strlen(prod[i].prefix);
++        if (pre + n + sl + 1 > 160)
++            return pl->err = S264_E_ADT;
++        memcpy(prod[i].buf, prod[i].prefix, pre);
++        memcpy(prod[i].buf + pre, v, n);
++        memcpy(prod[i].buf + pre + n, suffix, sl);
++        prod[i].buf[pre + n + sl] = 0;
++        w.set[w.n_set].node = product;
++        w.set[w.n_set].name = prod[i].prop;
++        w.set[w.n_set].val = prod[i].buf;
++        w.set[w.n_set].len = pre + n + sl + 1;
++        w.n_set++;
++    }
++    static u8 mmv[6][16];
++    struct {
++        const char *name;
++        u64 base, size;
++        bool on;
++    } mme[6] = {
++        {"SEPFW", L->sepfw_base, L->sepfw_size, true},
++        {"TrustCache", L->tc_base, L->tc_size, true},
++        {"DeviceTree", L->adt_base, L->adt_region, true},
++        {"BootArgs", L->bootargs_base, L->bootargs_size, true},
++        {"preoslog", L->preoslog_base, L->preoslog_size, have_preoslog},
++        {"Kernel-mach_header", L->guest_base, 0, have_kmh},
++    };
++    for (int i = 0; i < 6; i++) {
++        if (!mme[i].on)
++            continue;
++        wr64(mmv[i], mme[i].base);
++        wr64(mmv[i] + 8, mme[i].size);
++        w.set[w.n_set].node = mm;
++        w.set[w.n_set].name = mme[i].name;
++        w.set[w.n_set].val = mmv[i];
++        w.set[w.n_set].len = 16;
++        w.n_set++;
++    }
++    /* pmgr-u8id: adt.py pmgr_init (load_adt) adds this root property; build() keeps it */
++    int pmgr = s264_adt_path(adt, alen, "/arm-io/pmgr");
++    u32 dl = 0, psl = 0;
++    const u8 *devs = s264_adt_prop(adt, alen, pmgr, "devices", &dl);
++    const u8 *ps = s264_adt_prop(adt, alen, pmgr, "ps-regs", &psl);
++    if (!devs || dl < 2 * PMGR_DEV_SIZE || !ps)
++        return pl->err = S264_E_PMGR;
++    bool u8id = devs[3] != devs[PMGR_DEV_SIZE + 3];
++    L->pmgr_u8id = u8id;
++    w.root_extra_val = u8id ? 1 : 0;
++
++    if (emit_node(&w, 0, 0, -1, -1) < 0)
++        return pl->err = S264_E_ADT;
++    if (w.overflow)
++        return pl->err = S264_E_ADT_FULL;
++    pl->adt_len = w.pos;
++
++    /* ---- boot args blob: load_raw 2270-2283 (Python rebuilds the struct: padding = 0) */
++    memcpy(pl->ba, ba, ba_len);
++    memset(pl->ba + 4, 0, 4);
++    memset(pl->ba + 92, 0, 4);
++    memset(pl->ba + 108 + cmdlen, 0, 4);
++    wr64(pl->ba + 8, L->virt_base);
++    wr64(pl->ba + 16, L->phys_base);
++    wr64(pl->ba + 24, L->mem_size);
++    wr64(pl->ba + 32, L->top_of_kernel_data);
++    wr64(pl->ba + 96, L->devtree_va);
++    pl->ba_len = ba_len;
++
++    /* ---- PMGR hooks (map_essential 1981-2017) */
++    struct s264_pmgr pm = {adt, alen, devs, dl / PMGR_DEV_SIZE, ps, psl / 12, pmgr, u8id,
++                           pl->pmgr_addr, 0, 32, false};
++    {
++        const u8 *d = pm_by_name(&pm, "UART0");
++        if (d)
++            pm_hook(&pm, d, 0);
++        if (in->iodev != S264_IODEV_NONE && in->iodev >= S264_IODEV_USB0) {
++            char n1[24] = "ATCx_USB", n2[24] = "ATCx_USB_AON";
++            n1[3] = n2[3] = (char)('0' + (in->iodev - S264_IODEV_USB0));
++            d = pm_by_name(&pm, n1);
++            if (d)
++                pm_hook(&pm, d, 0);
++            d = pm_by_name(&pm, n2);
++            if (d)
++                pm_hook(&pm, d, 0);
++        }
++    }
++    if (pm.err)
++        return pl->err = S264_E_PMGR;
++    pl->n_pmgr = pm.n;
++    u64 pmgr0;
++    if (!s264_adt_reg(adt, alen, pmgr, 0, &pmgr0, NULL))
++        return pl->err = S264_E_PMGR;
++
++    /* ---- NVMe checks that only read the ADT / carveouts (guest_module.py:21-35) */
++    if (!irq900_walk(adt, alen, 0, 0))
++        return pl->err = S264_E_IRQ900;
++    if (!(0x700100000ULL + 0x4000 < L->ram_base))
++        return pl->err = S264_E_LAYOUT;
++
++    /* ---- fixed guest windows must not overlap (audio_module.py:120-170, wifi_module.py:35-77) */
++    {
++        const u64 win[3][2] = {{0x340000000ULL, 0x40000}, {0x348000000ULL, 0x4000},
++                               {0x6e0000000ULL, 0x900000}};
++        u32 rl = 0;
++        const u8 *r = s264_adt_prop(adt, alen, w.arm_io, "ranges", &rl);
++        for (int i = 0; i < 2; i++) {
++            if (overlap(win[i][0], win[i][1], 0, 0x100000000ULL) ||
++                overlap(win[i][0], win[i][1], L->ram_base, L->ba_mem_size_actual) ||
++                overlap(win[i][0], win[i][1], 0x300000000ULL, 0x1000) ||
++                overlap(win[i][0], win[i][1], 0xF00000000ULL, 0x10000) ||
++                overlap(win[i][0], win[i][1], 0xF10000000ULL, 0x20000 * 8) ||
++                overlap(win[i][0], win[i][1], 0xF20000000ULL, 0x10000) ||
++                (cfg->agx_local_ipa && overlap(win[i][0], win[i][1], cfg->agx_local_ipa, 0x40000000)) ||
++                (cfg->agx_pool_ipa && overlap(win[i][0], win[i][1], cfg->agx_pool_ipa, 0x100000000ULL)))
++                return pl->err = S264_E_OVERLAP, pl->err_arg = i, pl->err;
++            for (u32 o = 0; r && o + 24 <= rl; o += 24)
++                if (overlap(win[i][0], win[i][1], rd64(r + o + 8), rd64(r + o + 16)))
++                    return pl->err = S264_E_OVERLAP, pl->err_arg = 10 + i, pl->err;
++        }
++        if (overlap(win[0][0], win[0][1], win[1][0], win[1][1]))
++            return pl->err = S264_E_OVERLAP;
++        bool bar_ok = false; /* wifi_module.py:70-74 */
++        for (u32 o = 0; r && o + 24 <= rl; o += 24)
++            bar_ok |= rd64(r + o + 8) <= win[2][0] &&
++                      win[2][0] + win[2][1] <= rd64(r + o + 8) + rd64(r + o + 16);
++        if (!bar_ok)
++            return pl->err = S264_E_OVERLAP, pl->err_arg = 20, pl->err;
++        for (u32 i = 0; i < in->n_carveouts; i++)
++            if (overlap(L->audio_buf, 0x40000, in->carveouts[2 * i], in->carveouts[2 * i + 1]) ||
++                overlap(L->nvme_buf, 0x4000, in->carveouts[2 * i], in->carveouts[2 * i + 1]))
++                return pl->err = S264_E_OVERLAP, pl->err_arg = 30, pl->err;
++        if (!(L->py_heap_base <= L->nvme_buf && L->audio_buf + 0x40000 <= L->py_heap_top))
++            return pl->err = S264_E_OVERLAP, pl->err_arg = 31, pl->err;
++    }
++    if (cfg->flags & S264_CFG_F_WIFI0) {
++        static struct s264_wifi_page wp;
++        int r = s264_wifi_page_init(adt, alen, &wp);
++        if (r)
++            return pl->err = S264_E_WLAN, pl->err_arg = (u32)-r, pl->err;
++        int d1 = s264_adt_path(adt, alen, "/arm-io/dart-apcie1");
++        u64 d1b = 0;
++        if (d1 < 0 || !s264_adt_reg(adt, alen, d1, 0, &d1b, NULL) || d1b != 0x682008000ULL)
++            return pl->err = S264_E_WLAN, pl->err_arg = 10, pl->err;
++    }
++
++    /* ---- PMU (proxyclient m1n1/hw/pmu.py find_primary_pmu + reset_panic_counter) */
++    u64 spmi_base = 0, pmu_slave = 0, pmu_reg = 0;
++    if (cfg->flags & S264_CFG_F_PMU) {
++        bool found = false;
++        int off = node_children(adt, alen, w.arm_io);
++        u32 cc = rd32(adt + w.arm_io + 4);
++        for (u32 i = 0; i < cc && !found && off >= 0; i++) {
++            const char *nm = s264_adt_name(adt, alen, off);
++            if (nm && (!strncmp(nm, "nub-spmi", 8) || !strncmp(nm, "spmi", 4))) {
++                int c = node_children(adt, alen, off);
++                u32 ccc = rd32(adt + off + 4);
++                for (u32 j = 0; j < ccc && c >= 0; j++) {
++                    u32 l1 = 0, l2 = 0, l3 = 0, l4 = 0;
++                    const u8 *compat = s264_adt_prop(adt, alen, c, "compatible", &l1);
++                    const u8 *prim = s264_adt_prop(adt, alen, c, "is-primary", &l2);
++                    bool cm = compat && (streq_n(compat, s264_strnlen(compat, l1), "pmu,spmi") ||
++                                         streq_n(compat, s264_strnlen(compat, l1), "pmu,d2422") ||
++                                         streq_n(compat, s264_strnlen(compat, l1), "pmu,d2449"));
++                    if (cm && prim && l2 >= 4 && rd32(prim) == 1) {
++                        const u8 *reg = s264_adt_prop(adt, alen, c, "reg", &l3);
++                        const u8 *scr = s264_adt_prop(adt, alen, c, "info-leg_scrpad", &l4);
++                        if (!reg || !l3 || !scr || l4 < 4 || !s264_adt_reg(adt, alen, off, 0, &spmi_base, NULL))
++                            return pl->err = S264_E_PMU;
++                        pmu_slave = reg[0];
++                        pmu_reg = rd32(scr) + 2;
++                        found = true;
++                        break;
++                    }
++                    c = node_end(adt, alen, c);
++                }
++            }
++            off = node_end(adt, alen, off);
++        }
++        if (!found)
++            return pl->err = S264_E_PMU;
++    }
++
++    /* =================================================================== ops, in the
++     * executor's order.  The final stage-2 state equals Python's: HW over /arm-io first,
++     * then every overlay (Python reaches the same state with pt_update + RESERVED zones). */
++    u32 me = in->iodev;
++    bool usb = me != S264_IODEV_NONE && me >= S264_IODEV_USB0;
++    /* HV.init 1849-1865 */
++    if (usb) {
++        for (u32 i = S264_IODEV_USB0; i < S264_IODEV_COUNT; i++)
++            if (i != me)
++                op(pl, S264_OP_IODEV, 0, i, 0, 0, 0);
++        if (cfg->flags & S264_CFG_F_SPLIT)
++            op(pl, S264_OP_IODEV, 0, me, S264_USAGE_UARTPROXY, 0, 0);
++    }
++    op_step(pl, S264_STEP_HV_INIT, 0, 0, 0, 0);
++    /* HV.init 1910-1955 */
++    op(pl, S264_OP_MSR, S264_MSR_HACR_EL2, S264_SYSREG_ENC(3, 4, 1, 1, 7), 0x317000000014000ULL, 0, 0);
++    op(pl, S264_OP_MSR, S264_MSR_MDCR_EL2, S264_SYSREG_ENC(3, 4, 1, 1, 1), 0xf00, 0, 0);
++    op(pl, S264_OP_MSR, S264_MSR_MDSCR_EL1, S264_SYSREG_ENC(2, 0, 0, 2, 2), 0x8000, 0, 0);
++    op(pl, S264_OP_MSR, S264_MSR_AMX_CONFIG_EL1, S264_SYSREG_ENC(3, 4, 15, 1, 4),
++       in->amx_config_cur | (1ULL << 62), 0, 0);
++    op(pl, S264_OP_MSR, S264_MSR_VMKEYLO_EL2, S264_SYSREG_ENC(3, 6, 15, 14, 4), 0x4E7672476F6E6147ULL, 0, 0);
++    op(pl, S264_OP_MSR, S264_MSR_VMKEYHI_EL2, S264_SYSREG_ENC(3, 6, 15, 14, 5), 0x697665596F755570ULL, 0, 0);
++    op(pl, S264_OP_MSR, S264_MSR_APSTS_EL12, S264_SYSREG_ENC(3, 6, 15, 14, 7), 1, 0, 0);
++    /* /arm-io ranges as HW (1887-1889; mapped by pt_update in Python) */
++    {
++        u32 rl = 0;
++        const u8 *r = s264_adt_prop(adt, alen, w.arm_io, "ranges", &rl);
++        for (u32 o = 0; r && o + 24 <= rl; o += 24)
++            op_map_hw(pl, rd64(r + o + 8), rd64(r + o + 8), rd64(r + o + 16));
++    }
++    /* map_vuart 1957-1964 */
++    {
++        int u0 = s264_adt_path(adt, alen, "/arm-io/uart0");
++        u64 ub;
++        u32 il = 0;
++        const u8 *irq = s264_adt_prop(adt, alen, u0, "interrupts", &il);
++        if (u0 < 0 || !irq || il < 4 || !s264_adt_reg(adt, alen, u0, 0, &ub, NULL))
++            return pl->err = S264_E_ADT;
++        op(pl, S264_OP_VUART, 0, ub, rd32(irq), me == S264_IODEV_NONE ? S264_IODEV_UART : me, 0);
++    }
++    {
++        u32 part = (u32)((in->midr >> 4) & 0xfff);
++        if (part >= 0x30)
++            op(pl, S264_OP_MSR, S264_MSR_ACTLR_EL12, S264_SYSREG_ENC(3, 5, 1, 0, 1),
++               in->actlr_cur | 0x1000, 0, 0);
++        else
++            op(pl, S264_OP_MSR, S264_MSR_ACTLR_EL12_PRE, S264_SYSREG_ENC(3, 6, 15, 14, 6),
++               in->actlr_cur | 0x1000, 0, 0);
++    }
++    /* load_raw RAM-LOW / RAM-HIGH / unmap_carveouts 2223-2226, 2166-2177 */
++    u64 lo_a = L->ram_base, lo_n = L->ba_phys_base - L->ram_base;
++    u64 hi_a = L->phys_base, hi_n = L->ba_mem_size_actual - L->phys_base + L->ram_base;
++    op_map_hw(pl, lo_a, lo_a, lo_n);
++    op_map_hw(pl, hi_a, hi_a, hi_n);
++    for (u32 i = 0; i < in->n_carveouts; i++) {
++        u64 b = in->carveouts[2 * i], n = in->carveouts[2 * i + 1];
++        for (int z = 0; z < 2; z++) {
++            u64 za = z ? hi_a : lo_a, zn = z ? hi_n : lo_n;
++            u64 s = b > za ? b : za, e = (b + n) < (za + zn) ? (b + n) : (za + zn);
++            if (s < e)
++                op_unmap(pl, s, e - s);
++        }
++    }
++    op(pl, S264_OP_COPY, 0, L->guest_base, 0, cfg->payload_size, 0);
++    op(pl, S264_OP_COPY, 1, L->sepfw_base, L->sepfw_src, L->sepfw_size, 0);
++    op(pl, S264_OP_COPY, 2, L->tc_base, L->tc_src, L->tc_size, 0);
++    if (have_preoslog)
++        op(pl, S264_OP_COPY, 3, L->preoslog_base, L->preoslog_src, L->preoslog_size, 0);
++    op_step(pl, S264_STEP_WRITE_BOOTARGS, L->bootargs_base, 0, ba_len, 0);
++    /* secondary RVBARs 2285-2292 */
++    {
++        int cpus = s264_adt_path(adt, alen, "/cpus");
++        int c = node_children(adt, alen, cpus);
++        u32 cc = cpus >= 0 ? rd32(adt + cpus + 4) : 0;
++        for (u32 i = 0; i < cc && c >= 0; i++) {
++            u32 sl2 = 0, rl = 0;
++            const u8 *st = s264_adt_prop(adt, alen, c, "state", &sl2);
++            const u8 *ir = s264_adt_prop(adt, alen, c, "cpu-impl-reg", &rl);
++            bool running = st && streq_n(st, s264_strnlen(st, sl2), "running");
++            if (!running && ir && rl >= 8)
++                op(pl, S264_OP_W64, 0, rd64(ir), L->entry & ~0xfffULL, 0, 0);
++            c = node_end(adt, alen, c);
++        }
++    }
++    if (cfg->flags & S264_CFG_F_PMU)
++        op_step(pl, S264_STEP_PMU_RESET, spmi_base, pmu_slave, pmu_reg, 0);
++    /* usb-s174/guest_map.py */
++    op_step(pl, S264_STEP_PCIE_INIT, 0, 0, 0, 0);
++    op_map_sw(pl, 0x6c0000000ULL, 0x6c0000000ULL, 0x100000);
++    op_map_sw(pl, 0x681000000ULL, 0x681000000ULL, 0x3000000);
++    op_map_hw(pl, cfg->win_base, L->win_backing, cfg->win_size);
++    op_map_sw(pl, 0x502280000ULL, 0x502280000ULL, 0x10000);
++    /* layout-s231/guest_module.py + module.py */
++    if (cfg->flags & S264_CFG_F_NVME) {
++        op_step(pl, S264_STEP_NVME_CHECKS, 0, 0, 0, 0);
++        if (cfg->exclude_window)
++            op(pl, S264_OP_W64, 1, L->bootargs_base + 24, L->mem_size_patched, 0, 0);
++        op_step(pl, S264_STEP_NVME_INIT, L->low_backing, L->phys_base,
++                cfg->exclude_window ? L->low_backing : L->ba_phys_base + L->ba_mem_size, 0);
++        op_step(pl, S264_STEP_GPT_CHECK, L->nvme_buf, 0, 0, 0);
++        op(pl, S264_OP_HOOK, S264_HOOK_NVME, 0x700000000ULL, 0, 0x100000, S264_HOOK_RW);
++        op(pl, S264_OP_HOOK, S264_HOOK_NVME, 0x700100000ULL, 0, 0x4000, S264_HOOK_RW);
++        u32 mdts = 0;
++        for (u32 v = cfg->max_transfer; v > 1; v >>= 1)
++            mdts++;
++        op_step(pl, S264_STEP_NVME_TAKEOVER, cfg->link_lbas, mdts - 12, 0, 0);
++    }
++    if (cfg->flags & S264_CFG_F_AGX) {
++        /* agx_hv2_module.py:42-66 */
++        u8 *b = pl->agx;
++        memset(b, 0, 512);
++        u64 ram_end = L->ba_phys_base + L->ba_mem_size;
++        u64 lowb = ram_end - 0x100000000ULL - 0x34000;
++        wr32(b + 0, 0x4741574e);
++        wr32(b + 4, 1);
++        wr32(b + 8, 512);
++        wr32(b + 12, cfg->agx_mode);
++        wr64(b + 16, L->py_heap_base);
++        wr64(b + 24, cfg->agx_local_ipa);
++        wr64(b + 32, cfg->agx_pool_ipa);
++        wr32(b + 40, cfg->agx_base_pstate);
++        wr32(b + 44, cfg->agx_cfg_flags);
++        wr64(b + 48, L->entry);
++        wr32(b + 56, cfg->agx_scanout_intid);
++        wr32(b + 60, cfg->agx_dcp_latch_us);
++        wr64(b + 64, L->phys_base);
++        wr64(b + 72, ram_end - L->phys_base);
++        wr64(b + 80, L->entry);
++        u32 nreg = 0;
++        u8 *rp = b + 64 + 56 + 8;
++        const u64 regs[5][3] = {
++            {0, L->phys_base, ram_end - L->phys_base},
++            {6, lowb, ram_end - lowb},
++            {3, L->adt_base, 0x100000},
++            {4, L->bootargs_base, 0x4000},
++            {5, L->video_base, (L->video_stride * L->video_height + 0x3fff) & ~0x3fffULL},
++        };
++        u32 want = (L->video_base && L->video_stride && L->video_height) ? 5 : 4;
++        for (u32 i = 0; i < want; i++, nreg++) {
++            wr32(rp + 24 * i, (u32)regs[i][0]);
++            wr64(rp + 24 * i + 8, regs[i][1]);
++            wr64(rp + 24 * i + 16, regs[i][2]);
++        }
++        wr32(b + 64 + 56, nreg);
++        op_step(pl, S264_STEP_AGX_CONFIG, 0, 0, 512, 0);
++    }
++    if (cfg->flags & S264_CFG_F_AUDIO_A) {
++        /* audio_module.py:100-113 header v2, status 0; stage B (hardware) is NOT ported */
++        u8 *h = pl->audio_hdr;
++        memset(h, 0, sizeof(pl->audio_hdr));
++        wr32(h + 0x00, 0x5541574e);
++        wr32(h + 0x04, 2);
++        wr64(h + 0x08, 0x80000000ULL + 0x1000);
++        wr32(h + 0x10, 0x20000);
++        wr32(h + 0x14, 48000);
++        wr32(h + 0x18, 1);
++        wr32(h + 0x1c, 0);
++        wr32(h + 0x20, 0);
++        wr32(h + 0x24, 0x31);
++        wr32(h + 0x28, 0x0c);
++        wr32(h + 0x2c, 0);
++        wr64(h + 0x30, 0x80000000ULL + 0x21000);
++        wr32(h + 0x38, 0x10000);
++        wr32(h + 0x3c, 3);
++        wr32(h + 0x40, 2);
++        wr32(h + 0x44, 0x00);
++        wr32(h + 0x48, 0xc9);
++        op_step(pl, S264_STEP_AUDIO_A, 0x340000000ULL, L->audio_buf, 0x40000, 0);
++        op_map_hw(pl, 0x340000000ULL, L->audio_buf, 0x40000);
++    }
++    if (cfg->flags & S264_CFG_F_WIFI0) {
++        op_step(pl, S264_STEP_WIFI, 0x348000000ULL, 0, 0x4000, 0);
++        op(pl, S264_OP_HOOK, S264_HOOK_WIFI_CTL, 0x348000000ULL, 0, 0x4000, S264_HOOK_RW);
++        op_map_sw(pl, 0x6e0000000ULL, 0x6e0000000ULL, 0x900000);
++    }
++    /* HV.start 2403-2414 */
++    if (usb) {
++        for (u32 i = 0; i < S264_IODEV_COUNT; i++)
++            if (i != me)
++                op(pl, S264_OP_IODEV, 0, i, 0, 0, 0);
++        if (cfg->flags & S264_CFG_F_SPLIT) {
++            op(pl, S264_OP_IODEV, 0, me, S264_USAGE_UARTPROXY, 0, 0);
++            op(pl, S264_OP_IODEV, 0, S264_IODEV_USB_VUART, S264_USAGE_CONSOLE, 0, 0);
++        }
++    }
++    /* map_essential: PMGR, pg overrides, CPU_START */
++    for (u32 i = 0; i < pl->n_pmgr; i++)
++        op(pl, S264_OP_HOOK, S264_HOOK_PMGR, pl->pmgr_addr[i], 0, 4, S264_HOOK_RW);
++    op(pl, S264_OP_HOOK, S264_HOOK_PG_OVR, 0x23d29c05cULL, 0xc000000, 4, S264_HOOK_R);
++    op(pl, S264_OP_HOOK, S264_HOOK_PG_OVR, 0x23d29c044ULL, 0xc000000, 4, S264_HOOK_R);
++    {
++        u64 cs = 0;
++        u32 c = L->chip_id;
++        if (c == 0x8103 || c == 0x6000 || c == 0x6001 || c == 0x6002)
++            cs = 0x54000;
++        else if (c == 0x8112 || c == 0x8122 || c == 0x6030)
++            cs = 0x34000;
++        else if (c == 0x6020 || c == 0x6021 || c == 0x6022)
++            cs = 0x28000;
++        else if (c == 0x6031)
++            cs = 0x88000;
++        if (cs) /* die-count absent on J274 -> one die */
++            op(pl, S264_OP_HOOK, S264_HOOK_CPUSTART, pmgr0 + cs, 0, 0x20, S264_HOOK_W);
++    }
++    op_step(pl, S264_STEP_TLBI, 0, 0, 0, 0);
++    op_step(pl, S264_STEP_WRITE_ADT, L->adt_base, 0, pl->adt_len, 0);
++    if (cfg->flags & S264_CFG_F_FB)
++        op_step(pl, S264_STEP_FB, 0, 0, 0, 0);
++    op(pl, S264_OP_MSR, S264_MSR_SPRR_CONFIG_EL1, S264_SYSREG_ENC(3, 6, 15, 1, 0), 1, 0, 0);
++    op(pl, S264_OP_MSR, S264_MSR_GXF_CONFIG_EL1, S264_SYSREG_ENC(3, 6, 15, 1, 2), 1, 0, 0);
++    op_step(pl, S264_STEP_ARM_TRAPS, 0, 0, 0, 0);
++    op_step(pl, S264_STEP_HV_START, L->entry, L->bootargs_base, 0, 0);
++    return pl->err;
++}
++
++/* ------------------------------------------------------------------ result blob */
++static u32 put_sec(u8 *out, u32 cap, u32 *pos, const void *src, u32 len)
++{
++    u32 at = (*pos + 7u) & ~7u;
++    if (at + len > cap)
++        return 0;
++    if (at > *pos)
++        memset(out + *pos, 0, at - *pos);
++    if (src)
++        memcpy(out + at, src, len);
++    *pos = at + len;
++    return at;
++}
++
++u32 s264_result_write(const struct s264_inputs *in, const struct s264_config *cfg,
++                      const struct s264_plan *pl, u32 mode, u8 *out, u32 cap)
++{
++    if (!out || cap < S264_RESULT_HDR)
++        return 0;
++    memset(out, 0, S264_RESULT_HDR);
++    u32 pos = S264_RESULT_HDR;
++    u64 lay[64];
++    u32 nl = 0;
++#define S264_LAYOUT_PUT(n) lay[nl++] = pl->L.n;
++    S264_LAYOUT_FIELDS(S264_LAYOUT_PUT)
++#undef S264_LAYOUT_PUT
++    u32 o_lay = put_sec(out, cap, &pos, lay, nl * 8);
++    u32 o_ops = put_sec(out, cap, &pos, pl->ops, pl->n_ops * (u32)sizeof(struct s264_op));
++    u32 o_adt = put_sec(out, cap, &pos, pl->adt, pl->adt_len);
++    u32 o_ba = put_sec(out, cap, &pos, pl->ba, pl->ba_len);
++    u32 o_agx = put_sec(out, cap, &pos, pl->agx, sizeof(pl->agx));
++    u32 o_aud = put_sec(out, cap, &pos, pl->audio_hdr, sizeof(pl->audio_hdr));
++    u32 o_pm = put_sec(out, cap, &pos, pl->pmgr_addr, pl->n_pmgr * 8);
++    u32 o_st = put_sec(out, cap, &pos, pl->steps, pl->n_steps * 16);
++    u32 o_cfg = put_sec(out, cap, &pos, cfg, (u32)sizeof(*cfg));
++    if (!o_lay || !o_ops || (pl->adt_len && !o_adt) || !o_ba || !o_agx || !o_aud || !o_cfg ||
++        (pl->n_pmgr && !o_pm) || (pl->n_steps && !o_st))
++        return 0;
++    u32 h[24] = {S264_RESULT_MAGIC, S264_VERSION, pos, pl->err, pl->err_arg, nl, pl->n_ops,
++                 pl->adt_len, pl->ba_len, pl->n_pmgr, pl->n_steps, mode,
++                 o_lay, o_ops, o_adt, o_ba, o_agx, o_aud, o_pm, o_st, o_cfg,
++                 (u32)sizeof(struct s264_op), 0, 0};
++    for (u32 i = 0; i < 24; i++)
++        wr32(out + 4 * i, h[i]);
++    u64 iv[8] = {in->heapblock_top, in->iodev, in->midr, in->amx_config_cur, in->actlr_cur,
++                 in->ba_rev, in->adt_size, in->n_carveouts};
++    for (u32 i = 0; i < 8; i++)
++        wr64(out + 96 + 8 * i, iv[i]);
++    return pos;
++}
+diff -ruN --exclude=build m1n1-standalone-s264-base/src-g262Q/src/nwoas_s264_plan.h m1n1-standalone-s264/src/nwoas_s264_plan.h
+--- m1n1-standalone-s264-base/src-g262Q/src/nwoas_s264_plan.h	1970-01-01 09:00:00
++++ m1n1-standalone-s264/src/nwoas_s264_plan.h	2026-11-19 02:39:13
+@@ -0,0 +1,261 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * NWOAS S264: pure (hardware-free) planning half of the C guest launcher.
++ *
++ * Everything here only READS its inputs (a copy of the EL2 ADT, the raw boot
++ * args, a few numbers) and WRITES caller buffers.  No MMIO, no sysregs, no
++ * allocation, no printf.  The same file is compiled
++ *   - into the hypervisor (m1n1 build, nwoas_s264.c executes the plan), and
++ *   - on the build host with -DS264_HOST for the offline equivalence test
++ *     (nwoas_scripts/standalone-s264/host/), so the device dry-run and the
++ *     host model share one implementation.
++ *
++ * What it reproduces (file:line references are in the README inventory):
++ *   m1n1_windows/proxyclient/m1n1/hv/__init__.py  HV.init / setup_adt / load_raw /
++ *   map_essential / start, plus the boot-time effects of the S259 launcher modules
++ *   usb-s174/guest_map.py, smp-s133/pmgr_gate.py, layout-s231/guest_module.py +
++ *   module.py, agx_hv2_module.py, sound-s256/audio_module.py stage A only,
++ *   wifi-s259/wifi_module.py with NWOAS_WIFI=0 only.
++ * HARDWARE-UNVERIFIED.  A plan that matches Python is not a boot result.
++ */
++#ifndef NWOAS_S264_PLAN_H
++#define NWOAS_S264_PLAN_H
++
++#ifdef S264_HOST
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++#include <string.h>
++typedef uint8_t u8;
++typedef uint16_t u16;
++typedef uint32_t u32;
++typedef uint64_t u64;
++#else
++#include "types.h"
++#endif
++
++#define S264_MAGIC        0x34363253u /* 'S264' */
++#define S264_VERSION      1u
++#define S264_RESULT_MAGIC 0x52343653u /* 'S64R' */
++
++#define S264_SZ_16K   0x4000ULL
++#define S264_ALIGN(x) (((x) + S264_SZ_16K - 1) & ~(S264_SZ_16K - 1))
++
++/* iodev numbering = m1n1 iodev.h == proxyclient m1n1/proxy.py IODEV */
++#define S264_IODEV_UART      0
++#define S264_IODEV_FB        1
++#define S264_IODEV_USB_VUART 2
++#define S264_IODEV_USB0      3
++#define S264_IODEV_COUNT     11 /* UART, FB, USB_VUART, USB0..USB7 (Python IODEV) */
++#define S264_IODEV_NONE      0xffffffffu
++#define S264_USAGE_CONSOLE   1u
++#define S264_USAGE_UARTPROXY 2u
++
++/* Sysreg ids used by OP_MSR (the executor has one explicit msr per id). */
++enum s264_msr_id {
++    S264_MSR_HACR_EL2 = 1,
++    S264_MSR_MDCR_EL2,
++    S264_MSR_MDSCR_EL1,
++    S264_MSR_AMX_CONFIG_EL1, /* s3_4_c15_c1_4, RMW EN_EL1 (bit 62) */
++    S264_MSR_VMKEYLO_EL2,
++    S264_MSR_VMKEYHI_EL2,
++    S264_MSR_APSTS_EL12,
++    S264_MSR_ACTLR_EL12,     /* s3_5_c1_c0_1 (part >= Blizzard) */
++    S264_MSR_ACTLR_EL12_PRE, /* s3_6_c15_c14_6 (M1 Firestorm/Icestorm) */
++    S264_MSR_SPRR_CONFIG_EL1,
++    S264_MSR_GXF_CONFIG_EL1,
++};
++/* Packed (op0,op1,CRn,CRm,op2) as the comparator prints it. */
++#define S264_SYSREG_ENC(op0, op1, crn, crm, op2)                                                  \
++    (((u64)(op0) << 16) | ((u64)(op1) << 12) | ((u64)(crn) << 8) | ((u64)(crm) << 4) | (u64)(op2))
++
++/* C hook ids (executor installs the matching function). */
++enum s264_hook_id {
++    S264_HOOK_PMGR = 1,  /* RW, map_essential wh/rh         hv/__init__.py:1970-1979 */
++    S264_HOOK_PG_OVR,    /* R,  pg_overrides lambda          hv/__init__.py:2019-2026 */
++    S264_HOOK_CPUSTART,  /* W,  cpustart_wh + S133 gate      hv/__init__.py:2056-2087 */
++    S264_HOOK_CPUSTATE,  /* R,  cpu_state_rh (runtime only)  hv/__init__.py:2043-2054 */
++    S264_HOOK_NVME,      /* RW, s93-nvme-ecam/bar after S230 fast path owns them */
++    S264_HOOK_WIFI_CTL,  /* RW, wifi-s259-ctl control page, NWOAS_WIFI=0 contents */
++};
++#define S264_HOOK_R  1
++#define S264_HOOK_W  2
++#define S264_HOOK_RW 3
++
++enum s264_op_kind {
++    S264_OP_MAP = 1,   /* a=from b=to(raw PTE as passed to hv_map) c=size d=incr */
++    S264_OP_HOOK,      /* a=from c=size, id=hook id, d=R/W class */
++    S264_OP_VUART,     /* a=base b=irq c=iodev */
++    S264_OP_W64,       /* a=addr b=value */
++    S264_OP_MSR,       /* id=msr id, a=encoding, b=value */
++    S264_OP_IODEV,     /* a=iodev b=usage */
++    S264_OP_COPY,      /* a=dst b=src(0 = launcher payload) c=len */
++    S264_OP_STEP,      /* id=step id, a..d step arguments */
++};
++
++enum s264_step_id {
++    S264_STEP_HV_INIT = 1,
++    S264_STEP_WRITE_BOOTARGS, /* a=dst c=len (blob in plan->ba) */
++    S264_STEP_PMU_RESET,      /* a=spmi base b=slave c=reg (write8 0) */
++    S264_STEP_PCIE_INIT,
++    S264_STEP_NVME_CHECKS,    /* IRQ900 + BAR below RAM + carveout table */
++    S264_STEP_NVME_INIT,      /* a=low_backing b=high_min c=high_max */
++    S264_STEP_GPT_CHECK,
++    S264_STEP_NVME_TAKEOVER,  /* a=link_lbas b=mdts */
++    S264_STEP_AGX_CONFIG,     /* blob in plan->agx */
++    S264_STEP_AUDIO_A,        /* a=window ipa b=buffer pa c=size */
++    S264_STEP_WIFI,           /* a=ctl ipa c=ctl size */
++    S264_STEP_WRITE_ADT,      /* a=dst c=len */
++    S264_STEP_TLBI,
++    S264_STEP_FB,             /* fb_improve_logo + fb_shutdown(true) */
++    S264_STEP_ARM_TRAPS,
++    S264_STEP_HV_START,       /* a=entry b=x0 */
++};
++
++struct s264_op {
++    u32 kind;
++    u32 id;
++    u64 a, b, c, d;
++} __attribute__((packed));
++
++/* Launcher configuration (host -> HV, little endian, fixed layout). */
++#define S264_CFG_F_AGX     (1u << 0)
++#define S264_CFG_F_NVME    (1u << 1)
++#define S264_CFG_F_AUDIO_A (1u << 2) /* map the S256 window, header status 0 (no sound) */
++#define S264_CFG_F_WIFI0   (1u << 3) /* S259 control page with NWOAS_WIFI=0 contents */
++#define S264_CFG_F_PMU     (1u << 4)
++#define S264_CFG_F_FB      (1u << 5)
++#define S264_CFG_F_SPLIT   (1u << 6) /* M1N1_SPLIT_CONSOLE=1 behaviour */
++#define S264_CFG_F_DEFAULT                                                                         \
++    (S264_CFG_F_AGX | S264_CFG_F_NVME | S264_CFG_F_AUDIO_A | S264_CFG_F_WIFI0 | S264_CFG_F_PMU |   \
++     S264_CFG_F_FB | S264_CFG_F_SPLIT)
++
++struct s264_config {
++    u32 magic;   /* S264_MAGIC */
++    u32 version; /* S264_VERSION */
++    u32 size;    /* sizeof(struct s264_config) */
++    u32 flags;   /* S264_CFG_F_* */
++    u64 payload_ptr;  /* launch: PA of the raw payload (guest m1n1 + Mu FD); dry-run may be 0 */
++    u64 payload_size; /* bytes (S259: 33669120) */
++    u64 entry_offset; /* run_guest.py -E default 0x800 */
++    u64 py_heap_size; /* run_guest.py ProxyUtils(heap_size = 768 MiB) */
++    u64 m1n1_heap_reserve; /* proxyutils.py: heap_base += 128 MiB */
++    u64 win_base, win_size, win_skew; /* NWOAS_WIN_BASE/SIZE/SKEW (0, 4 GiB, 0x34000) */
++    u32 exclude_window; /* NWOAS_EXCLUDE_WINDOW (1) */
++    u32 max_transfer;   /* NWOAS_MAX_TRANSFER (1 MiB) -> mdts 8 */
++    u32 agx_mode;       /* 1 log, 2 mediate */
++    u32 agx_scanout_intid;
++    u64 agx_local_ipa, agx_pool_ipa;
++    u32 agx_base_pstate, agx_cfg_flags, agx_dcp_latch_us;
++    u32 link_lbas;      /* must be 0: NS1-only (no NS2 transport) */
++    u64 reserved[8];
++} __attribute__((packed));
++
++/* Everything the planner needs from the running system. */
++struct s264_inputs {
++    const u8 *adt;
++    u32 adt_size;       /* boot_args.devtree_size */
++    const u8 *ba_raw;   /* raw boot args memory at boot_args_addr (>= 1152 bytes readable) */
++    u32 ba_rev;         /* boot args revision (1, 2 or 3) */
++    u64 heapblock_top;  /* heapblock_alloc(0) when the launcher starts */
++    const u64 *carveouts; /* (base, size) pairs, mcc_carveouts order */
++    u32 n_carveouts;
++    u32 iodev;          /* proxy iodev (uartproxy_iodev) or S264_IODEV_NONE */
++    u64 midr;
++    u64 amx_config_cur; /* current s3_4_c15_c1_4 */
++    u64 actlr_cur;      /* current ACTLR_EL12 / ACTLR_EL12_PRE (per MIDR part) */
++};
++
++/* Every field is u64 so the result blob is a flat list (order = S264_LAYOUT_FIELDS). */
++#define S264_LAYOUT_FIELDS(X)                                                                      \
++    X(ba_phys_base) X(ba_mem_size) X(ba_mem_size_actual) X(ba_virt_base) X(video_base)            \
++    X(video_stride) X(video_height) X(py_heap_base) X(py_heap_top) X(phys_base) X(ram_base)        \
++    X(mem_top) X(mem_size) X(mem_size_patched) X(adt_base) X(adt_region) X(tc_base) X(tc_size)     \
++    X(tc_src) X(guest_base) X(entry) X(image_size) X(payload_size) X(sepfw_base) X(sepfw_size)     \
++    X(sepfw_src) X(preoslog_base) X(preoslog_size) X(preoslog_src) X(bootargs_base)                \
++    X(bootargs_size) X(virt_base) X(devtree_va) X(top_of_kernel_data) X(low_backing)               \
++    X(win_backing) X(nvme_buf) X(audio_buf) X(adt_scratch) X(chip_id) X(ba_len) X(iodev)           \
++    X(pmgr_u8id)
++#define S264_LAYOUT_DECL(n) u64 n;
++struct s264_layout {
++    S264_LAYOUT_FIELDS(S264_LAYOUT_DECL)
++};
++
++struct s264_plan {
++    struct s264_layout L;
++    struct s264_op *ops;
++    u32 n_ops, cap_ops;
++    u8 *adt;            /* rewritten guest ADT */
++    u32 adt_len, adt_cap;
++    u8 ba[1152];        /* boot args blob as load_raw writes it (before the S102 patch) */
++    u32 ba_len;
++    u8 agx[512];        /* struct nwoas_agx_config as agx_hv2_module.py packs it */
++    u8 audio_hdr[0x4c]; /* S256 header, status 0 */
++    u64 pmgr_addr[32];
++    u32 n_pmgr;
++    u32 err;            /* first error (S264_E_*), 0 = ok */
++    u32 err_arg;
++    /* executor results, one per STEP op that ran (dry-run: status S264_ST_DRY) */
++    struct {
++        u32 id, status;
++        u64 val;
++    } steps[40];
++    u32 n_steps;
++};
++
++#define S264_ST_OK   1
++#define S264_ST_DRY  2
++#define S264_ST_FAIL 3
++#define S264_ST_SKIP 4
++
++enum s264_err {
++    S264_E_OK = 0,
++    S264_E_CFG = 1,
++    S264_E_ADT = 2,
++    S264_E_MEMMAP = 3,
++    S264_E_LAYOUT = 4,
++    S264_E_OPS_FULL = 5,
++    S264_E_ADT_FULL = 6,
++    S264_E_PMGR = 7,
++    S264_E_IRQ900 = 8,
++    S264_E_WLAN = 9,
++    S264_E_OVERLAP = 10,
++    S264_E_BA = 11,
++    S264_E_PMU = 12,
++};
++
++/* ---- minimal raw ADT reader (offset based, no m1n1 adt.c) ---- */
++int s264_adt_path(const u8 *adt, u32 len, const char *path);
++const u8 *s264_adt_prop(const u8 *adt, u32 len, int node, const char *name, u32 *plen);
++const char *s264_adt_name(const u8 *adt, u32 len, int node);
++/* reg[idx] of an /arm-io child, translated through /arm-io "ranges" (Python get_reg) */
++bool s264_adt_reg(const u8 *adt, u32 len, int node, u32 idx, u64 *addr, u64 *size);
++
++void s264_default_config(struct s264_config *cfg);
++/* guest phys_base = Python heap top (proxyutils.py:102-112 + load_raw:2211) */
++u64 s264_phys_base(const struct s264_inputs *in, const struct s264_config *cfg);
++/* where the guest ADT is assembled before it is copied (top of the Python heap range) */
++u64 s264_adt_scratch(const struct s264_inputs *in, const struct s264_config *cfg);
++/* Whole plan.  Returns 0 or an S264_E_* code (also left in plan->err). */
++int s264_plan_build(const struct s264_inputs *in, const struct s264_config *cfg,
++                    struct s264_plan *plan);
++
++/* Result blob (HV -> host; also written by the host model).  Little endian.
++ * header: 24 x u32 then 8 x u64 inputs, sections 8-byte aligned. */
++#define S264_RESULT_HDR 160u
++u32 s264_result_write(const struct s264_inputs *in, const struct s264_config *cfg,
++                      const struct s264_plan *pl, u32 mode, u8 *out, u32 cap);
++
++/* S259 Wi-Fi control page contents with NWOAS_WIFI=0 (nwoas_wifi_s259.py reg_read). */
++struct s264_wifi_page {
++    u32 state, error, last_cmd, seq, cmd_count, cfg_off, cfg_err;
++    u32 cfg_reads, cfg_writes;
++    u32 mac_lo, mac_hi, cal_len, antenna;
++    u32 board[4];
++    u32 cal[0x1000 / 4];
++};
++int s264_wifi_page_init(const u8 *adt, u32 len, struct s264_wifi_page *w);
++u32 s264_wifi_reg_read(struct s264_wifi_page *w, u32 off);
++void s264_wifi_reg_write(struct s264_wifi_page *w, u32 off, u32 val);
++
++#endif
+diff -ruN --exclude=build m1n1-standalone-s264-base/src-g262Q/src/proxy.c m1n1-standalone-s264/src/proxy.c
+--- m1n1-standalone-s264-base/src-g262Q/src/proxy.c	2026-11-18 16:36:19
++++ m1n1-standalone-s264/src/proxy.c	2026-11-19 02:42:19
+@@ -511,6 +511,12 @@
+                 request->args[4], request->args[5]);
+             break;
+         }
++        case P_HV_NWOAS_S264: {
++            extern u64 nwoas_s264_proxy(u64 op, u64 a0, u64 a1, u64 a2, u64 a3);
++            reply->retval = nwoas_s264_proxy(request->args[0], request->args[1], request->args[2],
++                                             request->args[3], request->args[4]);
++            break;
++        }
+         case P_HV_NWOAS_PWR: {
+             extern u64 nwoas_pwr_proxy(u64 op, u64 a0, u64 a1, u64 a2, u64 a3);
+             reply->retval = nwoas_pwr_proxy(request->args[0], request->args[1], request->args[2],
+diff -ruN --exclude=build m1n1-standalone-s264-base/src-g262Q/src/proxy.h m1n1-standalone-s264/src/proxy.h
+--- m1n1-standalone-s264-base/src-g262Q/src/proxy.h	2026-11-18 16:36:19
++++ m1n1-standalone-s264/src/proxy.h	2026-11-19 02:42:19
+@@ -155,6 +155,7 @@
+     P_HV_NWOAS_NVME_IRQ = 0xc30,
+     P_HV_NWOAS_NVME_FASTPATH,
+     P_HV_NWOAS_PWR = 0xc3a, /* NWOAS S260: (op, a0..a3), src/nwoas_pwr.h */
++    P_HV_NWOAS_S264 = 0xc3e, /* NWOAS S264 C launcher: (op, a0..a3), src/nwoas_s264.h */
+ #ifdef NWOAS_AGX
+     P_HV_NWOAS_AGX_CONFIG = 0xc38, /* NWOAS gpu-hv2: args (ptr, size) of struct nwoas_agx_config */
+ #endif

@@ -324,6 +324,7 @@ int nb_dec_msg(const nb_u8 *it, nb_u32 len, nb_msg *m);
 #define NB_C_SET_PM             86
 #define NB_C_SET_AP             118
 #define NB_C_GET_RSSI           127
+#define NB_C_GET_RATE           12      /* brcmfmac BRCMF_C_GET_RATE: 500 kb/s units */
 #define NB_C_SET_SCAN_CHANNEL_TIME 185
 #define NB_C_SET_SCAN_UNASSOC_TIME 187
 #define NB_C_GET_VAR            262
@@ -471,6 +472,9 @@ nb_u32 nb_wsec_for_cipher(int cipher);
 nb_u32 nb_wpa_auth_for(int rsn, int akm);
 /* parse an RSN IE (id 48): group cipher suite type, first pairwise, first AKM, caps */
 int nb_rsn_parse(const nb_u8 *ie, nb_u32 *group, nb_u32 *pairwise, nb_u32 *akm, nb_u16 *caps);
+/* every 00-0F-AC pairwise suite type of an RSN IE as a bit mask (bit n = suite type n, n < 32):
+ * diagnostics only (s258m).  NB_OK or NB_E_FORMAT. */
+int nb_rsn_pairwise_mask(const nb_u8 *ie, nb_u32 *mask);
 /* build an RSN IE with one pairwise and one AKM suite (00-0F-AC) */
 nb_u32 nb_rsn_build(nb_u8 *out, nb_u32 cap, nb_u32 group, nb_u32 pairwise, nb_u32 akm, nb_u16 caps);
 /* "assoc_info" iovar reply -> request/response IE lengths */

@@ -543,3 +543,27 @@ UMD 기록 풀이 (2758, Cinebench 프로세스, 시각 순서) [사실, 소스 
 | AppleAgxRenderAdmissionUmd.dll | `04ae6a91d4f29c95306795666b1fedadd29d4df537a7eace643526c8b2878710` |
 | AppleAgxRenderAdmission.arm64only.inf | `1b31d5ece1eaea93920de97e43d730a0bfa05581688b2961de2e9898fd8b6f2b` |
 | appleagxrenderadmission.cat | `cb84d8d5f2d9f22ef405804422947e0fc0c19cf13dc7e275bba3f6cd58ec4466` |
+
+## P36 (NWOAS-J274, 2026-11-19) — 표준 다중 표본 패턴(Quality 0xffffffff) 허용
+
+결론: **2771에서 Edge GPU 프로세스가 처음 한 번 사라졌다 다시 뜨는 원인은, ANGLE이 4x 렌더 대상을 `SampleDesc.Quality = D3D11_STANDARD_MULTISAMPLE_PATTERN`(0xffffffff)으로 만들고, 우리 UMD가 Quality 0만 받아 E_NOTIMPL로 거부한 것입니다** [사실, 기록·공개 소스 대조]. 판 2772에서 D3D11 렌더 대상·깊이와 D3D12 2D 텍스처가 이 값을 품질 0과 같게 받습니다 [빌드만].
+
+| 단계 | 근거 |
+|---|---|
+| ANGLE이 표준 패턴을 요청 | ANGLE `Renderer11::getSampleDescQuality`: 표본 수 > 0이고 FL 10_1 이상이면 `D3D11_STANDARD_MULTISAMPLE_PATTERN` (`createRenderTarget`, `TextureStorage11` 두 곳에서 사용) |
+| 런타임이 그 값을 DDI에 그대로 넘김 | 2771 K38t `reject-d3d11-render-target` 값: 형식 0x1c(RGBA8), 바인드 0x28(RT+SRV), 단계 1, 배열 1, `ffffff04`(표본 4, Quality 0xffffffff), 차원 3(2D) |
+| 우리 UMD가 거부 | `build-native-asahi-state.py` 렌더 대상 조건 `SampleDesc.Quality == 0` → E_NOTIMPL → P32의 `reject-create-error-as-oom` → E_OUTOFMEMORY |
+| ANGLE → WebGL | `ResourceManager11::allocate:492` `ANGLE_TRY_HR` → `GL_OUT_OF_MEMORY`(로그의 `HRESULT: 0x8007000E`) |
+| GPU 프로세스 종료 | Chromium `GpuChannelManager::OnContextLost`: 패스스루 디코더(ANGLE)면 `force_restart` → `MaybeExitOnContextLost`. 로그에서 OOM 0.15초 뒤 새 GPU 프로세스(`--gpu-recent-crash-count=1`), 충돌 보고 0 |
+
+- 표본 위치: Asahi Gallium 드라이버는 `u_default_get_sample_position`(D3D·Vulkan 표준 위치)을 씁니다(VM의 Mesa 9aa1215f `agx_pipe.c:1812`). 그래서 표준 패턴을 품질 0과 같은 것으로 받습니다. 중앙 패턴(0xfffffffe)은 여전히 거부합니다.
+- D3D12(`TextureBytes`)도 같은 값을 받게 했습니다. K38d(`--use-angle=d3d11on12`)의 첫 GPU 프로세스 OOM이 같은 원인이라는 것은 [가설]입니다(그 실행의 D3D12 할당 기록은 걸러져 보이지 않았음). K38dg로 확인합니다.
+- 품질 단계 질의(CheckMultisampleQualityLevels)·형식 답은 2771과 같습니다. KMD 소스는 바꾸지 않았습니다(.sys 해시는 판 번호 때문에 바뀜).
+- 빌드(`build-p36.sh`, 실행 이름 j274g4l): 성공, 판 30.0.2772.0. 결과물 `out/j274-full-20261119-0346-p36`, 차이 `P36-driver.diff`(2개 파일). 생성된 `Resource.cpp`에 P36 줄 3개 들어간 것을 VM에서 확인. InfVerif는 2771과 같은 ERROR(1322)(UMD를 System32에 복사, DIRID 13 아님)를 냅니다 — 2771에도 있던 것이고 pnputil 설치는 됐습니다. signtool verify 오류 1(시험 서명, VM에 신뢰 루트 없음)도 2771과 같습니다.
+
+| 파일 | sha256 |
+|---|---|
+| AppleAgxRenderAdmission.sys | `cac0dabb81b712f5e375bb4ed22118244a529c58904858be01df3e1c04f059f5` |
+| AppleAgxRenderAdmissionUmd.dll | `8647b5df6627d2b9b2f795e043ed4a308576fb65d67d45836a4505c48b96b496` |
+| AppleAgxRenderAdmission.arm64only.inf | `bf89c9c42503987842b79a8a30d2daca1c0dabf216e890b44c68f4817638e96d` |
+| appleagxrenderadmission.cat | `15144633a9b74b79c62e79bb9a0a0577fb46c8042b0b86dd209a3d0d35f029d9` |

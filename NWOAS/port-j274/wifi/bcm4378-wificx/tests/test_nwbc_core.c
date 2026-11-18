@@ -327,6 +327,14 @@ static void test_escan(void)
             CHECK(g == NB_CIPHER_CCMP && pw == NB_CIPHER_CCMP && akm == NB_AKM_PSK && caps == 0x0C);
             n = nb_rsn_build(pb, sizeof(pb), g, NB_CIPHER_CCMP, NB_AKM_PSK, 0);
             CHECK(n == 22 && memcmp(pb, rsn, 20) == 0);
+            {
+                nb_u32 m = 0;
+                static const nb_u8 two[] = { 48, 24, 1, 0, 0x00, 0x0F, 0xAC, 4, 2, 0, 0x00, 0x0F, 0xAC, 8,
+                                             0x00, 0x0F, 0xAC, 4, 1, 0, 0x00, 0x0F, 0xAC, 2, 0x0C, 0 };
+                CHECK(nb_rsn_pairwise_mask(rsn, &m) == NB_OK && m == (1u << NB_CIPHER_CCMP));
+                CHECK(nb_rsn_pairwise_mask(two, &m) == NB_OK && m == ((1u << 8) | (1u << 4)));
+                CHECK(nb_rsn_pairwise_mask(pb + 1, &m) == NB_E_FORMAT);
+            }
         }
     }
     /* not an event: plain IPv4 */

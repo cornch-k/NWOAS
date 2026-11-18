@@ -1032,6 +1032,27 @@ int nb_rsn_parse(const nb_u8 *ie, nb_u32 *group, nb_u32 *pairwise, nb_u32 *akm, 
     return NB_OK;
 }
 
+int nb_rsn_pairwise_mask(const nb_u8 *ie, nb_u32 *mask)
+{
+    static const nb_u8 oui[3] = { 0x00, 0x0F, 0xAC };
+    nb_u32 l, p = 8, n, k;
+    if (!ie || !mask || ie[0] != 48)
+        return NB_E_FORMAT;
+    *mask = 0;
+    l = ie[1] + 2u;
+    if (l < 8 || nb_ld16(ie + 2) != 1)
+        return NB_E_FORMAT;
+    if (p + 2 > l)
+        return NB_OK;
+    n = nb_ld16(ie + p); p += 2;
+    if (p + 4 * n > l)
+        return NB_E_FORMAT;
+    for (k = 0; k < n; k++)
+        if (memcmp(ie + p + 4 * k, oui, 3) == 0 && ie[p + 4 * k + 3] < 32)
+            *mask |= 1u << ie[p + 4 * k + 3];
+    return NB_OK;
+}
+
 nb_u32 nb_rsn_build(nb_u8 *out, nb_u32 cap, nb_u32 group, nb_u32 pairwise, nb_u32 akm, nb_u16 caps)
 {
     nb_u8 *p = out;

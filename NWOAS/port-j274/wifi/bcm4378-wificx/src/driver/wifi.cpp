@@ -77,6 +77,153 @@ static UINT32 LinkQuality(int rssi)
 
 static WDI_BAND_ID WdiBand(UCHAR band) { return band == 5 ? WDI_BAND_ID_5000 : WDI_BAND_ID_2400; }
 
+// ------------------------------------------------ s258m diagnostics helpers
+static ULONG NowMs() { return (ULONG)(KeQueryInterruptTime() / 10000); }
+static ULONG SinceMs(ULONG64 Now, ULONG64 T)
+{
+    if (!T || T > Now) return 0xFFFFFFFFu;
+    ULONG64 d = (Now - T) / 10000;
+    return d > 0xFFFFFFF0ull ? 0xFFFFFFF0u : (ULONG)d;
+}
+static ULONG CipherBit(ULONG c) { return c < 32 ? (1u << c) : 0x80000000u; }
+
+// one sample of the data counters per diag tick (2 s), for "frames in the last 10 s"
+static void SampleTick(PNWOA_DEVICE Dev)
+{
+    KIRQL irql;
+    KeAcquireSpinLock(&Dev->StateLock, &irql);
+    ULONG i = Dev->SampNext % 8;
+    Dev->Samp[i].Ms = NowMs();
+    Dev->Samp[i].Rx = Dev->CntRx;
+    Dev->Samp[i].Tx = Dev->CntTx;
+    Dev->Samp[i].TxDone = Dev->CntTxStatus;
+    Dev->SampNext++;
+    KeReleaseSpinLock(&Dev->StateLock, irql);
+}
+
+// caller holds StateLock: the newest sample at least 10 s old (else the oldest one)
+static void Window10(PNWOA_DEVICE Dev, NWOA_DISCDIAG* D)
+{
+    ULONG now = NowMs(), n = Dev->SampNext < 8 ? Dev->SampNext : 8;
+    int best = -1, oldest = -1;
+    for (ULONG k = 0; k < n; k++) {
+        ULONG i = (Dev->SampNext - 1 - k) % 8;           // newest first
+        oldest = (int)i;
+        if (now - Dev->Samp[i].Ms >= 10000) { best = (int)i; break; }
+    }
+    if (best < 0) best = oldest;
+    if (best < 0) { D->Rx10 = D->Tx10 = D->TxDone10 = -1; D->SampleSpanMs = 0; return; }
+    D->Rx10 = Dev->CntRx - Dev->Samp[best].Rx;
+    D->Tx10 = Dev->CntTx - Dev->Samp[best].Tx;
+    D->TxDone10 = Dev->CntTxStatus - Dev->Samp[best].TxDone;
+    D->SampleSpanMs = now - Dev->Samp[best].Ms;
+}
+
+static ULONG RsnMaskOf(const UCHAR* Body, ULONG Len, ULONG* Group)
+{
+    ULONG m = 0;
+    *Group = 0;
+    if (!Body || Len <= 12)
+        return 0;
+    const nb_u8* rsn = nb_ie_find(Body + 12, Len - 12, 48, NULL);
+    nb_u32 g = 0, pw = 0, akm = 0, mask = 0;
+    nb_u16 caps = 0;
+    if (rsn && nb_rsn_pairwise_mask(rsn, &mask) == NB_OK)
+        m = mask;
+    if (rsn && nb_rsn_parse(rsn, &g, &pw, &akm, &caps) == NB_OK)
+        *Group = g;
+    return m;
+}
+
+// per connect / roam command: the host's settings and every candidate (bits only)
+static void ConnDiagRecord(PNWOA_DEVICE Dev, UINT16 Id, const WDI_CONNECT_PARAMETERS_CONTAINER& Cp,
+                           const ArrayOfElements<WDI_CONNECT_BSS_ENTRY_CONTAINER>& List)
+{
+    NWOA_CONNDIAG d;
+    KIRQL irql;
+    RtlZeroMemory(&d, sizeof(d));
+    d.Ms = NowMs();
+    d.Id = Id;
+    const WDI_CONNECTION_SETTINGS_CONTAINER& cs = Cp.ConnectionSettings;
+    d.RoamRequest = cs.RoamRequest ? 1 : 0;
+    d.Hidden = cs.HiddenNetwork ? 1 : 0;
+    d.Mfp = cs.MFPEnabled ? 1 : 0;
+    d.BssTrans = cs.BSSTransitionSupported ? 1 : 0;
+    d.RoamNeededReason = cs.RoamNeededReason;
+    d.RoamTrigger = (ULONG)cs.RoamTrigger;
+    d.Auth0 = Cp.AuthenticationAlgorithms.ElementCount ? (ULONG)Cp.AuthenticationAlgorithms.pElements[0] : 0xFFFFFFFFu;
+    d.NUc = (UCHAR)min(Cp.UnicastCipherAlgorithms.ElementCount, 255u);
+    d.Uc0 = Cp.UnicastCipherAlgorithms.ElementCount ? (ULONG)Cp.UnicastCipherAlgorithms.pElements[0] : 0xFFFFFFFFu;
+    d.Mc0 = Cp.MulticastCipherAlgorithms.ElementCount ? (ULONG)Cp.MulticastCipherAlgorithms.pElements[0] : 0xFFFFFFFFu;
+    for (UINT32 i = 0; i < Cp.UnicastCipherAlgorithms.ElementCount; i++)
+        d.UcMask |= CipherBit((ULONG)Cp.UnicastCipherAlgorithms.pElements[i]);
+    for (UINT32 i = 0; i < Cp.MulticastCipherAlgorithms.ElementCount; i++)
+        d.McMask |= CipherBit((ULONG)Cp.MulticastCipherAlgorithms.pElements[i]);
+    d.NCand = (UCHAR)min(List.ElementCount, 255u);
+    NWOA_BSS* cached = (NWOA_BSS*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(NWOA_BSS), NWOA_TAG);
+    for (UINT32 i = 0; i < List.ElementCount && i < NWOA_CANDMAX; i++) {
+        const WDI_CONNECT_BSS_ENTRY_CONTAINER& be = List.pElements[i];
+        USHORT b = (USHORT)(((ULONG)be.ChannelInfo.ChannelNumber & 0xFF) << 8);
+        if (Dev->Connected && RtlEqualMemory(be.BSSID.Address, Dev->CurBssid, 6)) b |= 1;
+        if (Dev->HaveLastConn && RtlEqualMemory(be.BSSID.Address, Dev->LastConnBssid, 6)) b |= 2;
+        if (be.ChannelInfo.BandId == WDI_BAND_ID_5000) b |= 8;
+        const WDI_BYTE_BLOB* fr = be.Optional.ProbeResponseFrame_IsPresent ? &be.ProbeResponseFrame :
+                                  be.Optional.BeaconFrame_IsPresent ? &be.BeaconFrame : NULL;
+        if (fr) b |= 16;
+        BOOLEAN inCache = cached && NwoaScanCacheFind(Dev, be.BSSID.Address, cached);
+        if (inCache) { b |= 4; d.CandRssi[i] = cached->B.rssi; }
+        if (i == 0) {
+            if (fr && fr->ElementCount > 12)
+                d.ApPwMask = RsnMaskOf(fr->pElements, fr->ElementCount, &d.ApGroup);
+            else if (inCache && cached->B.ies_len) {
+                nb_u32 g = 0, pw = 0, akm = 0, mask = 0;
+                nb_u16 caps = 0;
+                const nb_u8* rsn = nb_ie_find(cached->B.ies, cached->B.ies_len, 48, NULL);
+                if (rsn && nb_rsn_pairwise_mask(rsn, &mask) == NB_OK) d.ApPwMask = mask;
+                if (rsn && nb_rsn_parse(rsn, &g, &pw, &akm, &caps) == NB_OK) d.ApGroup = g;
+            }
+        }
+        d.Cand[i] = b;
+    }
+    if (cached)
+        ExFreePoolWithTag(cached, NWOA_TAG);
+    KeAcquireSpinLock(&Dev->StateLock, &irql);
+    Dev->ConnDiag[Dev->ConnDiagNext % NWOA_CONNDIAG_N] = d;
+    Dev->ConnDiagNext++;
+    KeReleaseSpinLock(&Dev->StateLock, irql);
+}
+
+static void KeyDiagRecord(PNWOA_DEVICE Dev, const WDI_SET_ADD_CIPHER_KEYS_PARAMETERS* a,
+                          const WDI_SET_DELETE_CIPHER_KEYS_PARAMETERS* d, NTSTATUS St)
+{
+    NWOA_KEYDIAG k;
+    KIRQL irql;
+    RtlZeroMemory(&k, sizeof(k));
+    k.Ms = NowMs();
+    k.Accepted = (UCHAR)min(Dev->NumKeys, 255u);
+    k.Status = (ULONG)St;
+    if (a) {
+        k.Add = 1;
+        k.Elements = (UCHAR)min(a->SetCipherKey.ElementCount, 255u);
+        for (UINT32 i = 0; i < a->SetCipherKey.ElementCount; i++) {
+            const WDI_CIPHER_KEY_TYPE_INFO_CONTAINER& t = a->SetCipherKey.pElements[i].CipherKeyTypeInfo;
+            if (i == 0) { k.Type = (UCHAR)t.KeyType; k.Cipher = (ULONG)t.CipherAlgorithm; }
+            k.CipherMask |= CipherBit((ULONG)t.CipherAlgorithm);
+        }
+    } else if (d) {
+        k.Elements = (UCHAR)min(d->CipherKeyInfo.ElementCount, 255u);
+        for (UINT32 i = 0; i < d->CipherKeyInfo.ElementCount; i++) {
+            const WDI_CIPHER_KEY_TYPE_INFO_CONTAINER& t = d->CipherKeyInfo.pElements[i].CipherKeyTypeInfo;
+            if (i == 0) { k.Type = (UCHAR)t.KeyType; k.Cipher = (ULONG)t.CipherAlgorithm; }
+            k.CipherMask |= CipherBit((ULONG)t.CipherAlgorithm);
+        }
+    }
+    KeAcquireSpinLock(&Dev->StateLock, &irql);
+    Dev->KeyDiag[Dev->KeyDiagNext % NWOA_KEYDIAG_N] = k;
+    Dev->KeyDiagNext++;
+    KeReleaseSpinLock(&Dev->StateLock, irql);
+}
+
 // ------------------------------------------------ disconnect evidence
 // caller holds StateLock: copy the last commands (oldest first) for "what came right before"
 void NwoaCmdSnapshot(PNWOA_DEVICE Dev, ULONG Why)
@@ -146,6 +293,8 @@ static ULONG ConnectInfo(PNWOA_DEVICE Dev, const WDI_CONNECT_PARAMETERS_CONTAINE
             info |= 1u << 16;
         if (be.ChannelInfo.BandId == WDI_BAND_ID_5000)
             info |= 1u << 17;
+        if (Dev->HaveLastConn && RtlEqualMemory(be.BSSID.Address, Dev->LastConnBssid, 6))
+            info |= 1u << 19;                                  // s258l: same AP as the last association
         NWOA_BSS* cached = (NWOA_BSS*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(NWOA_BSS), NWOA_TAG);
         if (cached) {
             if (NwoaScanCacheFind(Dev, be.BSSID.Address, cached))
@@ -239,6 +388,9 @@ NTSTATUS NwoaWifiSetCapabilities(PNWOA_DEVICE Dev)
     static const UCHAR c5[25] = { 36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128,
                                   132, 136, 140, 144, 149, 153, 157, 161, 165 };
     static UINT32 widths[] = { 20 };
+    static UINT32 widths24[] = { 20, 40 };                          // s258m LinkInfoReal: BCM4378 HT40 / VHT80
+    static UINT32 widths5[] = { 20, 40, 80 };
+    BOOLEAN realW = Dev->Cfg.LinkInfoReal != 0;
     for (UCHAR i = 0; i < 13; i++) {
         ch24[i].ChannelNumber = i + 1;
         ch24[i].ChannelCenterFrequency = nb_chan_freq(2, (nb_u8)(i + 1));
@@ -255,16 +407,16 @@ NTSTATUS NwoaWifiSetCapabilities(PNWOA_DEVICE Dev)
     bi[0].ValidPhyTypeList = phy24;
     bi[0].NumValidChannelTypes = ARRAYSIZE(ch24);
     bi[0].ValidChannelTypes = ch24;
-    bi[0].NumChannelWidths = 1;
-    bi[0].ChannelWidthList = widths;
+    bi[0].NumChannelWidths = realW ? ARRAYSIZE(widths24) : 1;
+    bi[0].ChannelWidthList = realW ? widths24 : widths;
     bi[1].BandID = WDI_BAND_ID_5000;
     bi[1].BandState = TRUE;
     bi[1].NumValidPhyTypes = ARRAYSIZE(phy5);
     bi[1].ValidPhyTypeList = phy5;
     bi[1].NumValidChannelTypes = ARRAYSIZE(ch5);
     bi[1].ValidChannelTypes = ch5;
-    bi[1].NumChannelWidths = 1;
-    bi[1].ChannelWidthList = widths;
+    bi[1].NumChannelWidths = realW ? ARRAYSIZE(widths5) : 1;
+    bi[1].ChannelWidthList = realW ? widths5 : widths;
     WIFI_BAND_CAPABILITIES bc;
     RtlZeroMemory(&bc, sizeof(bc));
     bc.Size = sizeof(bc);
@@ -475,12 +627,22 @@ static void JobScanStart(PNWOA_DEVICE Dev)
     }
 }
 
+// s258m: per scan completion a numbers-only record (NwoaScanDiag): is the connected BSS in this
+// scan, its RSSI rank among the same-SSID entries, the strongest other one, firmware GET_RSSI.
+// ScanReportConnectedOnly (H1 test) 1/2 changes what a scan made while connected reports; a
+// connected BSS the scan did not see is then added from the association beacon (CachedInformation 1).
+// BssAgeInfo adds WDI_TLV_BSS_ENTRY_AGE_INFO (KeQuerySystemTime of the last sighting, live).
 static void JobScanDone(PNWOA_DEVICE Dev)
 {
     ULONG count = 0;
     KIRQL irql;
+    NWOA_SCANDIAG sd;
+    BOOLEAN conn = Dev->Connected;
+    UCHAR cur[6];
+    RtlZeroMemory(&sd, sizeof(sd));
+    RtlCopyMemory(cur, Dev->CurBssid, 6);
     NWOA_BSS* snap = (NWOA_BSS*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(NWOA_BSS) * NWOA_MAX_BSS, NWOA_TAG);
-    PUCHAR bodies = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, (SIZE_T)NWOA_MAX_BSS * (NWOA_BSS_IE_MAX + 12), NWOA_TAG);
+    PUCHAR bodies = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, (SIZE_T)(NWOA_MAX_BSS + 1) * (NWOA_BSS_IE_MAX + 12), NWOA_TAG);
     if (snap && bodies) {
         KeAcquireSpinLock(&Dev->StateLock, &irql);
         for (int i = 0; i < NWOA_MAX_BSS; i++)
@@ -492,24 +654,107 @@ static void JobScanDone(PNWOA_DEVICE Dev)
     NwoaDiagDword(Dev, L"NwoaLastScanBss", count);
     NwoaDiagDword(Dev, L"NwoaLastScanStatus", (ULONG)Dev->ScanStatus);
     NwoaDiagDword(Dev, L"NwoaLastScanEvents", Dev->ScanEvents);
-    if (count) {
-        WDI_BSS_ENTRY_CONTAINER* e = new WDI_BSS_ENTRY_CONTAINER[count];
-        if (e) {
-            for (ULONG i = 0; i < count; i++) {
-                PUCHAR body = bodies + (SIZE_T)i * (NWOA_BSS_IE_MAX + 12);
-                snap[i].B.ies = snap[i].Ies;
-                ULONG bl = nb_bss_probe_body(&snap[i].B, body, NWOA_BSS_IE_MAX + 12);
-                RtlCopyMemory(e[i].BSSID.Address, snap[i].B.bssid, 6);
-                e[i].Optional.ProbeResponseFrame_IsPresent = 1;
-                e[i].ProbeResponseFrame.SimpleAssign(body, bl);
-                e[i].SignalInfo.RSSI = snap[i].B.rssi;
-                e[i].SignalInfo.LinkQuality = LinkQuality(snap[i].B.rssi);
-                e[i].ChannelInfo.ChannelNumber = snap[i].B.channel;
-                e[i].ChannelInfo.BandId = WdiBand(snap[i].B.band);
+
+    // ---- diagnostics
+    int curIdx = -1;
+    sd.Ms = NowMs();
+    sd.Trigger = Dev->ScanTrigger;
+    sd.Directed = Dev->ScanDirected;
+    sd.Conn = conn ? 1 : 0;
+    sd.Entries = (UCHAR)min(count, 255u);
+    sd.Status = (USHORT)Dev->ScanStatus;
+    if (conn) {
+        ULONG v = 0;
+        if (NT_SUCCESS(NwoaGetInt(Dev, NB_C_GET_RSSI, &v)) && (LONG)v < 0 && (LONG)v > -120)
+            sd.FwRssi = (SHORT)(LONG)v;
+        for (ULONG i = 0; i < count; i++)
+            if (RtlEqualMemory(snap[i].B.bssid, cur, 6)) { curIdx = (int)i; break; }
+    }
+    {
+        int same = 0, better = 0, other = -1;
+        BOOLEAN bySsid = Dev->Conn.SsidLen != 0;
+        for (ULONG i = 0; i < count; i++) {
+            BOOLEAN s2 = !bySsid || (snap[i].B.ssid_len == Dev->Conn.SsidLen &&
+                                     RtlEqualMemory(snap[i].B.ssid, Dev->Conn.Ssid, Dev->Conn.SsidLen));
+            if (!s2) continue;
+            same++;
+            if ((int)i == curIdx) continue;
+            if (curIdx >= 0 && snap[i].B.rssi > snap[curIdx].B.rssi) better++;
+            if (other < 0 || snap[i].B.rssi > snap[other].B.rssi) other = (int)i;
+        }
+        sd.SameSsid = (UCHAR)min(same, 255);
+        if (other >= 0) { sd.OtherRssi = snap[other].B.rssi; sd.OtherBand = snap[other].B.band; }
+        if (curIdx >= 0) {
+            const nb_bss* b = &snap[curIdx].B;
+            sd.Present = 1;
+            sd.Rank = (UCHAR)min(better + 1, 255);
+            sd.Rssi = b->rssi;
+            sd.Channel = b->channel;
+            sd.Band = b->band;
+            sd.Bw = b->bw_mhz;
+            sd.IeLen = (USHORT)b->ies_len;
+            sd.Cap = b->capability;
+        }
+    }
+
+    // ---- what to report
+    ULONG mode = (conn && Dev->Cfg.ScanReportConnectedOnly <= 2) ? Dev->Cfg.ScanReportConnectedOnly : 0;
+    BOOLEAN synth = mode != 0 && curIdx < 0 && conn && Dev->Conn.BeaconLen >= 12 && bodies != NULL;
+    ULONG nrep = 0;
+    WDI_BSS_ENTRY_CONTAINER* e = (count || synth) ? new WDI_BSS_ENTRY_CONTAINER[count + 1] : NULL;
+    if (e) {
+        LARGE_INTEGER sys;
+        ULONG64 inow = KeQueryInterruptTime();
+        KeQuerySystemTime(&sys);
+        for (ULONG i = 0; i < count; i++) {
+            if (mode == 1 && (int)i != curIdx)
+                continue;                                         // H1: only the connected BSS
+            PUCHAR body = bodies + (SIZE_T)nrep * (NWOA_BSS_IE_MAX + 12);
+            WDI_BSS_ENTRY_CONTAINER* x = &e[nrep];
+            snap[i].B.ies = snap[i].Ies;
+            ULONG bl = nb_bss_probe_body(&snap[i].B, body, NWOA_BSS_IE_MAX + 12);
+            RtlCopyMemory(x->BSSID.Address, snap[i].B.bssid, 6);
+            x->Optional.ProbeResponseFrame_IsPresent = 1;
+            x->ProbeResponseFrame.SimpleAssign(body, bl);
+            x->SignalInfo.RSSI = snap[i].B.rssi;
+            x->SignalInfo.LinkQuality = LinkQuality(snap[i].B.rssi);
+            x->ChannelInfo.ChannelNumber = snap[i].B.channel;
+            x->ChannelInfo.BandId = WdiBand(snap[i].B.band);
+            if (Dev->Cfg.BssAgeInfo) {
+                ULONG64 age = inow > snap[i].SeenTime ? inow - snap[i].SeenTime : 0;
+                x->Optional.EntryAgeInfo_IsPresent = 1;
+                x->EntryAgeInfo.HostTimeStamp = (UINT64)sys.QuadPart - age;
+                x->EntryAgeInfo.CachedInformation = FALSE;
             }
+            nrep++;
+        }
+        if (synth) {
+            // the connected BSS was not in this scan: its association beacon/probe body, last RSSI
+            PUCHAR body = bodies + (SIZE_T)nrep * (NWOA_BSS_IE_MAX + 12);
+            WDI_BSS_ENTRY_CONTAINER* x = &e[nrep];
+            ULONG bl = min(Dev->Conn.BeaconLen, (ULONG)(NWOA_BSS_IE_MAX + 12));
+            int rssi = Dev->RssiLast < 0 ? (int)Dev->RssiLast : (sd.FwRssi ? sd.FwRssi : -60);
+            RtlCopyMemory(body, Dev->Conn.Beacon, bl);
+            RtlCopyMemory(x->BSSID.Address, cur, 6);
+            x->Optional.ProbeResponseFrame_IsPresent = 1;
+            x->ProbeResponseFrame.SimpleAssign(body, bl);
+            x->SignalInfo.RSSI = rssi;
+            x->SignalInfo.LinkQuality = LinkQuality(rssi);
+            x->ChannelInfo.ChannelNumber = Dev->Conn.Channel;
+            x->ChannelInfo.BandId = WdiBand(Dev->Conn.Band);
+            if (Dev->Cfg.BssAgeInfo) {
+                x->Optional.EntryAgeInfo_IsPresent = 1;
+                x->EntryAgeInfo.HostTimeStamp = (UINT64)sys.QuadPart;
+                x->EntryAgeInfo.CachedInformation = TRUE;
+            }
+            nrep++;
+            sd.Synth = 1;
+            InterlockedIncrement(&Dev->CntScanSynth);
+        }
+        if (nrep) {
             WDI_INDICATION_BSS_ENTRY_LIST_PARAMETERS p;
             p.Optional.DeviceDescriptor_IsPresent = 1;
-            p.DeviceDescriptor.SimpleAssign(e, count);
+            p.DeviceDescriptor.SimpleAssign(e, nrep);
             UINT8* out = NULL;
             ULONG outLen = 0;
             NDIS_STATUS ns = GenerateWdiIndicationBssEntryList(&p, 0, &Dev->Tlv, &outLen, &out);
@@ -520,11 +765,17 @@ static void JobScanDone(PNWOA_DEVICE Dev)
                 FreeGenerated(out);
             }
             p.DeviceDescriptor.SimpleAssign(NULL, 0);
-            for (ULONG i = 0; i < count; i++)
-                e[i].ProbeResponseFrame.SimpleAssign(NULL, 0);
-            delete[] e;
         }
+        for (ULONG i = 0; i < nrep; i++)
+            e[i].ProbeResponseFrame.SimpleAssign(NULL, 0);
+        delete[] e;
     }
+    sd.Reported = (UCHAR)min(nrep, 255u);
+    KeAcquireSpinLock(&Dev->StateLock, &irql);
+    Dev->ScanDiag[Dev->ScanDiagNext % NWOA_SCANDIAG_N] = sd;
+    Dev->ScanDiagNext++;
+    Dev->LastScanDone = KeQueryInterruptTime();
+    KeReleaseSpinLock(&Dev->StateLock, irql);
     if (snap) ExFreePoolWithTag(snap, NWOA_TAG);
     if (bodies) ExFreePoolWithTag(bodies, NWOA_TAG);
     // escan finished (SUCCESS / ABORT / timeout): the scan task is complete either way
@@ -577,7 +828,9 @@ static void IndicateAssocResult(PNWOA_DEVICE Dev, ULONG AssocStatus, ULONG Statu
     r->AssociationResultParameters.MulticastMgmtCipherAlgorithm = WDI_CIPHER_ALGO_NONE;
     r->AssociationResultParameters.FourAddressSupported = FALSE;
     r->AssociationResultParameters.PortAuthorized = FALSE;            // the OS supplicant runs the 4-way handshake
-    r->AssociationResultParameters.WMMQoSEnabled = FALSE;             // data path is 802.3 without QoS fields
+    // s258m: the association response says whether WMM was negotiated (WmmNegotiated, logged); reporting
+    // it is ReportWmm=1 (default 0 = FALSE as before: the data path was only ever run without WMM)
+    r->AssociationResultParameters.WMMQoSEnabled = (Dev->Cfg.ReportWmm && AssocStatus == WDI_ASSOC_STATUS_SUCCESS) ? Dev->WmmNegotiated : FALSE;
     r->AssociationResultParameters.DSInfo = WDI_DS_UNKNOWN;
     r->AssociationResultParameters.BandID = WdiBand(c->Band);
     if (ReqLen) {
@@ -617,6 +870,14 @@ static void IndicateLinkState(PNWOA_DEVICE Dev, int Rssi)
     WDI_INDICATION_LINK_STATE_CHANGE_PARAMETERS p;
     WDI_LINK_INFO_CONTAINER* li = new WDI_LINK_INFO_CONTAINER[1];
     ULONG kbps = c->Band == 5 ? 433000 : 144000;
+    ULONG bw = 20;
+    if (Dev->Cfg.LinkInfoReal) {
+        // s258m: the bandwidth the firmware associated with (chanspec) and its current rate; the old
+        // fixed 20 MHz with 433 Mbps could not both be true (433 Mbps needs VHT80)
+        if (Dev->LinkBwMhz) bw = Dev->LinkBwMhz;
+        if (Dev->LinkRateKbps) kbps = Dev->LinkRateKbps;
+    }
+    Dev->LastLqInd = KeQueryInterruptTime();
     RtlCopyMemory(p.LinkStateChangeParameters.PeerMACAddress.Address, c->Bssid, 6);
     p.LinkStateChangeParameters.TxLinkSpeed = kbps;
     p.LinkStateChangeParameters.RxLinkSpeed = kbps;
@@ -628,7 +889,7 @@ static void IndicateLinkState(PNWOA_DEVICE Dev, int Rssi)
         li->ChannelNumber = c->Channel;
         li->BandId = WdiBand(c->Band);
         li->RSSI = Rssi;
-        li->Bandwidth = 20;
+        li->Bandwidth = bw;
         p.LinkInfo.SimpleAssign(li, 1);
     }
     UINT8* out = NULL;
@@ -740,10 +1001,32 @@ static void JobConnect(PNWOA_DEVICE Dev)
         }
         NwoaDiagDword(Dev, L"NwoaAssocReqIes", reqIe);
         NwoaDiagDword(Dev, L"NwoaAssocRespIes", respIe);
+        {
+            // s258m: WMM parameter element (00-50-F2 type 2) in the response, firmware chanspec and rate
+            static const UCHAR wmm[4] = { 0x00, 0x50, 0xF2, 0x02 };
+            UCHAR cb[8] = { 0 };
+            ULONG rate = 0;
+            Dev->WmmNegotiated = (resp && respLen > 6 && nb_ie_find(resp + 6, respLen - 6, 221, wmm)) ? TRUE : FALSE;
+            Dev->LinkBwMhz = Dev->LinkRateKbps = Dev->FwChanspec = Dev->FwRate500k = 0;
+            if (NT_SUCCESS(NwoaGetVar(Dev, "chanspec", cb, 4))) {
+                nb_u8 ch = 0, bd = 0;
+                nb_u16 w = 0;
+                Dev->FwChanspec = nb_ld32(cb) & 0xFFFF;
+                nb_chanspec_decode((nb_u16)Dev->FwChanspec, Dev->IoType, &ch, &bd, &w);
+                if (bd == c->Band && (w == 20 || w == 40 || w == 80 || w == 160))
+                    Dev->LinkBwMhz = w;
+            }
+            if (NT_SUCCESS(NwoaGetInt(Dev, NB_C_GET_RATE, &rate)) && rate > 0 && rate < 20000) {
+                Dev->FwRate500k = rate;
+                Dev->LinkRateKbps = rate * 500;
+            }
+        }
         st = NwoaFlowringCreate(Dev, c->Bssid);
         NwoaDiagDword(Dev, L"NwoaFlowringCreate", (ULONG)st);
         NwoaGetInt(Dev, NB_C_GET_RSSI, &rssi);
         RtlCopyMemory(Dev->CurBssid, c->Bssid, 6);
+        RtlCopyMemory(Dev->LastConnBssid, c->Bssid, 6);
+        Dev->HaveLastConn = TRUE;
         Dev->Connected = TRUE;
         IndicateAssocResult(Dev, WDI_ASSOC_STATUS_SUCCESS, 0, req, reqLen, resp, respLen);
         NwoaReportLink(Dev, TRUE);                             // lets NetAdapterCx create the TX/RX queues
@@ -774,7 +1057,11 @@ static void JobDisconnect(PNWOA_DEVICE Dev)
     BOOLEAN was = Dev->Connected;
     RtlCopyMemory(bssid, Dev->CurBssid, 6);
     QuietDisconnect(Dev, DIS_DISCONNECT);
-    if (was)
+    // OID_WDI_TASK_DISCONNECT lists NDIS_STATUS_WDI_INDICATION_DISASSOCIATION as its unsolicited
+    // indication ("the disconnect may be triggered by a command from the OS").  H3 test: 1 = skip it.
+    if (was && Dev->Cfg.NoDisassocIndOnHostDisconnect)
+        InterlockedIncrement(&Dev->CntDisassocIndSkipped);
+    else if (was)
         IndicateDisassoc(Dev, bssid, WDI_ASSOC_STATUS_DISASSOCIATED_BY_HOST);
     NwoaDiagEvents(Dev);
     NwoaSetStage(Dev, "disconnected", STATUS_SUCCESS);
@@ -866,6 +1153,12 @@ static void JobKeys(PNWOA_DEVICE Dev)
     RtlSecureZeroMemory(Dev->Keys, sizeof(Dev->Keys));
     Dev->NumKeys = 0;
     Dev->KeyRequest = NULL;
+    if (req && Dev->KeyDiagNext) {
+        KIRQL irql;
+        KeAcquireSpinLock(&Dev->StateLock, &irql);
+        Dev->KeyDiag[(Dev->KeyDiagNext - 1) % NWOA_KEYDIAG_N].Status = (ULONG)st;   // final status of this request
+        KeReleaseSpinLock(&Dev->StateLock, irql);
+    }
     if (req)
         M3(req, st);
 }
@@ -919,7 +1212,7 @@ void NwoaEvtWork(WDFWORKITEM Work)
         if (j & JOB_CONNECT) JobConnect(Dev);
         if (j & JOB_SCAN_START) JobScanStart(Dev);
         if (j & JOB_SCAN_DONE) JobScanDone(Dev);
-        if (j & JOB_DIAG) { LinkQualityTick(Dev); NwoaDiagCounters(Dev); if (Dev->Dead) NwoaDiagConsole(Dev); }
+        if (j & JOB_DIAG) { SampleTick(Dev); LinkQualityTick(Dev); NwoaDiagCounters(Dev); if (Dev->Dead) NwoaDiagConsole(Dev); }
     }
 }
 
@@ -950,6 +1243,68 @@ void NwoaWifiPowerDown(PNWOA_DEVICE Dev)
         Dev->NumKeys = 0;
         M3(r, STATUS_DEVICE_NOT_READY);
     }
+}
+
+// ------------------------------------------------ WDI_GET_STATISTICS (s258l)
+// OID_WDI_GET_STATISTICS (message 34): "requests that the IHV component returns MAC and PHY layer
+// statistics"; scope port, normal execution time 1 s.  Both result TLVs (WDI_TLV_MAC_STATISTICS
+// per peer, WDI_TLV_PHY_STATISTICS per port) are listed as required, multiple instances allowed
+// (Microsoft Learn, netcx/oid-wdi-get-statistics).  Up to s258k the driver answered
+// STATUS_NOT_SUPPORTED to every one (hardware log 2026-11-19: about every 60 s, plus one off the
+// 60 s grid 40-54 s after each in-connection scan, right before three of four WDI_TASK_DISCONNECTs).
+// Layout follows the Microsoft WDI sample Wdi_Get_Statistics (network/wlan/WDI/PLATFORM/NDIS6):
+// connected = entry 0 for the AP + entry 1 for broadcast, one PHY entry; not connected = one
+// broadcast entry.  The numbers are the driver's own data-path counters (firmware counters are
+// not read), so the retry / ACK / FCS fields stay 0.  The TLVs go after the request's own
+// WDI_MESSAGE_HEADER; BytesWritten = header + TLVs (WiFiCx sample WifiIhvGetSupportedDeviceServices).
+static NTSTATUS StatsReply(PNWOA_DEVICE Dev, PUCHAR Buf, ULONG OutLen, ULONG* Written, ULONG* Needed)
+{
+    static const UCHAR bcast[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+    WDI_GET_STATISTICS_PARAMETERS p;
+    WDI_MAC_STATISTICS_CONTAINER mac[2];
+    WDI_PHY_STATISTICS_CONTAINER phy[1];
+    BOOLEAN conn = Dev->Connected;
+    ULONG nmac = 0;
+    UINT64 rx = (UINT64)(ULONG)Dev->CntRx, tx = (UINT64)(ULONG)Dev->CntTxStatus;
+    UINT64 txFail = (UINT64)(ULONG)Dev->CntTxDrop;
+
+    *Written = sizeof(WDI_MESSAGE_HEADER);
+    *Needed = 0;
+    if (conn) {
+        RtlCopyMemory(mac[0].MACAddress.Address, Dev->CurBssid, 6);
+        mac[0].TransmittedFrameCount = tx;
+        mac[0].ReceivedFrameCount = rx;
+        mac[0].DecryptSuccessCount = Dev->PtkInstalled ? rx : 0;
+        nmac = 1;
+    }
+    RtlCopyMemory(mac[nmac].MACAddress.Address, bcast, 6);
+    nmac++;
+    phy[0].PhyType = (conn && Dev->Conn.Band == 5) ? WDI_PHY_TYPE_VHT : WDI_PHY_TYPE_HT;
+    phy[0].TransmittedFrameCount = tx;
+    phy[0].TransmittedFragmentCount = tx;
+    phy[0].FailedCount = txFail;
+    phy[0].ReceivedFrameCount = rx;
+    phy[0].ReceivedFragmentCount = rx;
+    p.PeerMACStatistics.SimpleAssign(mac, nmac);
+    p.PhyStatistics.SimpleAssign(phy, 1);
+
+    UINT8* out = NULL;
+    ULONG len = 0;
+    NDIS_STATUS ns = GenerateWdiGetStatisticsFromIhv(&p, 0, &Dev->Tlv, &len, &out);
+    p.PeerMACStatistics.SimpleAssign(NULL, 0);
+    p.PhyStatistics.SimpleAssign(NULL, 0);
+    if (ns != NDIS_STATUS_SUCCESS || !out)
+        return STATUS_UNSUCCESSFUL;
+    NTSTATUS st = STATUS_SUCCESS;
+    *Needed = sizeof(WDI_MESSAGE_HEADER) + len;
+    if (!Buf || OutLen < *Needed) {
+        st = STATUS_BUFFER_OVERFLOW;
+    } else {
+        RtlCopyMemory(Buf + sizeof(WDI_MESSAGE_HEADER), out, len);   // keep the request's header
+        *Written = *Needed;
+    }
+    FreeGenerated(out);
+    return st;
 }
 
 // -------------------------------------------------------- command entry
@@ -1130,6 +1485,9 @@ void NwoaEvtWifiSendCommand(WDFDEVICE Device, WIFIREQUEST Request)
             RtlCopyMemory(Dev->ScanSsid, p.SSIDList.pElements[0].pElements, Dev->ScanSsidLen);
         }
         info = Dev->ScanSsidLen ? 1 : 0;                       // 1 = directed scan
+        info |= ((ULONG)p.ScanModeParameters.ScanTrigger & 0xF) << 4;   // s258l: WDI_SCAN_TRIGGER
+        Dev->ScanTrigger = (UCHAR)p.ScanModeParameters.ScanTrigger;     // s258m: for NwoaScanDiag
+        Dev->ScanDirected = Dev->ScanSsidLen ? 1 : 0;
         CleanupParsedWdiTaskScan(&p);
         TaskBegin(&Dev->ScanTask, id, WDI_INDICATION_SCAN_COMPLETE, hdr);
         DONE(STATUS_SUCCESS);
@@ -1141,6 +1499,7 @@ void NwoaEvtWifiSendCommand(WDFDEVICE Device, WIFIREQUEST Request)
         if (Dev->ConnTask.Active) { DONE(STATUS_DEVICE_BUSY); return; }
         if (ParseWdiTaskConnect(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { DONE(STATUS_INVALID_PARAMETER); return; }
         info = ConnectInfo(Dev, p.ConnectParameters, p.PreferredBSSEntryList);
+        ConnDiagRecord(Dev, id, p.ConnectParameters, p.PreferredBSSEntryList);
         if (Dev->Connected)
             InterlockedIncrement(&Dev->CntConnWhileConn);
         ParseConnect(Dev, p.ConnectParameters, p.PreferredBSSEntryList, &st);
@@ -1159,6 +1518,7 @@ void NwoaEvtWifiSendCommand(WDFDEVICE Device, WIFIREQUEST Request)
         if (Dev->ConnTask.Active) { DONE(STATUS_DEVICE_BUSY); return; }
         if (ParseWdiTaskRoam(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { DONE(STATUS_INVALID_PARAMETER); return; }
         info = ConnectInfo(Dev, p.ConnectParameters, p.PreferredBSSEntryList);
+        ConnDiagRecord(Dev, id, p.ConnectParameters, p.PreferredBSSEntryList);
         if (Dev->Cfg.RoamStay && Dev->Connected && (info & (1u << 16))) {
             CleanupParsedWdiTaskRoam(&p);
             TaskBegin(&Dev->ConnTask, id, WDI_INDICATION_ROAM_COMPLETE, hdr);
@@ -1179,11 +1539,37 @@ void NwoaEvtWifiSendCommand(WDFDEVICE Device, WIFIREQUEST Request)
     }
     case WDI_TASK_DISCONNECT: {
         WDI_TASK_DISCONNECT_PARAMETERS p;
+        NWOA_DISCDIAG dd;
+        RtlZeroMemory(&dd, sizeof(dd));
         if (ParseWdiTaskDisconnect(tlvLen, tlv, &Dev->Tlv, &p) == NDIS_STATUS_SUCCESS) {
             info = p.DisconnectParameters.Disassociation80211Reason;
+            dd.Reason = p.DisconnectParameters.Disassociation80211Reason;
+            if (Dev->Connected && RtlEqualMemory(p.DisconnectParameters.MacAddress.Address, Dev->CurBssid, 6)) {
+                info |= 1u << 16;                              // s258l: the peer is the current AP
+                dd.PeerCur = 1;
+            }
             CleanupParsedWdiTaskDisconnect(&p);
         } else {
             info = 0xFFFF;
+            dd.Reason = 0xFFFF;
+        }
+        {
+            // s258m: what the link looked like when Windows decided to disconnect
+            KIRQL irql;
+            ULONG64 now = KeQueryInterruptTime();
+            dd.Ms = (ULONG)(now / 10000);
+            dd.PortId = (USHORT)hdr->PortId;
+            dd.Conn = Dev->Connected ? 1 : 0;
+            KeAcquireSpinLock(&Dev->StateLock, &irql);
+            dd.SinceScanMs = SinceMs(now, Dev->LastScanDone);
+            dd.SinceRxMs = SinceMs(now, Dev->LastRxTime);
+            dd.SinceTxMs = SinceMs(now, Dev->LastTxTime);
+            dd.SinceTxDoneMs = SinceMs(now, Dev->LastTxDoneTime);
+            dd.SinceLqMs = SinceMs(now, Dev->LastLqInd);
+            Window10(Dev, &dd);
+            Dev->DiscDiag[Dev->DiscDiagNext % NWOA_DISCDIAG_N] = dd;
+            Dev->DiscDiagNext++;
+            KeReleaseSpinLock(&Dev->StateLock, irql);
         }
         TaskBegin(&Dev->DiscTask, id, WDI_INDICATION_DISCONNECT_COMPLETE, hdr);
         DONE(STATUS_SUCCESS);
@@ -1213,11 +1599,13 @@ void NwoaEvtWifiSendCommand(WDFDEVICE Device, WIFIREQUEST Request)
             WDI_SET_ADD_CIPHER_KEYS_PARAMETERS p;
             if (ParseWdiSetAddCipherKeys(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { DONE(STATUS_INVALID_PARAMETER); return; }
             ParseKeys(Dev, &p, NULL, &st);
+            KeyDiagRecord(Dev, &p, NULL, st);                  // s258m: cipher numbers, never key data
             CleanupParsedWdiSetAddCipherKeys(&p);
         } else {
             WDI_SET_DELETE_CIPHER_KEYS_PARAMETERS p;
             if (ParseWdiSetDeleteCipherKeys(tlvLen, tlv, &Dev->Tlv, &p) != NDIS_STATUS_SUCCESS) { DONE(STATUS_INVALID_PARAMETER); return; }
             ParseKeys(Dev, NULL, &p, &st);
+            KeyDiagRecord(Dev, NULL, &p, st);
             CleanupParsedWdiSetDeleteCipherKeys(&p);
         }
         info = Dev->NumKeys;                                   // key count only, never key data
@@ -1230,6 +1618,25 @@ void NwoaEvtWifiSendCommand(WDFDEVICE Device, WIFIREQUEST Request)
         CmdRecord(Dev, id, STATUS_PENDING, info);
         Dev->KeyRequest = Request;                            // completed by JobKeys
         NwoaQueueJob(Dev, JOB_KEYS);
+        return;
+    }
+    case WDI_GET_STATISTICS: {
+        if (!Dev->Cfg.StatsReply) { DONE(STATUS_NOT_SUPPORTED); return; }   // StatsReply=0: as s258k
+        ULONG written = sizeof(WDI_MESSAGE_HEADER), need = 0;
+        st = StatsReply(Dev, buf, outLen, &written, &need);
+        info = NT_SUCCESS(st) ? written : need;               // bytes, no counter values
+        Dev->StatsLastBytes = info;
+        Dev->StatsLastStatus = (ULONG)st;
+        if (st == STATUS_BUFFER_OVERFLOW) {
+            InterlockedIncrement(&Dev->CntStatsSmall);
+            WifiRequestSetBytesNeeded(Request, need);
+        } else if (NT_SUCCESS(st)) {
+            InterlockedIncrement(&Dev->CntStatsOk);
+        } else {
+            InterlockedIncrement(&Dev->CntStatsFail);
+        }
+        CmdRecord(Dev, id, st, info);
+        WifiRequestComplete(Request, st, NT_SUCCESS(st) ? written : sizeof(WDI_MESSAGE_HEADER));
         return;
     }
     default:

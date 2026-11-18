@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""NWOAS S264 hardware step (b): the C launcher starts the guest; the MacBook only watches.
+
+Run ONLY through s264-launch-watch.sh.  The MacBook
+  1. checks the hypervisor is S264 (QUERY),
+  2. uploads the payload into the Python heap range (below guest RAM),
+  3. sends ONE request: P_HV_NWOAS_S264 LAUNCH (cfg, out).  The C code then does what
+     run_guest.py + the S259 modules did (hv_init, maps, ADT, boot args, NVMe, AGX, ...)
+     and enters the guest; the request returns only when the guest exits or on an error.
+While the request is blocked, any exception or event the hypervisor still forwards to the
+MacBook is served by the stock proxyclient HV handlers AND counted: the pass criterion is
+"0 forwarded events up to the Windows desktop" (NS2 transport is absent in this mode).
+HARDWARE-UNVERIFIED tool.
+"""
+import argparse
+import collections
+import struct
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import s264_common as C  # noqa: E402
+import s264_pyref as R  # noqa: E402
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--payload", type=Path, required=True)
+    ap.add_argument("--out", type=Path, required=True)
+    a = ap.parse_args()
+    a.out.mkdir(parents=True, exist_ok=False)
+    payload = a.payload.read_bytes()
+
+    from m1n1.proxy import UartInterface, M1N1Proxy, START, EXC, EVENT
+    from m1n1.proxyutils import ProxyUtils, bootstrap_port
+    from m1n1.hv import HV
+    from m1n1.hv.types import HV_EVENT
+    from m1n1.adt import load_adt
+    from m1n1 import trace
+
+    iface = UartInterface()
+    p = M1N1Proxy(iface, debug=False)
+    bootstrap_port(iface, p)
+    u = ProxyUtils(p, heap_size=768 * 1024 * 1024)
+    q = p.request(C.P_HV_NWOAS_S264, 0)
+    if q != C.S264_QUERY_MAGIC:
+        raise SystemExit(f"STOP: running hypervisor is not S264 (query {q:#x}); nothing done")
+
+    # Python heap allocations grow from heap_base; the C launcher's scratch (ADT assembly,
+    # NVMe/audio buffers) is in the top 8 MiB of the same range: keep the payload far below.
+    size = (len(payload) + 0x3fff) & ~0x3fff
+    buf = u.memalign(0x4000, size)
+    assert buf + size < u.heap_top - 0x1000000, "payload buffer too close to the C scratch area"
+    print(f"[S264-watch] uploading payload {len(payload)} B to {buf:#x}", flush=True)
+    u.compressed_writemem(buf, payload, True)
+    for off in (0, len(payload) // 2 & ~0xfff, (len(payload) - 0x1000) & ~0xfff):
+        if iface.readmem(buf + off, 0x1000) != payload[off:off + 0x1000]:
+            raise SystemExit(f"STOP: payload read-back mismatch at +{off:#x}")
+    cfg = C.pack_config(payload_ptr=buf, payload_size=len(payload))
+    cfg_buf = u.memalign(0x4000, 0x4000)
+    out_size = 0x600000
+    out_buf = u.memalign(0x4000, out_size)
+    iface.writemem(cfg_buf, cfg)
+
+    # Proxyclient HV object WITHOUT HV.init() (the C launcher does hv_init and all setup):
+    # only the host-side state the stock handlers read.
+    hv = HV(iface, p, u)
+    hv.adt = load_adt(u.get_adt())
+    hv.iodev = p.iodev_whoami()
+    hv.tba = u.ba.copy()
+    hv.device_addr_tbl = hv.adt.build_addr_lookup()
+    hv.print_tracer = trace.PrintTracer(hv, hv.device_addr_tbl)
+    hv._split_console = True
+    hv.started = True
+    for cpu in hv.adt["cpus"]:
+        if cpu.state == "running":
+            hv.started_cpus[cpu.cpu_id] = (getattr(cpu, "die_id", 0), cpu.cluster_id, cpu.cpu_id)
+            hv.sysreg[cpu.cpu_id] = {}
+            break
+    seen = collections.Counter()
+
+    def counted(name, fn):
+        def h(*args, **kw):
+            seen[name] += 1
+            if seen[name] <= 20:
+                print(f"[S264-watch] forwarded to the MacBook: {name} #{seen[name]}", flush=True)
+            return fn(*args, **kw)
+        return h
+
+    for (start, kind, name, fn) in (
+            (START.EXCEPTION_LOWER, EXC.SYNC, "EXC_SYNC", hv.handle_exception),
+            (START.EXCEPTION_LOWER, EXC.IRQ, "EXC_IRQ", hv.handle_exception),
+            (START.EXCEPTION_LOWER, EXC.FIQ, "EXC_FIQ", hv.handle_exception),
+            (START.EXCEPTION_LOWER, EXC.SERROR, "EXC_SERROR", hv.handle_exception),
+            (START.EXCEPTION, EXC.FIQ, "HV_FIQ", hv.handle_exception),
+            (START.HV, HV_EVENT.USER_INTERRUPT, "USER_INTERRUPT", hv.handle_exception),
+            (START.HV, HV_EVENT.HOOK_VM, "HOOK_VM", hv.handle_exception),
+            (START.HV, HV_EVENT.VTIMER, "VTIMER", hv.handle_exception),
+            (START.HV, HV_EVENT.WDT_BARK, "WDT_BARK", hv.handle_bark),
+            (START.HV, HV_EVENT.CPU_SWITCH, "CPU_SWITCH", hv.handle_exception),
+            (START.HV, HV_EVENT.VIRTIO, "VIRTIO", hv.handle_virtio),
+            (START.HV, HV_EVENT.PANIC, "PANIC", hv.handle_bark),
+            (START.HV, HV_EVENT.NWOAS_NVME_LINK, "NVME_LINK", hv.handle_nwoas_nvme_link)):
+        iface.set_handler(start, kind, counted(name, fn))
+    iface.set_event_handler(EVENT.MMIOTRACE, counted("MMIOTRACE", hv.handle_mmiotrace))
+    iface.set_event_handler(EVENT.IRQTRACE, counted("IRQTRACE", hv.handle_irqtrace))
+
+    print("[S264-watch] sending LAUNCH; from here the C code owns the boot", flush=True)
+    iface.dev.timeout = None
+    ret = p.request(C.P_HV_NWOAS_S264, 2, cfg_buf, len(cfg), out_buf, out_size)
+    sret = ret - (1 << 64) if ret >> 63 else ret
+    print(f"[S264-watch] LAUNCH returned {sret} (1 = guest exited, <0 = failed before entry)", flush=True)
+    try:
+        hdr = iface.readmem(out_buf, C.S264_RESULT_HDR if hasattr(C, "S264_RESULT_HDR") else 160)
+        if struct.unpack_from("<I", hdr)[0] == C.S264_RESULT_MAGIC:
+            n = struct.unpack_from("<I", hdr, 8)[0]
+            blob = iface.readmem(out_buf, n)
+            (a.out / "c-result.bin").write_bytes(blob)
+            res = C.parse_result(blob)
+            for s in res["steps"]:
+                print(f"[S264-watch] step {C.STEP_NAMES.get(s['id'], s['id'])}: "
+                      f"{C.ST_NAMES.get(s['status'], s['status'])} {s['val']:#x}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[S264-watch] could not read the result blob: {e}")
+    print("[S264-watch] forwarded events:", dict(seen) or "none")
+    return 0 if sret == 1 and not seen else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

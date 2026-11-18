@@ -74,6 +74,12 @@ void NwoaReadConfig(PNWOA_DEVICE Dev)
     c->FwRoamOff     = QueryUlong(key, L"FwRoamOff", 1);
     c->LinkQualityUpdates = QueryUlong(key, L"LinkQualityUpdates", 1);
     c->RoamStay      = QueryUlong(key, L"RoamStay", 1);
+    c->StatsReply    = QueryUlong(key, L"StatsReply", 1);
+    c->ScanReportConnectedOnly = QueryUlong(key, L"ScanReportConnectedOnly", 0);   // s258m H1 test
+    c->NoDisassocIndOnHostDisconnect = QueryUlong(key, L"NoDisassocIndOnHostDisconnect", 0);   // s258m H3 test
+    c->BssAgeInfo    = QueryUlong(key, L"BssAgeInfo", 1);
+    c->LinkInfoReal  = QueryUlong(key, L"LinkInfoReal", 1);
+    c->ReportWmm     = QueryUlong(key, L"ReportWmm", 0);
     if (c->SettleMs > 10000)
         c->SettleMs = 10000;
     if (key)
@@ -163,6 +169,92 @@ static void CmdStr(PCHAR B, SIZE_T Cap, const NWOA_CMDREC* R, ULONG N)
     }
 }
 
+// s258m records, oldest first (layouts in nwoa.h; numbers and bits only).
+//  NwoaScanDiag  t<trigger> d<directed> c<connected> n<found>/<reported> p<connected BSS present> s<added from beacon>
+//                r<its RSSI> k<its RSSI rank among same-SSID, 1 best> ss<same-SSID entries> o<strongest other RSSI>/<band>
+//                ch<channel> b<band> bw<MHz> ie<IE bytes> cap<capability hex> fw<firmware RSSI> st<escan status>@ms
+//  NwoaDiscDiag  r<802.11 reason> port<id> cur<peer is current AP> c<connected> scan/rx/tx/txd/lq<ms since last scan
+//                done / RX frame / TX submit / TX completion / link state indication> rx10/tx10/txd10<frames>/span<ms>@ms
+//  NwoaConnDiag  id<6 connect, 100 roam> rr<RoamRequest> rnr<RoamNeededReason> rt<RoamTrigger> h<hidden> mfp bt<BSS transition>
+//                au<first auth> uc<n>:<first>/<mask> mc<first>/<mask> ap<AP RSN pairwise mask>/<group suite>
+//                [<candidate bits hex>/<cached RSSI> ...]@ms   candidate bits: 1 current, 2 last assoc, 4 cached,
+//                8 5 GHz, 10 frame from host, bits 8-15 channel
+//  NwoaKeyDiag   a<1 add, 0 delete> ty<key type> n<elements>/<accepted> ci<first cipher>/<mask> st<status>@ms
+static void NwoaDiagS258m(PNWOA_DEVICE Dev, PCHAR b, SIZE_T cap)
+{
+    KIRQL irql;
+    NWOA_SCANDIAG sd[NWOA_SCANDIAG_N];
+    NWOA_DISCDIAG dd[NWOA_DISCDIAG_N];
+    NWOA_CONNDIAG cd[NWOA_CONNDIAG_N];
+    NWOA_KEYDIAG kd[NWOA_KEYDIAG_N];
+    ULONG ns, nd, nc, nk;
+    KeAcquireSpinLock(&Dev->StateLock, &irql);
+    RtlCopyMemory(sd, Dev->ScanDiag, sizeof(sd)); ns = Dev->ScanDiagNext;
+    RtlCopyMemory(dd, Dev->DiscDiag, sizeof(dd)); nd = Dev->DiscDiagNext;
+    RtlCopyMemory(cd, Dev->ConnDiag, sizeof(cd)); nc = Dev->ConnDiagNext;
+    RtlCopyMemory(kd, Dev->KeyDiag, sizeof(kd));  nk = Dev->KeyDiagNext;
+    KeReleaseSpinLock(&Dev->StateLock, irql);
+    CHAR one[256];
+
+    b[0] = 0;
+    for (ULONG k = ns > NWOA_SCANDIAG_N ? ns - NWOA_SCANDIAG_N : 0; k < ns; k++) {
+        const NWOA_SCANDIAG* r = &sd[k % NWOA_SCANDIAG_N];
+        RtlStringCchPrintfA(one, sizeof(one), "t%u d%u c%u n%u/%u p%u s%u r%d k%u ss%u o%d/%u ch%u b%u bw%u ie%u cap%x fw%d st%u@%lu ",
+            r->Trigger, r->Directed, r->Conn, r->Entries, r->Reported, r->Present, r->Synth, r->Rssi, r->Rank, r->SameSsid,
+            r->OtherRssi, r->OtherBand, r->Channel, r->Band, r->Bw, r->IeLen, r->Cap, r->FwRssi, r->Status, r->Ms);
+        RtlStringCchCatA(b, cap, one);
+    }
+    NwoaDiagSz(Dev, L"NwoaScanDiag", b);
+    NwoaDiagDword(Dev, L"NwoaScanDiagCount", ns);
+
+    b[0] = 0;
+    for (ULONG k = nd > NWOA_DISCDIAG_N ? nd - NWOA_DISCDIAG_N : 0; k < nd; k++) {
+        const NWOA_DISCDIAG* r = &dd[k % NWOA_DISCDIAG_N];
+        RtlStringCchPrintfA(one, sizeof(one), "r%u port%u cur%u c%u scan%lu rx%lu tx%lu txd%lu lq%lu rx10=%ld tx10=%ld txd10=%ld span%lu@%lu ",
+            r->Reason, r->PortId, r->PeerCur, r->Conn, r->SinceScanMs, r->SinceRxMs, r->SinceTxMs, r->SinceTxDoneMs,
+            r->SinceLqMs, r->Rx10, r->Tx10, r->TxDone10, r->SampleSpanMs, r->Ms);
+        RtlStringCchCatA(b, cap, one);
+    }
+    NwoaDiagSz(Dev, L"NwoaDiscDiag", b);
+
+    b[0] = 0;
+    for (ULONG k = nc > NWOA_CONNDIAG_N ? nc - NWOA_CONNDIAG_N : 0; k < nc; k++) {
+        const NWOA_CONNDIAG* r = &cd[k % NWOA_CONNDIAG_N];
+        RtlStringCchPrintfA(one, sizeof(one), "id%u rr%u rnr%lu rt%lu h%u mfp%u bt%u au%lu uc%u:%lu/%lx mc%lu/%lx ap%lx/%lu [",
+            r->Id, r->RoamRequest, r->RoamNeededReason, r->RoamTrigger, r->Hidden, r->Mfp, r->BssTrans, r->Auth0,
+            r->NUc, r->Uc0, r->UcMask, r->Mc0, r->McMask, r->ApPwMask, r->ApGroup);
+        RtlStringCchCatA(b, cap, one);
+        for (ULONG i = 0; i < r->NCand && i < NWOA_CANDMAX; i++) {
+            RtlStringCchPrintfA(one, sizeof(one), "%x/%d ", r->Cand[i], r->CandRssi[i]);
+            RtlStringCchCatA(b, cap, one);
+        }
+        RtlStringCchPrintfA(one, sizeof(one), "n%u]@%lu ", r->NCand, r->Ms);
+        RtlStringCchCatA(b, cap, one);
+    }
+    NwoaDiagSz(Dev, L"NwoaConnDiag", b);
+
+    b[0] = 0;
+    for (ULONG k = nk > NWOA_KEYDIAG_N ? nk - NWOA_KEYDIAG_N : 0; k < nk; k++) {
+        const NWOA_KEYDIAG* r = &kd[k % NWOA_KEYDIAG_N];
+        RtlStringCchPrintfA(one, sizeof(one), "a%u ty%u n%u/%u ci%lu/%lx st%lx@%lu ",
+            r->Add, r->Type, r->Elements, r->Accepted, r->Cipher, r->CipherMask, r->Status, r->Ms);
+        RtlStringCchCatA(b, cap, one);
+    }
+    NwoaDiagSz(Dev, L"NwoaKeyDiag", b);
+
+    RtlStringCchPrintfA(b, cap, "ScanReportConnectedOnly=%lu NoDisassocIndOnHostDisconnect=%lu BssAgeInfo=%lu LinkInfoReal=%lu ReportWmm=%lu",
+        Dev->Cfg.ScanReportConnectedOnly, Dev->Cfg.NoDisassocIndOnHostDisconnect, Dev->Cfg.BssAgeInfo,
+        Dev->Cfg.LinkInfoReal, Dev->Cfg.ReportWmm);
+    NwoaDiagSz(Dev, L"NwoaCfgS258m", b);
+    NwoaDiagDword(Dev, L"NwoaLinkBwMhz", Dev->LinkBwMhz);
+    NwoaDiagDword(Dev, L"NwoaLinkRateKbps", Dev->LinkRateKbps);
+    NwoaDiagDword(Dev, L"NwoaFwChanspec", Dev->FwChanspec);    // firmware chanspec at association (channel + width bits)
+    NwoaDiagDword(Dev, L"NwoaFwRate500k", Dev->FwRate500k);
+    NwoaDiagDword(Dev, L"NwoaWmmNegotiated", Dev->WmmNegotiated);
+    NwoaDiagDword(Dev, L"NwoaCntScanSynth", (ULONG)Dev->CntScanSynth);
+    NwoaDiagDword(Dev, L"NwoaCntDisassocIndSkipped", (ULONG)Dev->CntDisassocIndSkipped);
+}
+
 // Who disconnects: Windows commands (id/connected/M3 status/info@ms, oldest first), a count per
 // command id, every NB_C_DISASSOC we sent (source@ms), every firmware link loss event
 // (type/reason/connected/ms since our disassoc/rssi@ms) and the commands right before the last one.
@@ -247,7 +339,13 @@ void NwoaDiagDisconnect(PNWOA_DEVICE Dev)
     NwoaDiagDword(Dev, L"NwoaCntConnWhileConn", (ULONG)Dev->CntConnWhileConn);
     NwoaDiagDword(Dev, L"NwoaCntD0Entry", (ULONG)Dev->CntD0Entry);
     NwoaDiagDword(Dev, L"NwoaCntD0Exit", (ULONG)Dev->CntD0Exit);
+    NwoaDiagDword(Dev, L"NwoaCntStatsOk", (ULONG)Dev->CntStatsOk);
+    NwoaDiagDword(Dev, L"NwoaCntStatsFail", (ULONG)Dev->CntStatsFail);
+    NwoaDiagDword(Dev, L"NwoaCntStatsSmall", (ULONG)Dev->CntStatsSmall);
+    NwoaDiagDword(Dev, L"NwoaStatsLastBytes", Dev->StatsLastBytes);
+    NwoaDiagDword(Dev, L"NwoaStatsLastStatus", Dev->StatsLastStatus);
     NwoaDiagDword(Dev, L"NwoaNowMs", (ULONG)(KeQueryInterruptTime() / 10000));
+    NwoaDiagS258m(Dev, b, cap);
     ExFreePoolWithTag(rec, NWOA_TAG);
     ExFreePoolWithTag(b, NWOA_TAG);
 }

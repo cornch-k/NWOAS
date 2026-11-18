@@ -71,7 +71,11 @@ typedef struct _NWOA_EVREC {
 // WDI command record (no SSID/BSSID/key values).  Info for WDI_TASK_CONNECT / WDI_TASK_ROAM:
 //   bit0 RoamRequest, bits4-7 RoamTrigger, bits8-15 RoamNeededReason, bit16 first preferred BSSID is
 //   the current BSSID, bit17 first preferred entry is 5 GHz, bit18 it is in the scan cache,
-//   bits24-31 number of preferred entries.  WDI_TASK_DISCONNECT: 802.11 reason.  Radio: software state.
+//   bit19 it is the BSSID of the last association (s258l), bits24-31 number of preferred entries.
+//   WDI_TASK_DISCONNECT: bits0-15 802.11 reason, bit16 the peer is the current AP (s258l).
+//   WDI_TASK_SCAN: bit0 directed, bits4-7 WDI_SCAN_TRIGGER (s258l).  Radio: software state.
+//   WDI_GET_STATISTICS: bytes written (or needed) for the answer (s258l).
+//   s258m: more per-command detail in NwoaScanDiag / NwoaDiscDiag / NwoaConnDiag / NwoaKeyDiag (diag.cpp).
 typedef struct _NWOA_CMDREC {
     ULONG  Ms;
     USHORT Id;
@@ -83,6 +87,53 @@ typedef struct _NWOA_CMDREC {
 #define NWOA_CMDLOG  32
 #define NWOA_CMDHIST 40
 #define NWOA_CMDSNAP 10
+
+// s258m diagnostic records (numbers and bits only: no SSID, BSSID, MAC or key values)
+typedef struct _NWOA_SCANDIAG {
+    ULONG Ms;                   // scan completion
+    UCHAR Trigger, Conn, Present, Synth;   // WDI_SCAN_TRIGGER, connected, connected BSS found, added from beacon
+    UCHAR Entries, Reported, SameSsid, Rank;   // BSS found, indicated, same-SSID entries, RSSI rank of the connected BSS (1 = best)
+    SHORT Rssi, OtherRssi, FwRssi;   // connected BSS / strongest other same-SSID entry / firmware GET_RSSI (0 = none)
+    UCHAR Channel, Band, OtherBand, Directed;
+    USHORT IeLen, Cap;          // connected BSS IE bytes, capability field
+    USHORT Bw;                  // connected BSS bandwidth from its chanspec (MHz)
+    USHORT Status;              // escan status
+} NWOA_SCANDIAG;
+#define NWOA_SCANDIAG_N 6
+
+typedef struct _NWOA_DISCDIAG {
+    ULONG Ms;
+    USHORT Reason, PortId;      // full Disassociation80211Reason, WDI port id
+    UCHAR PeerCur, Conn, Pad[2];
+    ULONG SinceScanMs, SinceRxMs, SinceTxMs, SinceTxDoneMs, SinceLqMs;   // 0xFFFFFFFF = never
+    LONG Rx10, Tx10, TxDone10;  // frames in the previous ~10 s (from the 2 s samples)
+    ULONG SampleSpanMs;         // time the Rx10/Tx10 window really covers
+} NWOA_DISCDIAG;
+#define NWOA_DISCDIAG_N 4
+
+#define NWOA_CANDMAX 8
+typedef struct _NWOA_CONNDIAG {
+    ULONG Ms;
+    USHORT Id;                  // 6 connect / 100 roam (WDI_TASK_ROAM)
+    UCHAR RoamRequest, Hidden, Mfp, BssTrans, NCand, NUc;
+    ULONG RoamNeededReason, RoamTrigger;
+    ULONG Auth0, Uc0, Mc0;      // first auth / unicast / multicast algorithm the host listed
+    ULONG UcMask, McMask;       // bit n = WDI cipher n (n < 32) of every listed algorithm
+    ULONG ApPwMask, ApGroup;    // RSN IE of the first candidate (from its frame or our cache): pairwise suite mask, group suite
+    USHORT Cand[NWOA_CANDMAX];  // per candidate: bit0 current, 1 last association, 2 in scan cache, 3 5 GHz,
+                                //   4 frame given by the host, bits8-15 channel
+    SHORT CandRssi[NWOA_CANDMAX];   // RSSI from our scan cache (0 = not cached)
+} NWOA_CONNDIAG;
+#define NWOA_CONNDIAG_N 4
+
+typedef struct _NWOA_KEYDIAG {
+    ULONG Ms;
+    UCHAR Add, Type, Elements, Accepted;  // 1 add / 0 delete, WDI_CIPHER_KEY_TYPE of the first element, count, accepted count
+    ULONG Cipher;               // WDI_CIPHER_ALGORITHM of the first element (add)
+    ULONG CipherMask;           // bit n = cipher n of every element
+    ULONG Status;
+} NWOA_KEYDIAG;
+#define NWOA_KEYDIAG_N 8
 
 // who sent NB_C_DISASSOC (NwoaHostDisassoc Src)
 #define DIS_CONNECT     1       // WDI_TASK_CONNECT while connected / joining
@@ -181,6 +232,19 @@ typedef struct _NWOA_CONFIG {
     ULONG  FwRoamOff;           // firmware "roam_off": 1 = the firmware does not roam by itself (default; WDI roams from the host)
     ULONG  LinkQualityUpdates;  // 1 = poll RSSI every 2 s and send LINK_STATE_CHANGE on a 5 point change (default)
     ULONG  RoamStay;            // 1 = WDI_TASK_ROAM to the current AP completes without roaming (default)
+    ULONG  StatsReply;          // 1 = answer WDI_GET_STATISTICS (34) with MAC+PHY statistics TLVs (default, s258l);
+                                //     0 = STATUS_NOT_SUPPORTED as up to s258k
+    // ---- s258m (each 0 = s258l behaviour unless noted)
+    ULONG  ScanReportConnectedOnly; // H1 test.  Scans made while connected: 0 report every BSS (default),
+                                //     1 report only the connected BSS, 2 every BSS and the connected one too.
+                                //     With 1/2 a connected BSS the scan did not find is added from the
+                                //     association beacon (age info "cached").
+    ULONG  NoDisassocIndOnHostDisconnect; // H3 test.  1 = no DISASSOCIATION indication after a
+                                //     WDI_TASK_DISCONNECT (the spec says send one; default 0 sends it)
+    ULONG  BssAgeInfo;          // 1 = BSS entries carry WDI_TLV_BSS_ENTRY_AGE_INFO (default); 0 = as s258l
+    ULONG  LinkInfoReal;        // 1 = link Bandwidth / speed from the firmware chanspec and rate, channel
+                                //     width capability 20/40(/80) (default); 0 = 20 MHz, 433/144 Mbps as s258l
+    ULONG  ReportWmm;           // 1 = WMMQoSEnabled from the association response; 0 = FALSE as s258l (default)
 } NWOA_CONFIG;
 
 typedef struct _NWOA_DEVICE {
@@ -352,6 +416,25 @@ typedef struct _NWOA_DEVICE {
     LONG            RssiLast, RssiMin, RssiMax;
     ULONG           LqReported;
     volatile LONG   CntLinkStateInd, CntRoamStay, CntRoamMove, CntConnWhileConn, CntD0Entry, CntD0Exit;
+    // ---- WDI_GET_STATISTICS (s258l)
+    volatile LONG   CntStatsOk, CntStatsFail, CntStatsSmall;
+    ULONG           StatsLastBytes;     // bytes written for the last answer (header + TLVs)
+    ULONG           StatsLastStatus;
+    UCHAR           LastConnBssid[6];   // BSSID of the last successful association (memory only, never logged)
+    BOOLEAN         HaveLastConn;
+    // ---- s258m diagnostics (under StateLock; written to the registry by the 2 s diag job)
+    UCHAR           ScanTrigger, ScanDirected;
+    ULONG64         LastScanDone, LastRxTime, LastTxTime, LastTxDoneTime, LastLqInd;   // KeQueryInterruptTime, 0 = never
+    struct { ULONG Ms; LONG Rx, Tx, TxDone; } Samp[8];  // counters every diag tick
+    ULONG           SampNext;
+    NWOA_SCANDIAG   ScanDiag[NWOA_SCANDIAG_N];  ULONG ScanDiagNext;
+    NWOA_DISCDIAG   DiscDiag[NWOA_DISCDIAG_N];  ULONG DiscDiagNext;
+    NWOA_CONNDIAG   ConnDiag[NWOA_CONNDIAG_N];  ULONG ConnDiagNext;
+    NWOA_KEYDIAG    KeyDiag[NWOA_KEYDIAG_N];    ULONG KeyDiagNext;
+    ULONG           LinkBwMhz, LinkRateKbps;    // from the firmware at association (0 = unknown)
+    ULONG           FwChanspec, FwRate500k;     // raw values read (diagnostics)
+    BOOLEAN         WmmNegotiated;              // WMM parameter element in the association response
+    volatile LONG   CntScanSynth, CntDisassocIndSkipped;
 
     // ---- statistics
     volatile LONG   CntIsr, CntPoll, CntMsgs, CntEvents, CntRx, CntRxDrop, CntTx, CntTxStatus,

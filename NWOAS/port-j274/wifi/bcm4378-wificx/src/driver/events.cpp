@@ -173,6 +173,7 @@ void NwoaHandleEvent(PNWOA_DEVICE Dev, const UCHAR* Frame, ULONG Len)
         Dev->RxQ[Dev->RxQTail].Len = (USHORT)n;
         Dev->RxQTail = next;
         InterlockedIncrement(&Dev->CntRx);
+        Dev->LastRxTime = KeQueryInterruptTime();
         InterlockedExchange(&Dev->RxNotifyPending, 1);
         break;
     }

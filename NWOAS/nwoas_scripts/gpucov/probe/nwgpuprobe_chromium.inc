@@ -103,7 +103,12 @@ void Outputs(IDXGIAdapter1 *a) {
   for (UINT i = 0;; ++i) {
     IDXGIOutput *o = nullptr;
     HRESULT hr = a->EnumOutputs(i, &o);
-    if (hr == DXGI_ERROR_NOT_FOUND) { Out("chromium output_count=%u", i); if (!i) R("output_enum", E_FAIL, "no outputs"); break; }
+    if (hr == DXGI_ERROR_NOT_FOUND) { Out("chromium output_count=%u", i); if (!i) {
+        // WARP (Microsoft Basic Render Driver) has no display outputs by design.
+        if (g_warp) Out("chromium output_enum hr=0x80004005 no outputs (informational: WARP)");
+        else R("output_enum", E_FAIL, "no outputs");
+      }
+      break; }
     if (FAILED(hr) || !o) { R("output_enum", FAILED(hr) ? hr : E_POINTER); break; }
     DXGI_OUTPUT_DESC d = {};
     o->GetDesc(&d);
@@ -281,27 +286,73 @@ void Swap(DXGI_SWAP_EFFECT effect, DXGI_FORMAT fmt, UINT flags, const char *name
       R(n, hr);
       Rel(s2);
     }
+    // K35 v3 (2772): nwgpuprobe8 called Present1 with a dirty rectangle as
+    // the FIRST present and stopped there. In the Parallels VM (11-19 03:4x)
+    // that call returned 0x887a0001 on the VM's own driver and on WARP too,
+    // and a dirty-rectangle Present1 on FLIP_DISCARD returned it even after
+    // whole frames: DXGI runtime rules, not driver results. Now: three
+    // whole-frame Present calls (counted), then one dirty-rectangle Present1
+    // after them only on FLIP_SEQUENTIAL and SEQUENTIAL (counted; both passed
+    // on the VM driver and WARP); FLIP_DISCARD's and the v8 sequence are
+    // printed as informational lines.
+    const UINT pflags = (flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) ? DXGI_PRESENT_ALLOW_TEARING : 0;
+    int failedFrame = -1;
     for (int frame = 0; frame < 3; ++frame) {
       ID3D11Texture2D *bb = nullptr; ID3D11RenderTargetView *rtv = nullptr;
       hr = sc->GetBuffer(0, IID_PPV_ARGS(&bb));
       if (SUCCEEDED(hr)) hr = d->CreateRenderTargetView(bb, nullptr, &rtv);
       if (SUCCEEDED(hr)) { const float c[4] = {0, 0.5f, 1, 1}; ctx->ClearRenderTargetView(rtv, c); }
       Rel(rtv); Rel(bb);
-      if (FAILED(hr)) break;
+      if (SUCCEEDED(hr)) hr = sc->Present(0, pflags);
+      Pump();
+      if (FAILED(hr)) { failedFrame = frame; break; }
+    }
+    char fx[48];
+    snprintf(fx, sizeof(fx), "failed_frame=%d", failedFrame);
+    snprintf(n, sizeof(n), "swap_%s_present", name);
+    R(n, hr, fx);
+    if (SUCCEEDED(hr) && effect != DXGI_SWAP_EFFECT_DISCARD) {
+      ID3D11Texture2D *bb = nullptr; ID3D11RenderTargetView *rtv = nullptr;
+      hr = sc->GetBuffer(0, IID_PPV_ARGS(&bb));
+      if (SUCCEEDED(hr)) hr = d->CreateRenderTargetView(bb, nullptr, &rtv);
+      if (SUCCEEDED(hr)) { const float c[4] = {1, 0.5f, 0, 1}; ctx->ClearRenderTargetView(rtv, c); }
+      Rel(rtv); Rel(bb);
       RECT dirty = {0, 0, 64, 64};
       DXGI_PRESENT_PARAMETERS pp = {1, &dirty, nullptr, nullptr};
-      UINT pflags = (flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) ? DXGI_PRESENT_ALLOW_TEARING : 0;
-      hr = frame == 0 ? sc->Present1(0, pflags, &pp) : sc->Present(0, pflags);
+      if (SUCCEEDED(hr)) hr = sc->Present1(0, pflags, &pp);
       Pump();
-      if (FAILED(hr)) break;
+      snprintf(n, sizeof(n), "swap_%s_present1_dirty", name);
+      if (effect == DXGI_SWAP_EFFECT_FLIP_DISCARD)
+        Out("chromium %s hr=0x%08lx (informational: DXGI refuses dirty rectangles on FLIP_DISCARD)", n, (unsigned long)hr);
+      else R(n, hr);
     }
-    snprintf(n, sizeof(n), "swap_%s_present", name);
-    R(n, hr);
     hr = sc->ResizeBuffers(0, 300, 150, DXGI_FORMAT_UNKNOWN, flags);
     snprintf(n, sizeof(n), "swap_%s_resize", name);
     R(n, hr);
   }
   Rel(sc);
+  Pump();
+  {
+    // Informational (not counted): the nwgpuprobe8 sequence -- Present1 with
+    // a dirty rectangle as the very first present of a new swap chain -- so
+    // the old 0x887a0001 can be compared across adapters.
+    IDXGISwapChain1 *old = nullptr;
+    HRESULT oh = f->CreateSwapChainForHwnd(d, w, &sd, nullptr, nullptr, &old);
+    if (SUCCEEDED(oh)) {
+      ID3D11Texture2D *bb = nullptr; ID3D11RenderTargetView *rtv = nullptr;
+      oh = old->GetBuffer(0, IID_PPV_ARGS(&bb));
+      if (SUCCEEDED(oh)) oh = d->CreateRenderTargetView(bb, nullptr, &rtv);
+      if (SUCCEEDED(oh)) { const float c[4] = {0, 0.5f, 1, 1}; ctx->ClearRenderTargetView(rtv, c); }
+      Rel(rtv); Rel(bb);
+      RECT dirty = {0, 0, 64, 64};
+      DXGI_PRESENT_PARAMETERS pp = {1, &dirty, nullptr, nullptr};
+      const UINT pf = (flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) ? DXGI_PRESENT_ALLOW_TEARING : 0;
+      if (SUCCEEDED(oh)) oh = old->Present1(0, pf, &pp);
+      Pump();
+    }
+    Out("chromium swap_%s_v8_first_present1_dirty hr=0x%08lx (informational)", name, (unsigned long)oh);
+    Rel(old);
+  }
   DestroyWindow(w);
   Pump();
 }

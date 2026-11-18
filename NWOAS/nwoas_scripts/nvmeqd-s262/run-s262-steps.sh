@@ -21,6 +21,11 @@ job() { python3 -I $ROOT/transport-s123/queue_job.py $L $1 >/dev/null || { say "
   JL=$(iconv -c -f CP949 -t UTF-8 $L/job-$j.log | tr -d '\r'); echo "$JL" | head -c 20000 >> $RES; }
 safety() { local bad=0
   grep -a -q -E 'NWOAS-S262 NVMe QD fault|REFUSED write outside' $LOG && { say "SAFETY: HV fault/refused line"; bad=1; }
+  grep -a -E '\[S262\] NVMe QD (engine|off)' $LOG | tail -1 | sed 's/^/ENGINE: /' | tee -a $RES
+  # g262R: the QD snapshot must come from the job marks, not only the boot mark (g262Q's hook never fired,
+  # so its "safety counters all 0" was read from the boot snapshot only).
+  local nrec; nrec=$(cat $L/nvmeqd.jsonl 2>/dev/null | grep -c .)
+  [ "$nrec" -ge 2 ] || { say "SAFETY: nvmeqd.jsonl has $nrec record(s): job marks not recorded"; bad=1; }
   if [ -s $L/nvmeqd.jsonl ]; then python3 -I $D/nvmeqd_report.py $L/nvmeqd.jsonl | tee -a $RES | tail -4
     python3 -I - $L/nvmeqd.jsonl <<'PY' || bad=1
 import json,sys
@@ -46,5 +51,9 @@ for n in 1 2 3; do q1 || back step4-q1-$n
   boot NWOAS_S262_HV=1 NWOAS_NVME_QD=32 NWOAS_PWR_NVME_SHUT=1 || back boot4-$n
   job $D/jobs/Q2-verify.cmd; echo "$JL" | grep -a -E 'INTEG|verify_rc' | tee -a $RES
   echo "$JL" | grep -a -q 'verify_rc=0' || back step4-q2-$n; safety || back step4-safety-$n; done
-job $D/jobs/Q4-chkdsk.cmd; echo "$JL" | grep -a -E 'chkdsk_rc|DISKEVT|문제|problem|error' | head -20 | tee -a $RES
+job $D/jobs/Q4-chkdsk.cmd; echo "$JL" | grep -a -E 'chkdsk_rc|DISKEVT|BOOT153|문제|problem|error' | head -20 | tee -a $RES
+# g262R: DISKEVT_COUNT counts disk/storport/Ntfs error events only (Kernel-Boot 153 = VBS status, BOOT153_COUNT)
+DE=$(echo "$JL" | sed -n 's/^DISKEVT_COUNT \([0-9]*\).*/\1/p' | tail -1)
+echo "$JL" | grep -a -q 'chkdsk_rc=0' || { say "STEP Q4 FAIL: chkdsk_rc not 0"; back Q4-chkdsk; }
+[ "$DE" = 0 ] || { say "STEP Q4 FAIL: disk error events DISKEVT_COUNT=${DE:-missing}"; back Q4-diskevt; }
 say "ALL STEPS DONE link=$L out=$OUT"

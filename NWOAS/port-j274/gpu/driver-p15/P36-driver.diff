@@ -1,0 +1,52 @@
+diff --git a/drivers/apple-agx/d3d12/agx_d3d12_ddi.cpp b/drivers/apple-agx/d3d12/agx_d3d12_ddi.cpp
+index cb8e101..0b01d78 100644
+--- a/drivers/apple-agx/d3d12/agx_d3d12_ddi.cpp
++++ b/drivers/apple-agx/d3d12/agx_d3d12_ddi.cpp
+@@ -1907,7 +1907,12 @@ static UINT64 TextureBytes(const D3D12DDIARG_CREATERESOURCE_0003 *arg) {
+     }
+     /* C32: 2x/4x multisampled textures have one level */
+     const UINT samples = arg ? arg->SampleDesc.Count : 0u;
+-    if (!arg || arg->ResourceType != D3D12DDI_RT_TEXTURE2D || arg->SampleDesc.Quality ||
++    /* NWOAS-J274 PATCH P36 (2772): D3D12_STANDARD_MULTISAMPLE_PATTERN
++     * (0xffffffff) is quality level 0 on this GPU (D3D standard sample
++     * positions, as in Asahi's u_default_get_sample_position); ANGLE asks for
++     * it through D3D11On12 (Edge --use-angle=d3d11on12 WebGL). */
++    if (!arg || arg->ResourceType != D3D12DDI_RT_TEXTURE2D ||
++        (arg->SampleDesc.Quality && arg->SampleDesc.Quality != 0xffffffffu) ||
+         (samples != 1 && ((samples != 2 && samples != 4) || arg->MipLevels != 1 ||
+                           !AgxD3d12FormatMultisample(arg->Format, samples))) || !arg->Width ||
+         arg->Width > 16384 || !arg->Height || arg->Height > 16384 || !arg->DepthOrArraySize || !arg->MipLevels ||
+diff --git a/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py b/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
+index 881fd4f..f684320 100644
+--- a/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
++++ b/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py
+@@ -5129,7 +5129,17 @@ AgxD3d10ResourceWithinRequiredLimits(
+           ((pCreateResource->SampleDesc.Count == 2 || pCreateResource->SampleDesc.Count == 4) &&
+            pCreateResource->ResourceDimension == D3D10DDIRESOURCE_TEXTURE2D &&
+            pCreateResource->MipLevels == 1)) &&
+-         pCreateResource->SampleDesc.Quality == 0 &&
++         /* NWOAS-J274 PATCH P36 (2772): ANGLE D3D11 (Edge/Chromium WebGL and
++          * its default framebuffer) asks for the standard multisample
++          * pattern, Quality = D3D11_STANDARD_MULTISAMPLE_PATTERN (0xffffffff),
++          * on feature level 10_1+ (Renderer11::getSampleDescQuality). The
++          * runtime passes it to this DDI unchanged (2771 K38t receipt
++          * reject-d3d11-render-target ... ffffff04). The Asahi Gallium
++          * driver's positions are the D3D standard ones
++          * (u_default_get_sample_position), so it is quality level 0 here.
++          * The centre pattern (0xfffffffe) stays refused. */
++         (pCreateResource->SampleDesc.Quality == 0 ||
++          pCreateResource->SampleDesc.Quality == 0xffffffffu) &&
+          pCreateResource->Usage == D3D10_DDI_USAGE_DEFAULT && pCreateResource->MapFlags == 0 &&
+          /* D3D-H5: unordered access with a single-sampled render target */
+          ((pCreateResource->BindFlags & ~D3D11_DDI_BIND_UNORDERED_ACCESS) ==
+@@ -5185,7 +5195,9 @@ AgxD3d10ResourceWithinRequiredLimits(
+           ((pCreateResource->SampleDesc.Count == 2 || pCreateResource->SampleDesc.Count == 4) &&
+            pCreateResource->ResourceDimension == D3D10DDIRESOURCE_TEXTURE2D &&
+            pCreateResource->MipLevels == 1)) &&
+-         pCreateResource->SampleDesc.Quality == 0 &&
++         /* P36: the standard multisample pattern, as for render targets */
++         (pCreateResource->SampleDesc.Quality == 0 ||
++          pCreateResource->SampleDesc.Quality == 0xffffffffu) &&
+          pCreateResource->Usage == D3D10_DDI_USAGE_DEFAULT &&
+          pCreateResource->MapFlags == 0 &&
+          (pCreateResource->BindFlags == D3D10_DDI_BIND_DEPTH_STENCIL ||

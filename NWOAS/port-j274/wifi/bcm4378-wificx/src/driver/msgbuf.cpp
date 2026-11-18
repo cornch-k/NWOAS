@@ -368,6 +368,7 @@ static void OnTxStatus(PNWOA_DEVICE Dev, ULONG ReqId)
         Dev->TxFree[Dev->TxFreeCount++] = slot;
     KeReleaseSpinLock(&Dev->TxLock, irql);
     InterlockedIncrement(&Dev->CntTxStatus);
+    Dev->LastTxDoneTime = KeQueryInterruptTime();          // s258m: NwoaDiscDiag
 }
 
 static void OnRx(PNWOA_DEVICE Dev, const nb_msg* m)
@@ -410,6 +411,7 @@ static void OnRx(PNWOA_DEVICE Dev, const nb_msg* m)
     Dev->RxQ[Dev->RxQTail].Len = m->data_len;
     Dev->RxQTail = next;
     InterlockedIncrement(&Dev->CntRx);
+    Dev->LastRxTime = KeQueryInterruptTime();              // s258m: NwoaDiscDiag
 }
 
 static void Dispatch(PNWOA_DEVICE Dev, const UCHAR* It, ULONG Sz, BOOLEAN* RxQueued, BOOLEAN* TxFreed)
@@ -778,6 +780,7 @@ NTSTATUS NwoaTxFrame(PNWOA_DEVICE Dev, const UCHAR* Eth, ULONG Len)
     }
     InterlockedIncrement(&Dev->CntTx);
     Dev->LastActivity = (LONG64)KeQueryInterruptTime();
+    Dev->LastTxTime = (ULONG64)Dev->LastActivity;          // s258m: NwoaDiscDiag
     if (Dev->PollIdle && Dev->PollRunning && Dev->PollTimer && InterlockedExchange(&Dev->PollIdle, 0))
         WdfTimerStart(Dev->PollTimer, WDF_REL_TIMEOUT_IN_MS(Dev->Cfg.PollIntervalMs));   // wake the poll now
     return STATUS_SUCCESS;

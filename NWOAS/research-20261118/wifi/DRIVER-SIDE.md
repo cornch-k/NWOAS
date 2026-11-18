@@ -63,3 +63,14 @@
 - 고침 2: WDI_TASK_ROAM 처리. s258j는 NOT_SUPPORTED였다. 지금 AP로의 로밍이면 끊지 않고 완료만 보내고(문서: "로밍하지 않고 현재 AP에 머물 수 있으며 그때는 작업만 완료"), 다른 AP면 옛 AP 해제 알림 + join + ROAM_COMPLETE(`RoamStay`, 기본 1).
 - 고침 3: 펌웨어 `roam_off` 1. WDI에서는 로밍을 호스트가 정하므로 펌웨어가 혼자 BSSID를 옮기지 않게 한다(`FwRoamOff`, 기본 1).
 - 이 셋이 250초 주기를 없앤다는 것은 가설이다. 다음 기록으로 (가)/(나)를 가린 뒤 원인에 맞게 다시 고친다.
+
+## s258l (2026-11-19 03:28 빌드) — WDI_GET_STATISTICS(34)에 답함
+
+결론: s258k 실기에서 끊김 3번은 모두 Windows가 보낸 WDI_TASK_DISCONNECT(8)를 따른 것이었고(가), Windows가 약 60초마다 보내는 WDI_GET_STATISTICS(34)에 드라이버는 매번 STATUS_NOT_SUPPORTED로 답하고 있었다. Microsoft 문서에서 이 명령의 결과 TLV 두 개(MAC·PHY 통계)는 둘 다 "선택 아님"이다. s258l은 이 명령에 답한다. 이것이 끊김을 없앤다는 것은 가설이다(빌드만).
+
+- 번호 해석(WDK 26100 `dot11wificxintf.h`): 4 WDI_TASK_SCAN, 6 WDI_TASK_CONNECT, 7 WDI_TASK_DOT11_RESET, 8 WDI_TASK_DISCONNECT, 28 WDI_SET_PRIVACY_EXEMPTION_LIST, 29 WDI_SET_ADD_CIPHER_KEYS, 34 WDI_GET_STATISTICS, 75 WDI_ABORT_TASK, 85 WDI_SET_ADAPTER_CONFIGURATION, 138 WDI_SET_LOCATION_PRIVACY.
+- 기록으로 본 순서(연결 4번 모두 같음): 연결 → 약 181초 뒤 연결된 채 SSID 지정 검색(4/1/0/1) → 40~47초 뒤 60초 주기에서 벗어난 34 한 번 → 1~16초 뒤 DISCONNECT(802.11 사유 4) → 2.4초 뒤 CONNECT(RoamRequest=1, RoamNeededReason=7). 4번째 연결은 벗어난 34(1,020초)까지 같았지만 DISCONNECT가 오지 않았다. 4번째 CONNECT만 후보 BSS가 4개가 아니라 3개였다.
+- 답의 모양: Microsoft WDI 예제 `Wdi_Get_Statistics`와 같다. 연결 중이면 MAC 통계 2개(AP, 브로드캐스트), 아니면 브로드캐스트 1개, PHY 통계 1개. 값은 드라이버 계수(받은 프레임 `CntRx`, 보낸 완료 `CntTxStatus`, 보내기 버림 `CntTxDrop`)이고 펌웨어 계수는 읽지 않는다. TLV는 요청 머리말 뒤에 붙이고 BytesWritten=머리말+TLV(WiFiCx 예제 `WifiIhvGetSupportedDeviceServices`), 버퍼가 작으면 `WifiRequestSetBytesNeeded` + STATUS_BUFFER_OVERFLOW.
+- 끄는 값: `StatsReply=0`(s258k처럼 NOT_SUPPORTED). 작업 `W16-statsreply-0.cmd` / `-1.cmd`.
+- 더 넣은 기록(값은 없고 비트만): 검색 info 4~7비트 = WDI_SCAN_TRIGGER, CONNECT info 19비트 = 첫 후보가 직전 연결 AP와 같음, DISCONNECT info 16비트 = 끊을 상대가 지금 AP, 34 info = 쓴 바이트 수. 레지스트리 `NwoaCntStatsOk/Fail/Small`, `NwoaStatsLastBytes`, `NwoaStatsLastStatus`.
+- 함께 볼 것: Windows 쪽 끊김 사유는 `W15-wlan-events.cmd`(WLAN-AutoConfig 이벤트 8003 사유, 4003 "제한된 연결, 자동 복구")로 가린다.

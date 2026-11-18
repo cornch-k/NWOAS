@@ -1,0 +1,286 @@
+diff -ruN a/src/nvme.c b/src/nvme.c
+--- a/src/nvme.c	2026-11-19 03:09:29
++++ b/src/nvme.c	2026-11-19 03:10:02
+@@ -7,6 +7,7 @@
+ #include "mcc.h"
+ #include "memory.h"
+ #include "nvme.h"
++#include "nwoas_ans_irq.h" /* NWOAS S262 g262R */
+ #include "pmgr.h"
+ #include "rtkit.h"
+ #include "sart.h"
+@@ -827,16 +828,30 @@
+            tag < NVME_QD_FIRST_TAG + (int)nvme_qd.depth;
+ }
+ 
+-static u32 nvme_qd_find_irq(void)
++/* g262R: ADT lookup only (no side effects), so the hypervisor can decide before anything is
++ * set up whether the engine may run.  Returns the AIC line (> 0) or -reason (nwoas_ans_irq.h);
++ * *ncells / *index say which cell of /arm-io/ans "interrupts" was used. */
++int nvme_qd_probe_irq(u32 *ncells, u32 *index)
+ {
++    *ncells = 0;
++    *index = 0;
+     int node = adt_path_offset(adt, "/arm-io/ans");
+-    u32 len = 0;
+-    const u32 *irqs = node < 0 ? NULL : adt_getprop(adt, node, "interrupts", &len);
+-    if (!irqs || len != 4 || !irqs[0] || irqs[0] >= 0x1000) {
+-        printf("nvme: S262 /arm-io/ans interrupts unusable (len=%u): polling only\n", len);
+-        return 0;
+-    }
+-    return irqs[0];
++    if (node < 0)
++        return -NWOAS_ANS_IRQ_NO_NODE;
++    u32 len = 0, parent = 0, aic_ph = 0, irq = 0;
++    const u32 *irqs = adt_getprop(adt, node, "interrupts", &len);
++    if (!irqs)
++        return -NWOAS_ANS_IRQ_NO_PROP;
++    *ncells = len / 4;
++    if (adt_getprop_copy(adt, node, "interrupt-parent", &parent, sizeof(parent)) < 0)
++        parent = 0;
++    int aic_node = adt_path_offset(adt, "/arm-io/aic");
++    if (aic_node < 0 || adt_getprop_copy(adt, aic_node, "AAPL,phandle", &aic_ph, sizeof(aic_ph)) < 0)
++        aic_ph = 0;
++    int r = nwoas_ans_irq_pick(irqs, len, parent, aic_ph, aic ? aic->nr_irq : 0, &irq, index);
++    if (r)
++        return -r;
++    return irq;
+ }
+ 
+ static bool nvme_qd_recreate_ioq(void)
+@@ -877,7 +892,8 @@
+     return nvme_exec_command(&adminq, &cmd, NULL);
+ }
+ 
+-int nvme_qd_setup(u32 depth, bool want_irq)
++/* g262R: irq = the line from nvme_qd_probe_irq() (0 = polling only, an explicit opt-in). */
++int nvme_qd_setup(u32 depth, u32 irq)
+ {
+     if (!nvme_initialized)
+         return -1;
+@@ -890,7 +906,6 @@
+         return -4;
+     memset(prp, 0, NVME_QUEUE_SIZE * SZ_4K);
+ 
+-    u32 irq = want_irq ? nvme_qd_find_irq() : 0;
+     if (irq && !nvme_qd_recreate_ioq()) {
+         /* The I/O queue state is unknown now: refuse; the launcher must stop. */
+         printf("nvme: S262 I/O queue re-create with IRQ enable FAILED\n");
+diff -ruN a/src/nvme.h b/src/nvme.h
+--- a/src/nvme.h	2026-11-19 03:09:29
++++ b/src/nvme.h	2026-11-19 03:10:40
+@@ -42,11 +42,13 @@
+     u64 bad_tag, inval_fail, stash_max, sync_cmds, sync_drain_waits;
+ };
+ extern volatile u32 nwoas_nvmeqd_irq_live; /* AIC line owned by the HV, 0 = none */
+-/* Pre-guest only, I/O idle.  want_irq re-creates I/O CQ 1 with interrupts enabled.
+- * Returns the AIC IRQ (>0), 0 = polling only, or an error: -1 ANS not initialized,
++/* g262R: ADT /arm-io/ans completion line (> 0) or -reason (nwoas_ans_irq.h).  No side effects. */
++int nvme_qd_probe_irq(u32 *ncells, u32 *index);
++/* Pre-guest only, I/O idle.  irq != 0 re-creates I/O CQ 1 with interrupts enabled.
++ * Returns irq (>= 0), or an error: -1 ANS not initialized,
+  * -2 engine already active, -3 depth out of range, -4 PRP memory allocation failed,
+  * -5 I/O queue re-create with IRQ enable failed (I/O queue may be unusable). */
+-int nvme_qd_setup(u32 depth, bool want_irq);
++int nvme_qd_setup(u32 depth, u32 irq);
+ bool nvme_qd_active(void);
+ bool nvme_qd_faulted(void);
+ int nvme_qd_alloc(void);
+diff -ruN a/src/nwoas_ans_irq.h b/src/nwoas_ans_irq.h
+--- a/src/nwoas_ans_irq.h	1970-01-01 09:00:00
++++ b/src/nwoas_ans_irq.h	2026-11-19 03:09:45
+@@ -0,0 +1,64 @@
++/* SPDX-License-Identifier: MIT */
++/* NWOAS S262 (g262R): pick the ANS2 NVMe completion interrupt out of the ADT /arm-io/ans node.
++ *
++ * Header-only and free of m1n1 state so the host test (tools-hv2/hosttest/test_ansirq_g262R.c)
++ * runs this exact code against the real J274 ADT dump.
++ *
++ * Observed (J274, iBoot-8422.141.2 / macOS 13.5 ADT dump 2026-11-16, adt.bin sha256 32e63706...):
++ *   /arm-io/ans  interrupt-parent = 0x5f (= /arm-io/aic AAPL,phandle)
++ *                interrupts       = 48 02 00 00 47 02 00 00 4a 02 00 00 49 02 00 00 4e 02 00 00
++ *                                 = 584, 583, 586, 585, 590   (20 bytes, 5 cells)
++ * Linux arch/arm64/boot/dts/apple/t8103.dtsi gives the four ASC mailbox lines 583..586 to
++ * ans_mbox (send-empty, send-not-empty, recv-empty, recv-not-empty) and AIC_IRQ 590 to
++ * nvme@27bcc0000 (the apple,nvme-ans2 completion interrupt).  g262Q accepted only a 4-byte
++ * property, so it found no line on this machine and fell back to polling.
++ *
++ * Rule: 1 cell -> that cell; 5 cells -> the 5th (the line that is not one of the four
++ * mailbox lines); anything else is refused (no guessing).  The parent must be the AIC. */
++#ifndef NWOAS_ANS_IRQ_H
++#define NWOAS_ANS_IRQ_H
++
++enum {
++    NWOAS_ANS_IRQ_OK = 0,
++    NWOAS_ANS_IRQ_NO_NODE = 2,     /* no /arm-io/ans */
++    NWOAS_ANS_IRQ_NO_PROP = 3,     /* no interrupts property */
++    NWOAS_ANS_IRQ_CELLS = 4,       /* cell count is not 1 or 5 (or length not a multiple of 4) */
++    NWOAS_ANS_IRQ_PARENT = 5,      /* interrupt-parent missing or not the AIC phandle */
++    NWOAS_ANS_IRQ_RANGE = 6,       /* line 0 or >= the AIC line count */
++    NWOAS_ANS_IRQ_MAILBOX = 7,     /* 5 cells but the 5th repeats one of the first four */
++};
++
++/* cells/len: the interrupts property; parent: interrupt-parent (0 = missing); aic_phandle:
++ * /arm-io/aic AAPL,phandle (0 = unknown); nr_irq: AIC line count (0 = unknown, then < 0x1000).
++ * Returns 0 and sets *irq / *index, or one of the reasons above. */
++static inline int nwoas_ans_irq_pick(const unsigned int *cells, unsigned int len, unsigned int parent,
++                                     unsigned int aic_phandle, unsigned int nr_irq,
++                                     unsigned int *irq, unsigned int *index)
++{
++    *irq = 0;
++    *index = 0;
++    if (!cells)
++        return NWOAS_ANS_IRQ_NO_PROP;
++    if (!parent || !aic_phandle || parent != aic_phandle)
++        return NWOAS_ANS_IRQ_PARENT;
++    if (len % 4)
++        return NWOAS_ANS_IRQ_CELLS;
++    unsigned int n = len / 4, i;
++    if (n == 1)
++        i = 0;
++    else if (n == 5)
++        i = 4;
++    else
++        return NWOAS_ANS_IRQ_CELLS;
++    for (unsigned int k = 0; k < i; k++)
++        if (cells[k] == cells[i])
++            return NWOAS_ANS_IRQ_MAILBOX;
++    unsigned int limit = nr_irq ? nr_irq : 0x1000;
++    if (!cells[i] || cells[i] >= limit)
++        return NWOAS_ANS_IRQ_RANGE;
++    *irq = cells[i];
++    *index = i;
++    return NWOAS_ANS_IRQ_OK;
++}
++
++#endif
+diff -ruN a/src/nwoas_nvmeqd.inc b/src/nwoas_nvmeqd.inc
+--- a/src/nwoas_nvmeqd.inc	2026-11-19 03:09:29
++++ b/src/nwoas_nvmeqd.inc	2026-11-19 03:11:24
+@@ -23,14 +23,20 @@
+  *    (CSTS.CFS), exactly like a failed synchronous command today.
+  *  - Before the guest I/O queues are disabled, re-armed or reset, all in-flight
+  *    commands are waited for (their DMA targets guest memory).
++ * g262R: the ANS line comes from the 5-cell /arm-io/ans "interrupts" of the J274 ADT (5th
++ * cell, 590 in the 13.5 dump); with no usable line the engine stays off (QD-off path) unless
++ * QD_F_POLL; a stuck line switches the engine off for the rest of the boot.
+  * HARDWARE-UNVERIFIED.  Build success is not boot success.
+  */
+ #define NWOAS_QD_F_IRQ    1u /* complete by the ANS interrupt (else tick/doorbell polling only) */
+ #define NWOAS_QD_F_STRICT 2u /* FUA / no-cache writes run alone */
+ #define NWOAS_QD_F_NOKICK 4u /* do not IPI the NVMe IRQ CPU after posting on another CPU */
+-#define NWOAS_QD_F_ALL    7u
++#define NWOAS_QD_F_POLL   8u /* g262R: allow the engine without the ANS interrupt (experiment only:
++                              * completions then wait for the 200 us tick, hardware 2026-11-19 halved
++                              * rand4k IOPS that way).  Without it, no interrupt = engine off. */
++#define NWOAS_QD_F_ALL    15u
+ #define NWOAS_QD_SIG      0x53323632ULL /* "S262" */
+-#define NWOAS_QD_VERSION  2ULL /* g262Q: refusal reason codes */
++#define NWOAS_QD_VERSION  3ULL /* g262R: ADT 5-cell ANS interrupt, engine off without IRQ */
+ 
+ enum { NWOAS_QD_FREE = 0, NWOAS_QD_RW, NWOAS_QD_FLUSH, NWOAS_QD_CHAIN };
+ enum { NWOAS_QD_CTX_SQDB = 0, NWOAS_QD_CTX_CQDB, NWOAS_QD_CTX_TICK, NWOAS_QD_CTX_IRQ,
+@@ -65,6 +71,8 @@
+ 
+ static struct {
+     bool active, barrier, irq_storm;
++    bool fell_back;   /* g262R: engine switched itself off (stuck IRQ) -> synchronous path */
++    u32 off_reason;   /* g262R: last "engine off" reason of action 24 (NWOAS_QD_OFF_*) */
+     u32 depth, flags, irq, busy, idle_empty_irqs;
+     struct nwoas_qd_slot slot[64];
+     struct nwoas_qd_stats st;
+@@ -502,8 +510,22 @@
+             nwoas_qd.irq_storm = true;
+             nwoas_qd.st.storm++;
+             nvme_qd_irq_disarm();
++            if (!(nwoas_qd.flags & NWOAS_QD_F_POLL)) {
++                /* g262R: polling-only completions cost about half the IOPS (tick-bound), so
++                 * go back to the one-at-a-time synchronous path for the rest of this boot.
++                 * Nothing is in flight here (busy == 0); not-yet-fetched guest commands are
++                 * picked up by the synchronous path's deferred tick. */
++                nwoas_qd.active = false;
++                nwoas_qd.fell_back = true;
++                nwoas_nvme_fp.deferred = nwoas_nvme_fp.armed && !nwoas_nvme_fp.faulted &&
++                                         nwoas_nvme_fp.sq_head != nwoas_nvme_fp.sq_tail;
++                printf("NWOAS-S262 NVMe QD engine OFF: ANS IRQ looks stuck (32 empty IRQs, "
++                       "nothing in flight) -> synchronous path\n");
++                nwoas_qd_finish(before);
++                return;
++            }
+             printf("NWOAS-S262 ANS IRQ looks stuck (32 empty IRQs, nothing in flight): "
+-                   "polling only\n");
++                   "polling only (QD_POLL)\n");
+         }
+     }
+     nwoas_qd_fetch(ctx, NWOAS_QD_CTX_IRQ);
+@@ -529,6 +551,14 @@
+     NWOAS_QD_R_SETUP = 10,   /* nvme_qd_setup() failed, sub = its negative code */
+ };
+ 
++/* g262R: "engine off, synchronous path, nothing set up" answers
++ * (NWOAS_QD_OFF_SIG << 32) | (ncells << 16) | reason (bit 63 clear).  reason 1 = the launcher
++ * asked for no interrupt (NWOAS_NVME_QD_IRQ=0) without NWOAS_NVME_QD_POLL=1; 2..7 = the ADT
++ * lookup result of nvme_qd_probe_irq() (nwoas_ans_irq.h); ncells = /arm-io/ans interrupt cells. */
++#define NWOAS_QD_OFF_SIG          0x51444f46ULL /* "FODQ" */
++#define NWOAS_QD_OFF(r, ncells)   ((NWOAS_QD_OFF_SIG << 32) | ((u64)((ncells) & 0xff) << 16) | (r))
++#define NWOAS_QD_OFF_IRQ_DISABLED 1
++
+ static u64 nwoas_qd_config(u64 depth, u64 flags)
+ {
+     if (nwoas_qd.active)
+@@ -556,19 +586,37 @@
+         return NWOAS_QD_REFUSE(NWOAS_QD_R_QUEUES, 0);
+     if (s229_enabled && (s229_front.control.csts & 1))
+         return NWOAS_QD_REFUSE(NWOAS_QD_R_ENABLED, 0);
+-    int irq = nvme_qd_setup(depth, flags & NWOAS_QD_F_IRQ);
+-    if (irq < 0)
+-        return NWOAS_QD_REFUSE(NWOAS_QD_R_SETUP, (u8)-irq);
+-    if (!irq)
++    /* g262R: find the interrupt first (ADT read only).  Without it the engine would complete
++     * commands only from the 200 us tick, which halved rand4k IOPS on hardware (2026-11-19),
++     * so unless QD_POLL asks for that experiment the engine stays off and nothing is set up:
++     * the I/O path is then byte-for-byte the QD-off path. */
++    u32 ncells = 0, index = 0;
++    int irq = 0;
++    if (flags & NWOAS_QD_F_IRQ)
++        irq = nvme_qd_probe_irq(&ncells, &index);
++    if (irq <= 0) {
++        u32 why = (flags & NWOAS_QD_F_IRQ) ? (u32)-irq : NWOAS_QD_OFF_IRQ_DISABLED;
++        if (!(flags & NWOAS_QD_F_POLL)) {
++            nwoas_qd.off_reason = why;
++            printf("NWOAS-S262 NVMe QD engine OFF (reason %u, /arm-io/ans cells %u): "
++                   "synchronous path\n", why, ncells);
++            return NWOAS_QD_OFF(why, ncells);
++        }
++        irq = 0;
+         flags &= ~(u64)NWOAS_QD_F_IRQ;
++    }
++    int r = nvme_qd_setup(depth, irq);
++    if (r < 0)
++        return NWOAS_QD_REFUSE(NWOAS_QD_R_SETUP, (u8)-r);
+     memset(&nwoas_qd, 0, sizeof(nwoas_qd));
+     nwoas_qd.depth = depth;
+     nwoas_qd.flags = flags;
+     nwoas_qd.irq = irq;
+     nwoas_qd.active = true;
+-    printf("NWOAS-S262 NVMe QD=%lu flags=0x%lx irq=%d armed (CPU %d)\n", depth, flags, irq,
+-           nwoas_qd_icpu());
+-    return (1ULL << 63) | ((u64)irq << 32) | (depth << 8) | flags;
++    printf("NWOAS-S262 NVMe QD engine ON: QD=%lu flags=0x%lx irq=%d (cell %u of %u) (CPU %d)\n",
++           depth, flags, irq, index, ncells, nwoas_qd_icpu());
++    return (1ULL << 63) | ((u64)irq << 32) | ((u64)(index & 0xff) << 24) |
++           ((u64)(ncells & 0xff) << 16) | (depth << 8) | flags;
+ }
+ 
+ static u64 nwoas_qd_snapshot(u64 ptr, u64 size)
+@@ -580,7 +628,9 @@
+     nvme_qd_get_info(&in);
+     o->sig_version = (NWOAS_QD_SIG << 32) | NWOAS_QD_VERSION;
+     o->depth = nwoas_qd.depth;
+-    o->flags = nwoas_qd.flags | ((u64)nwoas_qd.irq_storm << 8) | ((u64)nwoas_qd.barrier << 9);
++    o->flags = nwoas_qd.flags | ((u64)nwoas_qd.irq_storm << 8) | ((u64)nwoas_qd.barrier << 9) |
++               ((u64)nwoas_qd.fell_back << 10) | ((u64)(nwoas_qd.off_reason & 0xff) << 16) |
++               ((u64)nwoas_qd.active << 24);
+     o->irq = nwoas_qd.irq;
+     o->eng_active = in.active;
+     o->eng_depth = in.depth;

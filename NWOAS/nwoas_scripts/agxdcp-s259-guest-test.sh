@@ -45,16 +45,19 @@ if [ "${NWOAS_S260_HV:-0}" = 1 ]; then
     PWRMOD=(-m "$S260/power_module.py")
 fi
 # S262 (opt-in, HARDWARE-UNVERIFIED; nwoas_scripts/nvmeqd-s262/README.md). Unset = the stack above unchanged.
-#   NWOAS_S262_HV=1   m1n1-g262Q = g260O + concurrent NVMe path (port-j274/gpu/hv/hv2-g260O-to-g262P.patch
-#                     + hv2-g262P-to-g262Q.patch; g262P refused every NWOAS_NVME_QD, hardware 2026-11-19),
+#   NWOAS_S262_HV=1   m1n1-g262R = g260O + concurrent NVMe path (port-j274/gpu/hv/hv2-g260O-to-g262P.patch
+#                     + hv2-g262P-to-g262Q.patch + hv2-g262Q-to-g262R.patch; g262P refused every NWOAS_NVME_QD,
+#                     g262Q found no ANS IRQ in the 5-cell ADT property and tick-polled at half the IOPS,
+#                     hardware 2026-11-19; g262R: ADT cell 5 = 590, engine OFF when no IRQ),
 #                     -m power-s260/power_module.py then -m nvmeqd-s262/nvmeqd_module.py LAST (all NWOAS_PWR_*
 #                     switches work as with S260).  Wins over NWOAS_S260_HV=1.
 #   NWOAS_NVME_QD=<n> 1..61 commands in flight; unset/0 = the g260O one-at-a-time path (A/B on one binary).
-#                     NWOAS_NVME_QD_IRQ=0 (polling only), NWOAS_NVME_QD_STRICT=1 (FUA writes alone), NWOAS_NVME_QD_KICK=0.
+#                     NWOAS_NVME_QD_IRQ=0 (engine off unless NWOAS_NVME_QD_POLL=1 = tick-polled experiment),
+#                     NWOAS_NVME_QD_STRICT=1 (FUA writes alone), NWOAS_NVME_QD_KICK=0.
 S262="$ROOT/nwoas_scripts/nvmeqd-s262"
 if [ "${NWOAS_S262_HV:-0}" = 1 ]; then
-    HV="/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/hv/out-hv2/m1n1-g262Q-agx-hv2-nvmeqd.bin"
-    HV_SIZE=2326528 HV_SHA=6a1ce6d4519146ae66940a5296803e44cf8dee65710956322ba20e778cca25d2
+    HV="/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/hv/out-hv2/m1n1-g262R-agx-hv2-nvmeqd.bin"
+    HV_SIZE=2326528 HV_SHA=83add623acbd7658449e84b20d664205ac085ae92e841bf0fab47c5554af89d5
     PWRMOD=(-m "$S260/power_module.py" -m "$S262/nvmeqd_module.py")
 elif [ -n "${NWOAS_NVME_QD:-}" ] && [ "${NWOAS_NVME_QD}" != 0 ]; then
     echo 'STOP: NWOAS_NVME_QD needs NWOAS_S262_HV=1 (the g260O/g254L HV has no concurrent NVMe path)'; exit 1
@@ -98,7 +101,7 @@ if [ "${NWOAS_S260_HV:-0}" = 1 ] || [ "${NWOAS_S262_HV:-0}" = 1 ]; then
     [ "$(shasum -a 256 "$S260/power_module.py" | awk '{print $1}')" = 4fdd9ee3904c71f3d439a520f7f1bbd4b38b718fe62b0d60246aa2fa9d917356 ]
     [ "$(shasum -a 256 "$S260/nwoas_pwr_layout.py" | awk '{print $1}')" = 4690ba77885b1c131f5a93ded4dbef379c2c75a532ddcec937fce70dfda8f475 ]
     if [ "${NWOAS_S262_HV:-0}" = 1 ]; then
-        [ "$(shasum -a 256 "$S262/nvmeqd_module.py" | awk '{print $1}')" = 5a3939eb2b949ba3767ae600b9bfbe7ce32e72aeb5e5addc50c6d672bbdf64c9 ]
+        [ "$(shasum -a 256 "$S262/nvmeqd_module.py" | awk '{print $1}')" = 561579ac89b632e459d98a964e84db2ba333026b6ee494ed9ba04161f72401b8 ]
     fi
 fi
 [ "$(shasum -a 256 "$ROOT/nwoas_scripts/layout-s231/guest_module.py" | awk '{print $1}')" = 07523c1d282a3d54bdcad1cbc9ea8d7b0a4fbf1d139387bb54b576c72b36dc03 ]
@@ -139,7 +142,7 @@ shasum -a 256 "$HV" "$PAYLOAD" "$ROOT/nwoas_scripts/cpufreq-s193/capture.py" \
 echo '[S244] S243 stack on 13.5 OS firmware: no Tahoe DCP hook, m1n1-owned framebuffer, probe + preflight gates' | tee -a "$LOG"
 echo "[S259] Wi-Fi payload + wifi_module.py, NWOAS_WIFI=$NWOAS_WIFI" | tee -a "$LOG"
 echo "[S260] NWOAS_S260_HV=${NWOAS_S260_HV:-0} NWOAS_S260_MADT=${NWOAS_S260_MADT:-0} HV=$(basename "$HV") PAYLOAD=$(basename "$PAYLOAD") PWR: WFI=${NWOAS_PWR_WFI:-0} SECTICK=${NWOAS_PWR_SECTICK:-0} TGAP_US=${NWOAS_PWR_TGAP_US:-} NVME_SHUT=${NWOAS_PWR_NVME_SHUT:-0} OFF=${NWOAS_PWR_OFF:-0} SMC=${NWOAS_PWR_SMC:-0} SLC=${NWOAS_PWR_SLC:-0} PRINT=${NWOAS_PWR_PRINT:-0} LIVE=${NWOAS_PWR_LIVE:-0}" | tee -a "$LOG"
-echo "[S262] NWOAS_S262_HV=${NWOAS_S262_HV:-0} NVME_QD=${NWOAS_NVME_QD:-0} QD_IRQ=${NWOAS_NVME_QD_IRQ:-1} QD_STRICT=${NWOAS_NVME_QD_STRICT:-0} QD_KICK=${NWOAS_NVME_QD_KICK:-1}" | tee -a "$LOG"
+echo "[S262] NWOAS_S262_HV=${NWOAS_S262_HV:-0} NVME_QD=${NWOAS_NVME_QD:-0} QD_IRQ=${NWOAS_NVME_QD_IRQ:-1} QD_STRICT=${NWOAS_NVME_QD_STRICT:-0} QD_KICK=${NWOAS_NVME_QD_KICK:-1} QD_POLL=${NWOAS_NVME_QD_POLL:-0}" | tee -a "$LOG"
 echo "[S244] delivery: MANIFEST=${NWOAS_DELIVER_MANIFEST:-} FILE=${NWOAS_DELIVER_FILE:-} SHA256=${NWOAS_DELIVER_SHA256:-}" | tee -a "$LOG"
 [ -z "${NWOAS_DELIVER_MANIFEST:-}" ] || shasum -a 256 "$NWOAS_DELIVER_MANIFEST" >> "$LOG"
 
