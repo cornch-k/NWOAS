@@ -6,8 +6,11 @@ ROOT=/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts; D=$ROOT/nvmeqd-s262; mkdi
 RES=$D/runs/steps-$(date +%Y%m%d-%H%M%S).txt
 OUT=$1; L=$2
 say() { echo "$(date '+%H:%M:%S') $*" | tee -a $RES; }
-boot() { # env assignments as args
-  local r; r=$(env NWOAS_AUDIO_PROT=moderate "$@" bash $ROOT/wifi-s259/run-s259.sh $OUT $L 2>&1 | tee -a $RES | grep -a "S259 DONE" | tail -1)
+boot() { # env assignments as args; run-s259.sh keeps running (it waits on the launcher), so poll its output
+  local T=$D/runs/boot-$(date +%H%M%S).txt r
+  (env NWOAS_AUDIO_PROT=moderate "$@" nohup bash $ROOT/wifi-s259/run-s259.sh $OUT $L > $T 2>&1 &)
+  for i in $(seq 1 240); do grep -a -q -E "S259 DONE|ABORT" $T && break; sleep 5; done
+  cat $T >> $RES; r=$(grep -a "S259 DONE" $T | tail -1)
   [ -n "$r" ] || { say "BOOT FAIL ($*)"; return 1; }
   L=$(echo "$r" | sed -n 's/.*link=\([^ ]*\).*/\1/p'); OUT=$(echo "$r" | sed -n 's/.* out=\([^ ]*\).*/\1/p'); LOG=$(echo "$r" | sed -n 's/.* log=\([^ ]*\).*/\1/p')
   echo $L > /tmp/claude-501/curlink.txt; say "booted ($*) link=$L"
@@ -31,7 +34,8 @@ q1() { job $D/jobs/Q1-io-integ.cmd || return 1; echo "$JL" | grep -a -E 'H2|IOPS
   echo "$JL" | grep -a -q 'INTEG PASS' && echo "$JL" | grep -a -q 'integ_rc=0' || { say "Q1 INTEG not PASS"; return 1; }; safety; }
 back() { say "STOP at $1 -> boot old path"; boot NWOAS_S262_HV= ; exit 1; }
 say "START"
-boot NWOAS_S262_HV=1 NWOAS_DELIVER_MANIFEST=$D/manifests/s262-nwqd.json || back boot0
+if [ "${3:-}" = attached ]; then LOG=${L%.link}; echo $L > /tmp/claude-501/curlink.txt; say "attached to running S262 boot link=$L"
+else boot NWOAS_S262_HV=1 NWOAS_DELIVER_MANIFEST=$D/manifests/s262-nwqd.json || back boot0; fi
 job $D/jobs/Q0-deliver-nwqd.cmd; echo "$JL" | grep -a -q 'READBACK MATCH NWQD.EXE' || back Q0
 say "STEP1 (S262 HV, QD off)"; q1 || back step1
 say "STEP2 QD=8"; boot NWOAS_S262_HV=1 NWOAS_NVME_QD=8 || back boot2; q1 || back step2

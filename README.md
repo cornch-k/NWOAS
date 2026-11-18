@@ -38,7 +38,7 @@ and host-tested only, not yet run on the hardware.
 | Power | Opt-in HV changes (S260): idle 13.7 W -> 10.85 W with WFI |
 | Storage | Emulated NVMe, one command at a time (about 11k random 4K IOPS); concurrent queue (g262P) under test |
 
-Details: [handoff 2026-11-18](NWOAS/HANDOFF-2026-11-18.md),
+Details: [handoff 2026-11-19](NWOAS/HANDOFF-2026-11-19.md),
 [roadmap](NWOAS/ROADMAP-2026-11-17.md),
 [GPU plan](NWOAS/research-20261118/gpu/GPU-REAL-DRIVER-PLAN.md).
 Remaining: standalone boot without the second Mac, USB-C, sleep, x64 apps on
