@@ -95,6 +95,7 @@ typedef struct _NWOA_SCANDIAG {
     UCHAR Entries, Reported, SameSsid, Rank;   // BSS found, indicated, same-SSID entries, RSSI rank of the connected BSS (1 = best)
     SHORT Rssi, OtherRssi, FwRssi;   // connected BSS / strongest other same-SSID entry / firmware GET_RSSI (0 = none)
     UCHAR Channel, Band, OtherBand, Directed;
+    UCHAR Skipped, Pad2[3];     // s258n: no firmware scan (ConnectedScan=1), cached list reported
     USHORT IeLen, Cap;          // connected BSS IE bytes, capability field
     USHORT Bw;                  // connected BSS bandwidth from its chanspec (MHz)
     USHORT Status;              // escan status
@@ -135,6 +136,54 @@ typedef struct _NWOA_KEYDIAG {
 } NWOA_KEYDIAG;
 #define NWOA_KEYDIAG_N 8
 
+// s258n: one TX stall watchdog record / one scan made while connected
+typedef struct _NWOA_STALLREC {
+    ULONG Ms;
+    UCHAR Action, Pad[3];       // NB_SA_*
+    ULONG Out, OldestMs, SinceDoneMs, SinceScanStartMs, SinceScanEndMs;   // 0xFFFFFFFF = never
+    ULONG SinceRxMs, ConnAgeMs;  // last RX frame / time since the association
+    ULONG FlowW, FlowR;         // host write pointer / firmware read index of the TX flowring
+    LONG  Pm;                   // firmware PM after the action (-1 = not read)
+} NWOA_STALLREC;
+#define NWOA_STALL_N 8
+typedef struct _NWOA_CSCAN {
+    ULONG StartMs, EndMs;
+    ULONG OutStart, OutEnd;     // TX outstanding at escan start / completion
+    ULONG DoneDuring;           // TX statuses during the scan
+    LONG  PmBefore, PmAfter;    // firmware PM (-1 = not read)
+} NWOA_CSCAN;
+#define NWOA_CSCAN_N 4
+// s258o: what the TX flowring did after one firmware scan made while connected
+typedef struct _NWOA_SFREC {
+    ULONG Ms;                   // verdict time
+    ULONG ScanStartMs, ScanEndMs;
+    UCHAR Verdict, Self, Deferred, Cand;  // NB_SF_*; driver-started test scan; found by the 2 s tick;
+                                          //   s258p candidate index during the scan (0xFF = no CandidateCycle)
+    ULONG W0, R0;               // flowring host w / firmware r at scan end
+    ULONG W1, R1;               // at the verdict
+    ULONG AdvMs;                // ms from scan end to the first read index advance (0xFFFFFFFF = none)
+    ULONG Db;                   // flowring doorbells rung between scan end and the verdict
+    ULONG FwW, FwR;             // TCM copy of the flowring w / r index at the verdict (0xFFFFFFFF = not read)
+    ULONG FwW0, HostW0;         // TCM copy / host value of the control submit ring w index (same moment)
+    LONG  Fix;                  // NTSTATUS of the flowring re-create (0 = none)
+    UCHAR Bits, NCh;            // s258p: NB_CAND_* in force during the scan, chanspecs in the escan (0 = full list)
+    UCHAR Shape, Chunks;        // s258q: test-scan shape (0xFF = a Windows scan), escans in the sequence (shape 5)
+    USHORT Ev124, Ev120;        // s258q: firmware events 124 (CCA_CHAN_QUAL) / 120 (MSCH) from scan start to verdict
+} NWOA_SFREC;
+#define NWOA_SF_N 8
+#define NWOA_SF_ALIVE      1    // the firmware took the items posted after the scan by itself
+#define NWOA_SF_DBFIX      2    // not taken; taken after one more w index write + doorbell
+#define NWOA_SF_REFRESH    3    // not taken after that either; flowring deleted + created
+#define NWOA_SF_REFRESHERR 4    // re-create failed (the 8 s watchdog stays)
+#define NWOA_SF_STUCKREC   5    // not taken, ScanFlowCheck=3: recorded only
+#define NWOA_SF_IDLE       6    // nothing posted to judge (scan end + 1 s, then 30 s of 2 s ticks)
+#define NWOA_SF_FORCED     7    // ScanFlowCheck=2: re-created without looking
+#define NWOA_SF_GONE       8    // link or flowring gone while watching
+#define NWOA_SF_RSMFIX     9    // s258p: not taken; taken after FLOW_RING_RESUME (NB_CAND_RSM / FlowResume=1)
+#define NWOA_SF_IDLE_MS    1000
+#define NWOA_CONLIVE 3000
+#define NWOA_EVDIAG_N 8
+
 // who sent NB_C_DISASSOC (NwoaHostDisassoc Src)
 #define DIS_CONNECT     1       // WDI_TASK_CONNECT while connected / joining
 #define DIS_ROAM        2       // WDI_TASK_ROAM to another BSS
@@ -143,6 +192,7 @@ typedef struct _NWOA_KEYDIAG {
 #define DIS_RADIO_OFF   5       // WDI_TASK_SET_RADIO_STATE off
 #define DIS_CONN_FAIL   6       // failed connect clean-up
 #define DIS_SHUTDOWN    7       // D0 exit / release
+#define DIS_TX_STALL    8       // s258n: TX stall watchdog gave up, link loss reported to Windows
 
 typedef struct _NWOA_LOSSREC {
     ULONG  Ms;
@@ -245,6 +295,43 @@ typedef struct _NWOA_CONFIG {
     ULONG  LinkInfoReal;        // 1 = link Bandwidth / speed from the firmware chanspec and rate, channel
                                 //     width capability 20/40(/80) (default); 0 = 20 MHz, 433/144 Mbps as s258l
     ULONG  ReportWmm;           // 1 = WMMQoSEnabled from the association response; 0 = FALSE as s258l (default)
+    // ---- s258n (data path stall after the scan made while connected; 0 = s258m behaviour unless noted)
+    ULONG  ConnectedScan;       // 1 = no firmware scan while connected: the task completes at once with the
+                                //     cached list + the connected BSS (s258n default); 0 = firmware escan
+                                //     (s258o default, with ScanFlowCheck)
+    ULONG  PmKickAfterScan;     // 1 = SET_PM 1 then PowerSave after a firmware scan made while connected (default 0)
+    ULONG  TxStallMs;           // TX status stall threshold in ms (default 8000; 0 = detector off)
+    ULONG  TxStallRecover;      // 0 record only, 1 + PM kick and flowring re-create, 2 + link loss to Windows (default)
+    ULONG  MbPoll;              // 1 = read MAILBOXINT and the D2H mailbox word every 2 s, record only (default)
+    ULONG  ConsoleLive;         // 1 = copy new firmware console lines every 2 s, masked (default)
+    ULONG  DiagEvents;          // 1 = enable and count 8 extra firmware events, 2 = every event type except the
+                                //     frequent 15/30/44/52/58 (default), all counted per type; 0 = s258m mask
+    // ---- s258o (firmware scans while connected again: ConnectedScan default 0)
+    ULONG  ScanFlowCheck;       // after a firmware scan made while connected, watch the TX flowring read index:
+                                //     0 off (s258n), 1 = if posted items are not taken within ScanFlowProbeMs:
+                                //     doorbell again, then flowring re-create (default); 2 = always re-create;
+                                //     3 = watch and record only (no action; the 8 s watchdog stays)
+    ULONG  ScanFlowProbeMs;     // 1: time posted items may wait at the firmware after the scan (default 300)
+    ULONG  ScanTxHold;          // 1 = no TX_POST while a connected firmware scan runs (frames wait in the OS ring)
+    ULONG  TestConnScanSec;     // test: driver-started directed scan (connected SSID) every N s while connected
+                                //     (0 = off, default; 60..3600)
+    // ---- s258p (Linux brcmfmac differences, each 0 = s258o behaviour)
+    ULONG  ScanPm;              // 2 = SET_PM 2 + pm2_sleep_ret 2000 once associated (brcmfmac default power save)
+    ULONG  ScanChanList;        // scans made while connected: 0 no list (firmware full list), 1 valid channels of
+                                //     the current band, 2 the current channel only
+    ULONG  FlowResume;          // 1 = flowring not taken after a connected scan: FLOW_RING_RESUME before the doorbell
+    ULONG  InitIovarSet;        // bitmask, firmware init as brcmfmac: 1 txbf 1, 2 arp_ol 9 + arpoe 1 + ndoe 1,
+                                //     4 FAKEFRAG 1, 8 bcn_timeout 4, 16 obss_coex -1, 32 mpc 1
+    ULONG  CandidateCycle;      // 1 = rotate the nb_cand_bits() candidates, one per connected scan; forces
+                                //     ScanFlowCheck 1 and TestConnScanSec 120 when it is 0
+    // ---- s258q (shape of the driver test scan, TestConnScanSec; Windows scans unchanged)
+    ULONG  TestScanShape;       // NB_SHAPE_* 0..5 (0 = s258p test scan, default)
+    ULONG  ShapeCycle;          // 1 = rotate shapes 0..5, one per test-scan verdict; forces ScanFlowCheck 1,
+                                //     CandidateCycle 0 and TestConnScanSec 120 when it is 0
+    ULONG  ShapeChunkN;         // shape 5: channels per escan (1..16, default 3)
+    ULONG  ShapeChunkGapMs;     // shape 5: gap after each escan before the next (1000..10000, default 2000;
+                                //     the 2 s diag tick starts the next one)
+    ULONG  ShapeLongMs;         // shape 2: active dwell on the home channel (100..10000, default 3000)
 } NWOA_CONFIG;
 
 typedef struct _NWOA_DEVICE {
@@ -435,6 +522,94 @@ typedef struct _NWOA_DEVICE {
     ULONG           FwChanspec, FwRate500k;     // raw values read (diagnostics)
     BOOLEAN         WmmNegotiated;              // WMM parameter element in the association response
     volatile LONG   CntScanSynth, CntDisassocIndSkipped;
+    // ---- s258n
+    ULONG64         TxPostTime[NWOA_TX_SLOTS];  // KeQueryInterruptTime of the TX_POST (under TxLock)
+    ULONG           TxMaxOut;                   // most TX slots in flight at once since rings up
+    ULONG           RxPend[NWOA_RX_SLOTS_MAX / 32];   // RX buffers whose repost failed (retried, RingLock)
+    ULONG           CtlPend;                    // bit 0-7 ioctl response, 8-15 event buffer whose post failed
+    volatile LONG   CntRxRepostFail, CntRxRepostRetry, CntCtlPostFail, CntCtlPostRetry;
+    volatile LONG   CntTxStatusNz, CntGenStatus, CntRingStatus;
+    LONG            TxStatusLast, GenStatusLast, RingStatusLast;
+    ULONG           RingStatusRing;
+    ULONG           MbIntLast, DtohMbLast;
+    volatile LONG   CntDtohMbNz, CntMbIntNz;
+    LONG            FwPm;                       // firmware PM read back (-1 = never read)
+    BOOLEAN         ScanSkipped;                // the current scan task was answered from the cache
+    BOOLEAN         ScanWhileConn;              // the running firmware escan started while connected
+    ULONG64         ConnScanStart, ConnScanEnd; // last firmware scan made while connected (0 = none)
+    NWOA_CSCAN      CScan[NWOA_CSCAN_N];  ULONG CScanNext;
+    ULONG           CScanDoneMark;
+    volatile LONG   CntScanSkipped, CntPmKick;
+    nb_stall        StallSm;                    // watchdog state (work item only)
+    NWOA_STALLREC   Stall[NWOA_STALL_N];  ULONG StallNext;
+    volatile LONG   CntTxStall, CntStallPmOk, CntStallFlowOk, CntStallLinkLoss, CntStallGiveUp;
+    ULONG           ConIdx;                     // firmware console ring read position
+    BOOLEAN         ConInit;
+    CHAR            ConLine[512];  ULONG ConLineLen;   // partial line not masked yet
+    CHAR            ConBuf[NWOA_CONLIVE + 1];  ULONG ConLen;
+    ULONG           ConBytes, ConSkipped;
+    BOOLEAN         ConDirty;
+    LONG            EvDiagCnt[NWOA_EVDIAG_N];
+    ULONG           EvDiagLastMs[NWOA_EVDIAG_N];
+    LONG            EvAllCnt[NB_E_LAST + 1];    // DiagEvents=2: every counted-only event type
+    ULONG           EvAllMs[NB_E_LAST + 1];
+    ULONG64         ConnUpTime;                 // KeQueryInterruptTime of the last successful association
+    BOOLEAN         FwCntBaseDone;
+    // ---- s258o
+    volatile LONG   CntDbell, CntFlowDbell;     // H2D doorbells rung (all rings / TX flowring commits)
+    volatile LONG   CntConnScan, CntSelfScan;   // firmware scans started while connected / by the test timer
+    volatile LONG   CntSfAlive, CntSfStuck, CntSfIdle, CntSfDbFix, CntSfRefresh, CntSfRefreshFail, CntSfForced;
+    volatile LONG   CntTxHeld, CntScanDeferred;
+    volatile LONG   TxHold;                     // ScanTxHold: TX_POST refused (busy) while 1
+    BOOLEAN         SelfScan;                   // the running escan was started by TestConnScanSec
+    BOOLEAN         ScanStartDeferred;          // a Windows scan task waited for a test scan
+    BOOLEAN         SfArmed;                    // 2 s tick still watches the flowring after an idle verdict
+    ULONG64         SfArmUntil;
+    nb_flowwatch    SfWatch;                    // that watch (work item only)
+    NWOA_SFREC      SfArmRec;                   // its record so far
+    ULONG64         LastConnScanAny;            // last firmware scan start while connected (Windows or test)
+    NWOA_SFREC      Sf[NWOA_SF_N];  ULONG SfNext;
+    // ---- s258p
+    ULONG           CandCur;                    // CandidateCycle: index of the active candidate
+    ULONG           CandOn;                     // NB_CAND_* bits applied to the firmware now (PM2 / IOV)
+    BOOLEAN         CandAdvance;                // a verdict was recorded: next candidate at the next service
+    UCHAR           ScanCand, ScanBits, ScanNCh;   // candidate / bits / list size of the running escan
+    volatile LONG   CntCandAdv;
+    LONG            CandN[NB_CAND_N], CandAlive[NB_CAND_N], CandStuck[NB_CAND_N], CandIdle[NB_CAND_N],
+                    CandGone[NB_CAND_N], CandDb[NB_CAND_N], CandRsm[NB_CAND_N], CandRef[NB_CAND_N],
+                    CandErr[NB_CAND_N];   // escan refused (no verdict)
+    ULONG           CandPmSt;                   // status bits of the last PM2 apply / revert
+    ULONG           IovOld[7], IovOldOk, IovSetOk, IovBackOk;   // IOV candidate: old values, which read / set / put back
+    ULONG           InitIovSt;                  // InitIovarSet: bit per iovar set successfully
+    ULONG           ValidCh[NB_SCAN_CHLIST_MAX], NValidCh;  LONG ValidChSt;   // WLC_GET_VALID_CHANNELS: 0 not read, 1 read, else NTSTATUS
+    volatile LONG   CntRsmSent, CntRsmCmplt, CntSfRsmFix;
+    LONG            RsmLastStatus;  ULONG RsmLastRing;
+    // ---- s258q
+    ULONG           ShapeCur;                   // ShapeCycle: index of the active shape
+    BOOLEAN         ShapeAdvance;               // a test-scan verdict was recorded: next shape at the next scan
+    UCHAR           ScanShape;                  // shape of the running escan (0xFF = Windows scan / not connected)
+    UCHAR           ShapeFch;                   // shape 1: foreign channel of the last one
+    volatile LONG   CntShapeAdv;
+    // per shape, index NB_SHAPE_N = Windows scans made while connected
+    LONG            ShN[NB_SHAPE_N + 1], ShAlive[NB_SHAPE_N + 1], ShStuck[NB_SHAPE_N + 1], ShIdle[NB_SHAPE_N + 1],
+                    ShGone[NB_SHAPE_N + 1], ShErr[NB_SHAPE_N + 1], ShDb[NB_SHAPE_N + 1], ShRef[NB_SHAPE_N + 1],
+                    ShAbort[NB_SHAPE_N + 1], ShGapStuck[NB_SHAPE_N + 1], ShFallback[NB_SHAPE_N + 1];
+    ULONG           ShMsSum[NB_SHAPE_N + 1], ShMsMax[NB_SHAPE_N + 1], ShEv124[NB_SHAPE_N + 1], ShEv120[NB_SHAPE_N + 1];
+    // shape 5 sequence (work item only)
+    BOOLEAN         ChunkActive;
+    UCHAR           ChunkIdx, ChunkTotal, ChunkStuckAt; // next escan / escans in all / gap after which posted
+                                                        //   items were not taken (0xFF none)
+    USHORT          ChunkCh[NB_SCAN_CHLIST_MAX];  ULONG ChunkNCh;
+    ULONG64         ChunkNextAt;
+    ULONG           ChunkW, ChunkR, ChunkStartMs, ChunkLastEndMs;
+    LONG            ScanEvBase124, ScanEvBase120;   // EvAllCnt at the start of the scan (sequence)
+    // event 124 (WLC_E_CCA_CHAN_QUAL), written at DISPATCH by the event handler
+    volatile LONG   CntEv124, CntEv124Scan, CntEv124Bad;
+    LONG            Ev124Id[4];                 // id 0 CCA, 1 noise, 2 noise LTE, other
+    nb_cca_ev       Ev124Last;
+    ULONG           Ev124LastMs, Ev124LastDl;
+    UCHAR           Ev124First[24];  ULONG Ev124FirstLen, Ev124FirstDl, Ev124FirstMs;
+    USHORT          Ev124Cs[32];  ULONG Ev124NCs;  // distinct chanspecs during the last test scan (sequence)
 
     // ---- statistics
     volatile LONG   CntIsr, CntPoll, CntMsgs, CntEvents, CntRx, CntRxDrop, CntTx, CntTxStatus,
@@ -477,6 +652,10 @@ void NwoaDiagCounters(PNWOA_DEVICE Dev);
 void NwoaDiagConsole(PNWOA_DEVICE Dev);
 void NwoaDiagEvents(PNWOA_DEVICE Dev);
 void NwoaDiagDisconnect(PNWOA_DEVICE Dev);
+void NwoaDiagS258n(PNWOA_DEVICE Dev, PCHAR B, SIZE_T Cap);
+void NwoaDiagS258o(PNWOA_DEVICE Dev, PCHAR B, SIZE_T Cap);
+void NwoaDiagS258p(PNWOA_DEVICE Dev, PCHAR B, SIZE_T Cap);
+void NwoaDiagS258q(PNWOA_DEVICE Dev, PCHAR B, SIZE_T Cap);
 void NwoaHostDisassoc(PNWOA_DEVICE Dev, ULONG Src);    // NB_C_DISASSOC + who sent it
 void NwoaCmdSnapshot(PNWOA_DEVICE Dev, ULONG Why);   // caller holds StateLock
 
@@ -515,6 +694,7 @@ NTSTATUS NwoaLoadFiles(PNWOA_DEVICE Dev, PUCHAR* Fw, ULONG* FwLen, PUCHAR* Nv, U
 NTSTATUS NwoaFirmwareBoot(PNWOA_DEVICE Dev);
 void     NwoaFreeFiles(PNWOA_DEVICE Dev);
 NTSTATUS NwoaReadConsoleTail(PNWOA_DEVICE Dev, PCHAR Out, ULONG Cap);
+void     NwoaConsoleLiveTick(PNWOA_DEVICE Dev);                        // s258n
 
 // ---- msgbuf.cpp
 NTSTATUS NwoaDmaInit(PNWOA_DEVICE Dev);
@@ -529,10 +709,22 @@ NTSTATUS NwoaSetVar(PNWOA_DEVICE Dev, PCSTR Name, const void* Data, ULONG Len);
 NTSTATUS NwoaSetVarInt(PNWOA_DEVICE Dev, PCSTR Name, ULONG Val);
 NTSTATUS NwoaGetVar(PNWOA_DEVICE Dev, PCSTR Name, PUCHAR Out, ULONG Len);
 NTSTATUS NwoaFlowringCreate(PNWOA_DEVICE Dev, const UCHAR* Da);
+NTSTATUS NwoaFlowResume(PNWOA_DEVICE Dev);                  // s258p: FLOW_RING_RESUME for the TX flowring
 void     NwoaFlowringDelete(PNWOA_DEVICE Dev);
 NTSTATUS NwoaTxFrame(PNWOA_DEVICE Dev, const UCHAR* Eth, ULONG Len);   // copy, post, ring
 void     NwoaRxRepost(PNWOA_DEVICE Dev, USHORT Slot);                   // caller holds RingLock
 void     NwoaRxFlushHeld(PNWOA_DEVICE Dev);
+// s258n (msgbuf.cpp)
+ULONG    NwoaTxOutstanding(PNWOA_DEVICE Dev, ULONG64* OldestPost);    // TX slots in flight (TxLock)
+void     NwoaRingSnapshot(PNWOA_DEVICE Dev, PCHAR B, SIZE_T Cap, ULONG* FlowW, ULONG* FlowR);
+void     NwoaPoolSnapshot(PNWOA_DEVICE Dev, PCHAR B, SIZE_T Cap);
+NTSTATUS NwoaFlowringRecreate(PNWOA_DEVICE Dev);
+void     NwoaMbPollTick(PNWOA_DEVICE Dev);
+// s258o (msgbuf.cpp)
+BOOLEAN  NwoaFlowIdx(PNWOA_DEVICE Dev, ULONG* W, ULONG* R);         // FALSE = no flowring
+void     NwoaFlowKick(PNWOA_DEVICE Dev);                             // rewrite the flowring w index + doorbell
+void     NwoaFwIdxView(PNWOA_DEVICE Dev, ULONG Slot, ULONG* FwW, ULONG* FwR);   // TCM copies (0xFFFFFFFF = n/a)
+ULONG    NwoaHostWIdx(PNWOA_DEVICE Dev, ULONG Slot);
 void     NwoaRxItemDone(PNWOA_DEVICE Dev, const NWOA_RXITEM* It);   // caller holds RingLock
 BOOLEAN  NwoaEapolRxDup(PNWOA_DEVICE Dev, const UCHAR* Eth, ULONG Len); // caller holds RingLock
 NTSTATUS NwoaInterruptCreate(PNWOA_DEVICE Dev);
@@ -541,6 +733,9 @@ EVT_WDF_TIMER NwoaEvtPollTimer;
 
 // ---- events.cpp (DISPATCH, RingLock held)
 void NwoaHandleEvent(PNWOA_DEVICE Dev, const UCHAR* Frame, ULONG Len);
+extern const ULONG NwoaDiagEventTypes[NWOA_EVDIAG_N];                  // s258n extra events (counted only)
+BOOLEAN NwoaEventIsBase(ULONG Type);                                    // handled by NwoaHandleEvent itself
+BOOLEAN NwoaEventIsNoisy(ULONG Type);                                   // never enabled for counting
 void NwoaScanCacheClear(PNWOA_DEVICE Dev);
 BOOLEAN NwoaScanCacheFind(PNWOA_DEVICE Dev, const UCHAR* Bssid, NWOA_BSS* Out);
 

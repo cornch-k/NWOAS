@@ -87,6 +87,248 @@ static ULONG SinceMs(ULONG64 Now, ULONG64 T)
 }
 static ULONG CipherBit(ULONG c) { return c < 32 ? (1u << c) : 0x80000000u; }
 
+// s258n: firmware PM read back (-1 = failed)
+static LONG ReadPm(PNWOA_DEVICE Dev)
+{
+    ULONG pm = 0;
+    Dev->FwPm = NT_SUCCESS(NwoaGetInt(Dev, NB_C_GET_PM, &pm)) ? (LONG)pm : -1;
+    return Dev->FwPm;
+}
+
+// s258n: change PM and set it back.  [hypothesis] a PM change makes the firmware tell the AP its
+// power state again (null frame with the new PM bit); a scan made while connected leaves the AP
+// believing we doze / the firmware holding TX.  Used after such a scan and by the stall watchdog.
+// s258p: the PM value in force (PM2 while a ScanPm / candidate PM2 is applied, else PowerSave)
+static ULONG PmTarget(PNWOA_DEVICE Dev)
+{
+    return (Dev->CandOn & NB_CAND_PM2) ? NB_PM_FAST_PS : Dev->Cfg.PowerSave;
+}
+
+static LONG PmKick(PNWOA_DEVICE Dev)
+{
+    ULONG pm = PmTarget(Dev);
+    InterlockedIncrement(&Dev->CntPmKick);
+    (void)NwoaSetInt(Dev, NB_C_SET_PM, pm ? 0 : 1);
+    (void)NwoaSetInt(Dev, NB_C_SET_PM, pm);
+    return ReadPm(Dev);
+}
+
+// ------------------------------------------------ s258p candidates (Linux brcmfmac differences)
+// Bits in force: CandidateCycle=1 -> the rotating candidate (nb_cand_bits), else the static switches.
+static ULONG CandBits(PNWOA_DEVICE Dev)
+{
+    if (Dev->Cfg.CandidateCycle)
+        return nb_cand_bits(Dev->CandCur);
+    return (Dev->Cfg.ScanPm == 2 ? NB_CAND_PM2 : 0) |
+           (Dev->Cfg.ScanChanList == 1 ? NB_CAND_CH1 : Dev->Cfg.ScanChanList == 2 ? NB_CAND_CH2 : 0) |
+           (Dev->Cfg.FlowResume ? NB_CAND_RSM : 0);
+}
+
+// brcmfmac iovars we do not set (brcmf_c_preinit_dcmds txbf, brcmf_configure_arp_nd_offload(true),
+// brcmf_config_dongle FAKEFRAG, brcmf_dongle_roam bcn_timeout (roamoff), brcmf_cfg80211_attach obss_coex)
+static const struct { PCSTR Name; ULONG Val; } IovTab[7] = {
+    { "txbf", 1 }, { "arp_ol", 9 }, { "arpoe", 1 }, { "ndoe", 1 }, { NULL, 1 } /* FAKEFRAG */,
+    { "bcn_timeout", 4 }, { "obss_coex", 0xFFFFFFFFu }
+};
+
+static NTSTATUS IovGet(PNWOA_DEVICE Dev, ULONG i, ULONG* V)
+{
+    UCHAR b[8];
+    NTSTATUS st;
+    if (!IovTab[i].Name)
+        return NwoaGetInt(Dev, NB_C_GET_FAKEFRAG, V);
+    RtlZeroMemory(b, sizeof(b));
+    st = NwoaGetVar(Dev, IovTab[i].Name, b, 4);
+    *V = NT_SUCCESS(st) ? nb_ld32(b) : 0;
+    return st;
+}
+
+static NTSTATUS IovSet(PNWOA_DEVICE Dev, ULONG i, ULONG V)
+{
+    return IovTab[i].Name ? NwoaSetVarInt(Dev, IovTab[i].Name, V) : NwoaSetInt(Dev, NB_C_SET_FAKEFRAG, V);
+}
+
+// apply the firmware side of bits (PM2, IOV) not applied yet; PASSIVE (work item)
+static void CandApply(PNWOA_DEVICE Dev, ULONG Bits)
+{
+    ULONG add = Bits & ~Dev->CandOn & (NB_CAND_PM2 | NB_CAND_IOV);
+    if (!Dev->RingsUp || Dev->Dead || !Dev->RadioOn)
+        return;
+    if (add & NB_CAND_PM2) {
+        NTSTATUS a = NwoaSetInt(Dev, NB_C_SET_PM, NB_PM_FAST_PS);
+        NTSTATUS b = NwoaSetVarInt(Dev, "pm2_sleep_ret", 2000);   // min(timeout, BRCMF_PS_MAX_TIMEOUT_MS)
+        Dev->CandPmSt = (NT_SUCCESS(a) ? 1 : 0) | (NT_SUCCESS(b) ? 2 : 0);
+        Dev->CandOn |= NB_CAND_PM2;
+        (void)ReadPm(Dev);
+    }
+    if (add & NB_CAND_IOV) {
+        Dev->IovOldOk = Dev->IovSetOk = Dev->IovBackOk = 0;
+        for (ULONG i = 0; i < 7; i++) {
+            if (NT_SUCCESS(IovGet(Dev, i, &Dev->IovOld[i])))
+                Dev->IovOldOk |= 1u << i;
+            if (NT_SUCCESS(IovSet(Dev, i, IovTab[i].Val)))
+                Dev->IovSetOk |= 1u << i;
+        }
+        Dev->CandOn |= NB_CAND_IOV;
+    }
+}
+
+// put back what CandApply changed and Bits no longer wants
+static void CandRevert(PNWOA_DEVICE Dev, ULONG Bits)
+{
+    ULONG drop = Dev->CandOn & ~Bits & (NB_CAND_PM2 | NB_CAND_IOV);
+    if (!Dev->RingsUp || Dev->Dead || !Dev->RadioOn)
+        return;
+    if (drop & NB_CAND_PM2) {
+        Dev->CandOn &= ~NB_CAND_PM2;
+        NTSTATUS a = NwoaSetInt(Dev, NB_C_SET_PM, Dev->Cfg.PowerSave);
+        Dev->CandPmSt |= NT_SUCCESS(a) ? 4 : 8;
+        (void)ReadPm(Dev);
+    }
+    if (drop & NB_CAND_IOV) {
+        Dev->CandOn &= ~NB_CAND_IOV;
+        for (ULONG i = 0; i < 7; i++)
+            if ((Dev->IovSetOk & (1u << i)) && (Dev->IovOldOk & (1u << i)) &&
+                NT_SUCCESS(IovSet(Dev, i, Dev->IovOld[i])))
+                Dev->IovBackOk |= 1u << i;
+    }
+}
+
+// a scan verdict was recorded: rotate to the next candidate (CandidateCycle) and bring the firmware
+// to its settings.  Static switches: just make sure the wanted bits are applied while connected.
+static void CandService(PNWOA_DEVICE Dev)
+{
+    if (Dev->Cfg.CandidateCycle && Dev->CandAdvance && !Dev->ScanRunning) {
+        Dev->CandAdvance = FALSE;
+        Dev->CandCur = (Dev->CandCur + 1) % NB_CAND_N;
+        InterlockedIncrement(&Dev->CntCandAdv);
+        CandRevert(Dev, CandBits(Dev));
+    }
+    if (Dev->Connected && !Dev->ScanRunning)
+        CandApply(Dev, CandBits(Dev));
+}
+
+// ------------------------------------------------ s258q test-scan shapes
+// ShapeCycle: after a test-scan verdict the next test scan uses the next shape (0..5)
+static void ShapeService(PNWOA_DEVICE Dev)
+{
+    if (Dev->Cfg.ShapeCycle && Dev->ShapeAdvance && !Dev->ScanRunning && !Dev->ChunkActive) {
+        Dev->ShapeAdvance = FALSE;
+        Dev->ShapeCur = (Dev->ShapeCur + 1) % NB_SHAPE_N;
+        InterlockedIncrement(&Dev->CntShapeAdv);
+    }
+}
+
+// shape 5 sequence given up (disconnect, Windows scan, refused escan): counted, next shape
+static void ChunkAbort(PNWOA_DEVICE Dev)
+{
+    if (!Dev->ChunkActive)
+        return;
+    Dev->ChunkActive = FALSE;
+    Dev->ShAbort[NB_SHAPE_CHUNKS]++;
+    if (Dev->Cfg.ShapeCycle)
+        Dev->ShapeAdvance = TRUE;
+}
+
+// the connected (home) channel: association record, else the firmware chanspec
+static UCHAR HomeChannel(PNWOA_DEVICE Dev)
+{
+    UCHAR ch = Dev->Conn.Channel;
+    if (!ch && Dev->FwChanspec) {
+        nb_u8 c8 = 0, b8 = 0;
+        nb_u16 w16 = 0;
+        nb_chanspec_decode((nb_u16)Dev->FwChanspec, Dev->IoType, &c8, &b8, &w16);
+        ch = c8;
+    }
+    return ch;
+}
+
+// WLC_GET_VALID_CHANNELS once (wl_uint32_list: count in, count + channels out)
+static void ReadValidChannels(PNWOA_DEVICE Dev)
+{
+    UCHAR b[4 + 4 * NB_SCAN_CHLIST_MAX];
+    if (Dev->ValidChSt == 1)
+        return;
+    RtlZeroMemory(b, sizeof(b));
+    nb_st32(b, NB_SCAN_CHLIST_MAX);
+    NTSTATUS st = NwoaIoctl(Dev, NB_C_GET_VALID_CHANNELS, b, sizeof(b), sizeof(b), NULL, NULL);
+    ULONG n = NT_SUCCESS(st) ? nb_ld32(b) : 0;
+    if (!NT_SUCCESS(st) || n > NB_SCAN_CHLIST_MAX) {
+        Dev->ValidChSt = NT_SUCCESS(st) ? (LONG)STATUS_BUFFER_OVERFLOW : (LONG)st;
+        Dev->NValidCh = 0;
+        return;
+    }
+    for (ULONG i = 0; i < n; i++)
+        Dev->ValidCh[i] = nb_ld32(b + 4 + 4 * i);
+    Dev->NValidCh = n;
+    Dev->ValidChSt = 1;
+}
+
+// s258q: the escan of a test-scan shape (NB_SHAPE_*).  Returns the chanspecs put in Cl; a shape that
+// cannot be built (no home channel / no list) falls back to base (*Shape = 0, counted).
+static ULONG ShapeRequest(PNWOA_DEVICE Dev, UCHAR* Shape, nb_escan_req* Rq, nb_u16* Cl)
+{
+    UCHAR home = HomeChannel(Dev);
+    switch (*Shape) {
+    case 1: {                                                     // foreign: one non-home channel
+        ReadValidChannels(Dev);
+        UCHAR f = nb_shape_foreign_ch(home, Dev->NValidCh ? Dev->ValidCh : NULL, Dev->NValidCh);
+        if (!f)
+            break;
+        Dev->ShapeFch = f;
+        Cl[0] = nb_chanspec20(f, Dev->IoType);
+        return 1;
+    }
+    case 2:                                                       // homelong: home channel, long active dwell
+        if (!home)
+            break;
+        Cl[0] = nb_chanspec20(home, Dev->IoType);
+        Rq->active_ms = (nb_s32)Dev->Cfg.ShapeLongMs;
+        return 1;
+    case 3:                                                       // wild: brcmf_escan_prep wildcard form
+        Rq->ssid = NULL;
+        Rq->ssid_len = 0;
+        Rq->n_list_ssids = 1;
+        Rq->list_ssid = NULL;
+        Rq->list_ssid_len = 0;
+        Rq->scan_type = NB_SCANTYPE_ACTIVE;
+        Dev->ScanDirected = 0;
+        return 0;
+    case 4:                                                       // passive, no SSID, full list
+        Rq->ssid = NULL;
+        Rq->ssid_len = 0;
+        Rq->scan_type = NB_SCANTYPE_PASSIVE;
+        Dev->ScanDirected = 0;
+        return 0;
+    case 5: {                                                     // chunks of ShapeChunkN channels
+        ULONG nper = Dev->Cfg.ShapeChunkN;
+        if (!Dev->ChunkActive) {
+            ReadValidChannels(Dev);
+            Dev->ChunkNCh = nb_shape_all_channels(Dev->ChunkCh, NB_SCAN_CHLIST_MAX,
+                                                  Dev->NValidCh ? Dev->ValidCh : NULL, Dev->NValidCh, Dev->IoType);
+            if (!Dev->ChunkNCh)
+                break;
+            Dev->ChunkTotal = (UCHAR)((Dev->ChunkNCh + nper - 1) / nper);
+            Dev->ChunkIdx = 0;
+            Dev->ChunkStuckAt = 0xFF;
+            Dev->ChunkStartMs = NowMs();
+            Dev->ChunkActive = TRUE;
+        }
+        ULONG first = (ULONG)Dev->ChunkIdx * nper;
+        ULONG k = first < Dev->ChunkNCh ? min(nper, Dev->ChunkNCh - first) : 0;
+        for (ULONG i = 0; i < k; i++)
+            Cl[i] = Dev->ChunkCh[first + i];
+        return k;
+    }
+    default:
+        return 0;
+    }
+    if (*Shape < NB_SHAPE_N)
+        Dev->ShFallback[*Shape]++;
+    *Shape = 0;
+    return 0;
+}
+
 // one sample of the data counters per diag tick (2 s), for "frames in the last 10 s"
 static void SampleTick(PNWOA_DEVICE Dev)
 {
@@ -520,7 +762,13 @@ NTSTATUS NwoaFirmwareConfigure(PNWOA_DEVICE Dev)
     if (!NT_SUCCESS(st))
         NwoaDiagDword(Dev, L"NwoaCalError", (ULONG)st);             // not fatal
 
-    NwoaSetVarInt(Dev, "mpc", Dev->Cfg.Mpc);
+    Dev->InitIovSt = 0;                                          // s258p: a new firmware run
+    Dev->CandOn = 0;                                             //   (PM2 / IOV of a candidate are gone)
+    Dev->ChunkActive = FALSE;                                    // s258q: no sequence across firmware runs
+    Dev->ValidChSt = 0;
+    NwoaSetVarInt(Dev, "mpc", (Dev->Cfg.InitIovarSet & 32) ? 1 : Dev->Cfg.Mpc);   // s258p bit 32: brcmfmac mpc 1
+    if ((Dev->Cfg.InitIovarSet & 1) && NT_SUCCESS(NwoaSetVarInt(Dev, "txbf", 1)))  // brcmf_c_preinit_dcmds
+        Dev->InitIovSt |= 1;
     if (Dev->Cfg.Country[0]) {
         UCHAR cc[12] = { 0 };
         cc[0] = (UCHAR)Dev->Cfg.Country[0];
@@ -540,9 +788,21 @@ NTSTATUS NwoaFirmwareConfigure(PNWOA_DEVICE Dev)
                                      NB_E_EAPOL_MSG, NB_E_IF, NB_E_ESCAN_RESULT };
         static const ULONG lens[] = { NB_EVENT_MASK_LEN, 16, 20, 24 };
         UCHAR mask[24];
+        nb_u32 all[NB_E_LAST + 1 + ARRAYSIZE(ev)];
+        nb_u32 nall = 0;
+        for (ULONG i = 0; i < ARRAYSIZE(ev); i++)
+            all[nall++] = ev[i];
+        // s258n: DiagEvents=1 the 8 extra types, 2 every type but the frequent ones; counted only (events.cpp)
+        if (Dev->Cfg.DiagEvents == 1)
+            for (ULONG i = 0; i < NWOA_EVDIAG_N; i++)
+                all[nall++] = NwoaDiagEventTypes[i];
+        else if (Dev->Cfg.DiagEvents >= 2)
+            for (ULONG t = 0; t <= NB_E_LAST; t++)
+                if (!NwoaEventIsBase(t) && !NwoaEventIsNoisy(t))
+                    all[nall++] = t;
         st = STATUS_UNSUCCESSFUL;
         for (int i = 0; i < ARRAYSIZE(lens) && !NT_SUCCESS(st); i++) {
-            nb_event_mask(mask, lens[i], ev, ARRAYSIZE(ev));
+            nb_event_mask(mask, lens[i], all, nall);
             st = NwoaSetVar(Dev, "event_msgs", mask, lens[i]);
         }
         NwoaDiagDword(Dev, L"NwoaEventMask", (ULONG)st);
@@ -581,12 +841,29 @@ NTSTATUS NwoaFirmwareConfigure(PNWOA_DEVICE Dev)
     st = NwoaSetInt(Dev, NB_C_UP, 0);
     NwoaDiagDword(Dev, L"NwoaUpStatus", (ULONG)st);
     if (!NT_SUCCESS(st)) { NwoaSetStage(Dev, "fail_up", st); return st; }
+    NwoaDiagDword(Dev, L"NwoaFwPmAfterUp", (ULONG)ReadPm(Dev));   // s258n: PM was set before UP
     NwoaSetInt(Dev, NB_C_SET_INFRA, 1);
     NwoaSetInt(Dev, NB_C_SET_AP, 0);
-    NwoaSetVarInt(Dev, "arp_ol", 0);
-    NwoaSetVarInt(Dev, "arpoe", 0);
-    NwoaSetVarInt(Dev, "ndoe", 0);
+    if (Dev->Cfg.InitIovarSet & 2) {
+        // s258p: brcmf_configure_arp_nd_offload(ifp, true) (ARP_OL_AGENT | ARP_OL_PEER_AUTO_REPLY)
+        if (NT_SUCCESS(NwoaSetVarInt(Dev, "arp_ol", 9)) && NT_SUCCESS(NwoaSetVarInt(Dev, "arpoe", 1)) &&
+            NT_SUCCESS(NwoaSetVarInt(Dev, "ndoe", 1)))
+            Dev->InitIovSt |= 2;
+    } else {
+        NwoaSetVarInt(Dev, "arp_ol", 0);
+        NwoaSetVarInt(Dev, "arpoe", 0);
+        NwoaSetVarInt(Dev, "ndoe", 0);
+    }
     NwoaSetVarInt(Dev, "toe", 0);
+    if ((Dev->Cfg.InitIovarSet & 4) && NT_SUCCESS(NwoaSetInt(Dev, NB_C_SET_FAKEFRAG, 1)))   // brcmf_config_dongle
+        Dev->InitIovSt |= 4;
+    if ((Dev->Cfg.InitIovarSet & 8) && NT_SUCCESS(NwoaSetVarInt(Dev, "bcn_timeout", 4)))    // brcmf_dongle_roam, roamoff
+        Dev->InitIovSt |= 8;
+    if ((Dev->Cfg.InitIovarSet & 16) && NT_SUCCESS(NwoaSetVarInt(Dev, "obss_coex", 0xFFFFFFFFu)))   // BRCMF_OBSS_COEX_AUTO
+        Dev->InitIovSt |= 16;
+    if (Dev->Cfg.InitIovarSet & 32)
+        Dev->InitIovSt |= 32;
+    NwoaDiagDword(Dev, L"NwoaInitIovSt", Dev->InitIovSt);
     NwoaDiagDword(Dev, L"NwoaSupWpa0", (ULONG)NwoaSetVarInt(Dev, "sup_wpa", 0));
     RtlZeroMemory(b, 8);
     if (NT_SUCCESS(NwoaGetVar(Dev, "scan_ver", b, 8)))
@@ -599,32 +876,437 @@ NTSTATUS NwoaFirmwareConfigure(PNWOA_DEVICE Dev)
 }
 
 // ------------------------------------------------------------ jobs
+static void JobScanDone(PNWOA_DEVICE Dev);
+static void SfIdleEnd(PNWOA_DEVICE Dev);
+
+// Firmware escan.  Self = TRUE: s258o test scan (TestConnScanSec), directed to the connected SSID as
+// the scan Windows asks for 180 s into a connection (s258n scan0: trigger 3, directed); no WDI task.
+static void ScanStartFw(PNWOA_DEVICE Dev, BOOLEAN Self)
+{
+    UCHAR p[8 + 80 + 2 * NB_SCAN_CHLIST_MAX + 8 + 40];
+    nb_u16 cl[NB_SCAN_CHLIST_MAX];
+    ULONG n, nch = 0;
+    ULONG deadlineS = 12;
+    NTSTATUS st;
+    nb_escan_req rq;
+    BOOLEAN seqNext = Self && Dev->ChunkActive;                   // s258q: next escan of a shape 5 sequence
+    Dev->ScanWhileConn = FALSE;
+    Dev->ScanCand = 0xFF;
+    Dev->ScanBits = 0;
+    Dev->ScanNCh = 0;
+    Dev->ScanShape = 0xFF;
+    Dev->SelfScan = Self;
+    if (Self) {
+        Dev->ScanSsidLen = min(Dev->Conn.SsidLen, 32ul);
+        RtlCopyMemory(Dev->ScanSsid, Dev->Conn.Ssid, Dev->ScanSsidLen);
+        Dev->ScanDirected = Dev->ScanSsidLen ? 1 : 0;
+        Dev->ScanTrigger = 0xE;                                   // NwoaScanDiag t14 = test scan
+        InterlockedIncrement(&Dev->CntSelfScan);
+    }
+    RtlZeroMemory(&rq, sizeof(rq));
+    rq.nprobes = rq.active_ms = rq.passive_ms = rq.home_ms = -1;
+    rq.ssid = Dev->ScanSsidLen ? Dev->ScanSsid : NULL;
+    rq.ssid_len = Dev->ScanSsidLen;
+    // a directed scan (hidden network profile) must probe; otherwise ScanPassive decides
+    rq.scan_type = Dev->ScanSsidLen ? NB_SCANTYPE_ACTIVE : (Dev->Cfg.ScanPassive ? NB_SCANTYPE_PASSIVE : NB_SCANTYPE_ACTIVE);
+    if (Dev->Connected) {
+        KIRQL irql;
+        NWOA_CSCAN c;
+        SfIdleEnd(Dev);                                           // a new scan: the old watch ends
+        CandService(Dev);                                         // s258p: settings of this scan's candidate
+        ULONG bits = CandBits(Dev);
+        Dev->ScanCand = Dev->Cfg.CandidateCycle ? (UCHAR)Dev->CandCur : 0xFF;
+        Dev->ScanBits = (UCHAR)bits;
+        if (bits & (NB_CAND_CH1 | NB_CAND_CH2)) {
+            UCHAR ch = HomeChannel(Dev);
+            if (bits & NB_CAND_CH1)
+                ReadValidChannels(Dev);
+            nch = nb_scan_chanlist(cl, NB_SCAN_CHLIST_MAX, (bits & NB_CAND_CH2) ? 2 : 1, ch,
+                                   Dev->NValidCh ? Dev->ValidCh : NULL, Dev->NValidCh, Dev->IoType);
+            Dev->ScanNCh = (UCHAR)nch;
+        }
+        if (Self) {                                               // s258q: shape of this test scan
+            UCHAR shape;
+            if (!seqNext)
+                ShapeService(Dev);
+            shape = (UCHAR)(seqNext ? (ULONG)NB_SHAPE_CHUNKS :
+                            (Dev->Cfg.ShapeCycle ? Dev->ShapeCur : Dev->Cfg.TestScanShape));
+            if (shape) {                                          // a shape replaces the candidate list
+                nch = ShapeRequest(Dev, &shape, &rq, cl);
+                Dev->ScanNCh = (UCHAR)nch;
+            }
+            Dev->ScanShape = shape;
+            if (shape == NB_SHAPE_HOMELONG || shape == NB_SHAPE_PASSIVE)
+                deadlineS = 25;
+            if (!seqNext)
+                Dev->Ev124NCs = 0;
+        }
+        if (!seqNext) {
+            Dev->ScanEvBase124 = Dev->EvAllCnt[NB_E_CCA_CHAN_QUAL];
+            Dev->ScanEvBase120 = Dev->EvAllCnt[NB_E_MSCH];
+        }
+        RtlZeroMemory(&c, sizeof(c));
+        c.PmBefore = ReadPm(Dev);
+        c.StartMs = NowMs();
+        c.OutStart = NwoaTxOutstanding(Dev, NULL);
+        c.PmAfter = -1;
+        KeAcquireSpinLock(&Dev->StateLock, &irql);
+        Dev->CScan[Dev->CScanNext % NWOA_CSCAN_N] = c;
+        Dev->CScanNext++;
+        Dev->CScanDoneMark = (ULONG)Dev->CntTxStatus;
+        Dev->ConnScanStart = KeQueryInterruptTime();
+        Dev->LastConnScanAny = Dev->ConnScanStart;
+        KeReleaseSpinLock(&Dev->StateLock, irql);
+        Dev->ScanWhileConn = TRUE;
+        InterlockedIncrement(&Dev->CntConnScan);
+        if (Dev->Cfg.ScanTxHold)
+            InterlockedExchange(&Dev->TxHold, 1);                 // s258o test: nothing posted during the scan
+    }
+    NwoaScanCacheClear(Dev);
+    InterlockedIncrement(&Dev->CntScans);
+    rq.scan_ver = Dev->ScanVer == 2 || Dev->ScanVer == 3 ? Dev->ScanVer : 1;
+    rq.sync_id = NB_ESCAN_SYNC_ID;
+    rq.chs = nch ? cl : NULL;                                     // s258p ScanChanList / candidate CH1 CH2,
+    rq.nch = nch;                                                 //   s258q shapes 1 2 5
+    n = nb_escan_params_ex(p, sizeof(p), &rq);
+    Dev->ScanStatus = -1;
+    Dev->ScanDeadline = KeQueryInterruptTime() + (ULONG64)deadlineS * 10000000ull;   // 12 s (s258q shapes 2 4: 25 s)
+    InterlockedExchange(&Dev->ScanRunning, 1);
+    st = NwoaSetVar(Dev, "escan", p, n);
+    NwoaDiagDword(Dev, L"NwoaEscanRequest", (ULONG)st);
+    if (!NT_SUCCESS(st)) {
+        InterlockedExchange(&Dev->ScanRunning, 0);
+        if (Dev->ScanWhileConn && Dev->ScanCand < NB_CAND_N) {   // s258p: refused escan (e.g. a chanspec list)
+            Dev->CandErr[Dev->ScanCand]++;
+            Dev->CandAdvance = TRUE;
+        }
+        if (Dev->ScanShape < NB_SHAPE_N) {                        // s258q: refused shape escan
+            Dev->ShErr[Dev->ScanShape]++;
+            if (Dev->Cfg.ShapeCycle)
+                Dev->ShapeAdvance = TRUE;
+            Dev->ChunkActive = FALSE;
+        }
+        if (InterlockedExchange(&Dev->TxHold, 0))
+            NwoaTxSlotsFreed(Dev);
+        Dev->ScanWhileConn = FALSE;
+        Dev->SelfScan = FALSE;
+        if (!Self)
+            TaskEnd(Dev, &Dev->ScanTask, NDIS_STATUS_FAILURE);
+        else if (Dev->ScanStartDeferred) {
+            Dev->ScanStartDeferred = FALSE;
+            NwoaQueueJob(Dev, JOB_SCAN_START);
+        }
+    }
+}
+
 static void JobScanStart(PNWOA_DEVICE Dev)
 {
-    UCHAR p[96];
-    ULONG n;
-    NTSTATUS st;
     if (!Dev->ScanTask.Active)
         return;
     if (!Dev->RingsUp || Dev->Dead || !Dev->RadioOn) {
         TaskEnd(Dev, &Dev->ScanTask, NDIS_STATUS_FAILURE);
         return;
     }
-    NwoaScanCacheClear(Dev);
-    InterlockedIncrement(&Dev->CntScans);
-    n = nb_escan_params(p, sizeof(p), Dev->ScanVer == 2 || Dev->ScanVer == 3 ? Dev->ScanVer : 1,
-                        // a directed scan (hidden network profile) must probe; otherwise ScanPassive decides
-                        Dev->ScanSsidLen ? NB_SCANTYPE_ACTIVE : (Dev->Cfg.ScanPassive ? NB_SCANTYPE_PASSIVE : NB_SCANTYPE_ACTIVE),
-                        NB_ESCAN_SYNC_ID, Dev->ScanSsidLen ? Dev->ScanSsid : NULL, Dev->ScanSsidLen);
-    Dev->ScanStatus = -1;
-    Dev->ScanDeadline = KeQueryInterruptTime() + 12ull * 10000000ull;   // 12 s
-    InterlockedExchange(&Dev->ScanRunning, 1);
-    st = NwoaSetVar(Dev, "escan", p, n);
-    NwoaDiagDword(Dev, L"NwoaEscanRequest", (ULONG)st);
-    if (!NT_SUCCESS(st)) {
-        InterlockedExchange(&Dev->ScanRunning, 0);
-        TaskEnd(Dev, &Dev->ScanTask, NDIS_STATUS_FAILURE);
+    // s258o: a test scan is running; the Windows task starts when it is done (JobScanDone)
+    if (Dev->ScanRunning && Dev->SelfScan) {
+        Dev->ScanStartDeferred = TRUE;
+        InterlockedIncrement(&Dev->CntScanDeferred);
+        return;
     }
+    ChunkAbort(Dev);                                              // s258q: a Windows scan in a shape 5 gap
+    // s258n: hardware 2026-11-19 (s258k/l/m, 12 connections): every snapshot before the scan Windows
+    // asks for 180 s into each connection had no TX in flight; after it TX statuses stopped until the
+    // disassociation.  ConnectedScan=1: no firmware scan while connected; the task completes now with
+    // the cached list (+ the connected BSS).  s258o default 0 (firmware scan + ScanFlowCheck).
+    if (Dev->Connected && Dev->Cfg.ConnectedScan == 1) {
+        InterlockedIncrement(&Dev->CntScanSkipped);
+        Dev->ScanSkipped = TRUE;
+        Dev->SelfScan = FALSE;
+        Dev->ScanStatus = NB_E_STATUS_SUCCESS;
+        JobScanDone(Dev);
+        return;
+    }
+    Dev->ScanSkipped = FALSE;
+    ScanStartFw(Dev, FALSE);
+}
+
+// ------------------------------------------------ s258o TX flowring after a connected scan
+// [fact, s258n scan0] after the firmware scan made while connected the firmware stopped taking items
+// from the TX flowring (read index 320 while the host wrote up to 346, doorbell on every commit); the
+// control submit ring kept moving; a flowring delete + create made it move again at once.
+// [hypothesis] the firmware does not resume the flowring it suspended for the scan.  So right after
+// such a scan the read index is watched: taken by itself -> recorded (cause gone); not taken within
+// ScanFlowProbeMs -> one more w index write + doorbell, then the proven re-create, before Windows
+// sees a dead link.  The TCM copy of the w index tells whether the firmware has fetched it at all.
+static void SfRecord(PNWOA_DEVICE Dev, const NWOA_SFREC* R)
+{
+    KIRQL irql;
+    KeAcquireSpinLock(&Dev->StateLock, &irql);
+    Dev->Sf[Dev->SfNext % NWOA_SF_N] = *R;
+    Dev->SfNext++;
+    KeReleaseSpinLock(&Dev->StateLock, irql);
+    // s258p: per candidate counts (work item only), then the next candidate at the next CandService
+    if (R->Cand < NB_CAND_N) {
+        ULONG k = R->Cand;
+        Dev->CandN[k]++;
+        switch (R->Verdict) {
+        case NWOA_SF_ALIVE:   Dev->CandAlive[k]++; break;
+        case NWOA_SF_DBFIX:   Dev->CandStuck[k]++; Dev->CandDb[k]++; break;
+        case NWOA_SF_RSMFIX:  Dev->CandStuck[k]++; Dev->CandRsm[k]++; break;
+        case NWOA_SF_REFRESH: Dev->CandStuck[k]++; Dev->CandRef[k]++; break;
+        case NWOA_SF_REFRESHERR:
+        case NWOA_SF_STUCKREC: Dev->CandStuck[k]++; break;
+        case NWOA_SF_IDLE:    Dev->CandIdle[k]++; break;
+        default:              Dev->CandGone[k]++; break;
+        }
+        Dev->CandAdvance = TRUE;
+    }
+    // s258q: per shape (test scans) / "win" (Windows scans made while connected)
+    if (R->Shape < NB_SHAPE_N || !R->Self) {
+        ULONG k = R->Shape < NB_SHAPE_N ? R->Shape : NB_SHAPE_N;
+        ULONG ms = R->ScanEndMs >= R->ScanStartMs ? R->ScanEndMs - R->ScanStartMs : 0;
+        Dev->ShN[k]++;
+        Dev->ShMsSum[k] += ms;
+        if (ms > Dev->ShMsMax[k])
+            Dev->ShMsMax[k] = ms;
+        Dev->ShEv124[k] += R->Ev124;
+        Dev->ShEv120[k] += R->Ev120;
+        switch (R->Verdict) {
+        case NWOA_SF_ALIVE:   Dev->ShAlive[k]++; break;
+        case NWOA_SF_DBFIX:   Dev->ShStuck[k]++; Dev->ShDb[k]++; break;
+        case NWOA_SF_REFRESH: Dev->ShStuck[k]++; Dev->ShRef[k]++; break;
+        case NWOA_SF_RSMFIX:
+        case NWOA_SF_REFRESHERR:
+        case NWOA_SF_STUCKREC: Dev->ShStuck[k]++; break;
+        case NWOA_SF_IDLE:    Dev->ShIdle[k]++; break;
+        default:              Dev->ShGone[k]++; break;
+        }
+        if (R->Self && Dev->Cfg.ShapeCycle)
+            Dev->ShapeAdvance = TRUE;
+    }
+}
+
+static void SfFwView(PNWOA_DEVICE Dev, NWOA_SFREC* R)
+{
+    ULONG fr0;
+    NwoaFwIdxView(Dev, Dev->Flow.D.idx, &R->FwW, &R->FwR);
+    NwoaFwIdxView(Dev, 0, &R->FwW0, &fr0);
+    R->HostW0 = NwoaHostWIdx(Dev, 0);
+}
+
+static void SfDelay10(void)
+{
+    LARGE_INTEGER d;
+    d.QuadPart = -10 * 10000;                                     // 10 ms
+    KeDelayExecutionThread(KernelMode, FALSE, &d);
+}
+
+// items posted after the scan were not taken: (s258p RSM: FLOW_RING_RESUME first,) doorbell once
+// more, then delete + create
+static void SfFix(PNWOA_DEVICE Dev, NWOA_SFREC* R)
+{
+    ULONG w, r;
+    InterlockedIncrement(&Dev->CntSfStuck);
+    SfFwView(Dev, R);
+    if (Dev->Cfg.ScanFlowCheck == 3) {
+        R->Verdict = NWOA_SF_STUCKREC;
+        return;
+    }
+    if ((R->Bits & NB_CAND_RSM) && NT_SUCCESS(NwoaFlowResume(Dev))) {
+        for (int i = 0; i < 10; i++) {                            // 100 ms
+            SfDelay10();
+            if (!NwoaFlowIdx(Dev, &w, &r)) {
+                R->Verdict = NWOA_SF_GONE;
+                return;
+            }
+            if (r != R->R1) {
+                InterlockedIncrement(&Dev->CntSfRsmFix);
+                R->Verdict = NWOA_SF_RSMFIX;
+                return;
+            }
+        }
+    }
+    NwoaFlowKick(Dev);
+    for (int i = 0; i < 10; i++) {                                // 100 ms
+        SfDelay10();
+        if (!NwoaFlowIdx(Dev, &w, &r)) {
+            R->Verdict = NWOA_SF_GONE;
+            return;
+        }
+        if (r != R->R1) {
+            InterlockedIncrement(&Dev->CntSfDbFix);
+            R->Verdict = NWOA_SF_DBFIX;
+            return;
+        }
+    }
+    NTSTATUS st = NwoaFlowringRecreate(Dev);
+    R->Fix = (LONG)st;
+    if (NT_SUCCESS(st)) {
+        InterlockedIncrement(&Dev->CntSfRefresh);
+        R->Verdict = NWOA_SF_REFRESH;
+    } else {
+        InterlockedIncrement(&Dev->CntSfRefreshFail);
+        R->Verdict = NWOA_SF_REFRESHERR;
+    }
+    Dev->StallSm.state = 0;
+    NwoaTxSlotsFreed(Dev);
+}
+
+static void SfIdleEnd(PNWOA_DEVICE Dev)
+{
+    if (!Dev->SfArmed)
+        return;
+    Dev->SfArmed = FALSE;
+    InterlockedIncrement(&Dev->CntSfIdle);
+    Dev->SfArmRec.Verdict = NWOA_SF_IDLE;
+    Dev->SfArmRec.Ms = NowMs();
+    SfRecord(Dev, &Dev->SfArmRec);
+}
+
+static void ScanFlowAfter(PNWOA_DEVICE Dev, BOOLEAN Self, ULONG StartMs, ULONG EndMs)
+{
+    NWOA_SFREC rec;
+    nb_flowwatch fw;
+    ULONG w, r;
+    int v = NB_FW_WAIT;
+    if (!Dev->Cfg.ScanFlowCheck || !Dev->Connected || !NwoaFlowIdx(Dev, &w, &r))
+        return;
+    RtlZeroMemory(&rec, sizeof(rec));
+    rec.Self = Self ? 1 : 0;
+    rec.ScanStartMs = StartMs;
+    rec.ScanEndMs = EndMs;
+    rec.W0 = rec.W1 = w;
+    rec.R0 = rec.R1 = r;
+    rec.AdvMs = NB_FW_NONE;
+    rec.FwW = rec.FwR = rec.FwW0 = rec.HostW0 = 0xFFFFFFFFu;
+    rec.Cand = Dev->ScanCand;                                     // s258p
+    rec.Bits = Dev->ScanBits;
+    rec.NCh = Dev->ScanNCh;
+    rec.Shape = Dev->ScanShape;                                   // s258q
+    rec.Chunks = (UCHAR)(Dev->ScanShape == NB_SHAPE_CHUNKS ? Dev->ChunkIdx + 1 : 0);
+    rec.Ev124 = (USHORT)min((ULONG)(Dev->EvAllCnt[NB_E_CCA_CHAN_QUAL] - Dev->ScanEvBase124), 65535ul);
+    rec.Ev120 = (USHORT)min((ULONG)(Dev->EvAllCnt[NB_E_MSCH] - Dev->ScanEvBase120), 65535ul);
+    LONG db0 = Dev->CntFlowDbell;
+    if (Dev->Cfg.ScanFlowCheck == 2) {
+        InterlockedIncrement(&Dev->CntSfForced);
+        SfFwView(Dev, &rec);
+        rec.Fix = (LONG)NwoaFlowringRecreate(Dev);
+        NwoaTxSlotsFreed(Dev);
+        rec.Verdict = NWOA_SF_FORCED;
+        rec.Ms = NowMs();
+        SfRecord(Dev, &rec);
+        return;
+    }
+    nb_flowwatch_start(&fw, NowMs(), w, r);
+    while (v == NB_FW_WAIT) {
+        SfDelay10();
+        if (!Dev->Connected || !NwoaFlowIdx(Dev, &w, &r)) {
+            v = -1;
+            break;
+        }
+        v = nb_flowwatch_step(&fw, NowMs(), w, r, Dev->Cfg.ScanFlowProbeMs, NWOA_SF_IDLE_MS);
+    }
+    rec.W1 = w;
+    rec.R1 = r;
+    rec.AdvMs = fw.adv_ms;
+    rec.Db = (ULONG)(Dev->CntFlowDbell - db0);
+    switch (v) {
+    case NB_FW_ALIVE:
+        InterlockedIncrement(&Dev->CntSfAlive);
+        rec.Verdict = NWOA_SF_ALIVE;
+        SfFwView(Dev, &rec);
+        break;
+    case NB_FW_STUCK:
+        SfFix(Dev, &rec);
+        break;
+    case NB_FW_IDLE:
+        // nothing posted yet: the 2 s diag tick goes on watching for 30 s (SfArmTick)
+        rec.Verdict = NWOA_SF_IDLE;
+        Dev->SfArmRec = rec;
+        Dev->SfArmRec.Deferred = 1;
+        nb_flowwatch_start(&Dev->SfWatch, NowMs(), w, r);
+        Dev->SfArmUntil = KeQueryInterruptTime() + 30ull * 10000000ull;
+        Dev->SfArmed = TRUE;
+        return;                                                   // recorded when the watch ends
+    default:
+        rec.Verdict = NWOA_SF_GONE;
+        break;
+    }
+    rec.Ms = NowMs();
+    SfRecord(Dev, &rec);
+}
+
+// 2 s diag tick: after an idle verdict, the first items posted must be taken by the next tick
+static void SfArmTick(PNWOA_DEVICE Dev)
+{
+    ULONG w, r;
+    if (!Dev->SfArmed)
+        return;
+    if (!Dev->Connected || KeQueryInterruptTime() > Dev->SfArmUntil || !NwoaFlowIdx(Dev, &w, &r)) {
+        SfIdleEnd(Dev);
+        return;
+    }
+    LONG db0 = Dev->CntFlowDbell;
+    int v = nb_flowwatch_step(&Dev->SfWatch, NowMs(), w, r, 1500, 0xFFFFFFF0u);
+    if (v == NB_FW_WAIT)
+        return;
+    Dev->SfArmed = FALSE;
+    NWOA_SFREC* rec = &Dev->SfArmRec;
+    rec->W1 = w;
+    rec->R1 = r;
+    rec->AdvMs = Dev->SfWatch.adv_ms;
+    rec->Db += (ULONG)(Dev->CntFlowDbell - db0);
+    if (v == NB_FW_ALIVE) {
+        InterlockedIncrement(&Dev->CntSfAlive);
+        rec->Verdict = NWOA_SF_ALIVE;
+        SfFwView(Dev, rec);
+    } else {
+        SfFix(Dev, rec);
+    }
+    rec->Ms = NowMs();
+    SfRecord(Dev, rec);
+}
+
+// s258q shape 5: 2 s tick in the gap after one escan of the sequence.  Items posted before / during the
+// gap and still not taken (read index where the escan left it) -> the sequence ends here and the s258o
+// check + fix runs now; else the next escan.
+static void ChunkTick(PNWOA_DEVICE Dev)
+{
+    ULONG w, r;
+    if (!Dev->ChunkActive || Dev->ScanRunning)
+        return;
+    if (!Dev->Connected || Dev->Dead || !Dev->RingsUp || !Dev->RadioOn || Dev->ConnTask.Active ||
+        Dev->ScanTask.Active || Dev->FlowState != 2) {
+        ChunkAbort(Dev);
+        return;
+    }
+    if (KeQueryInterruptTime() < Dev->ChunkNextAt)
+        return;
+    if (NwoaFlowIdx(Dev, &w, &r) && r == Dev->ChunkR && w != r) {
+        Dev->ChunkStuckAt = (UCHAR)(Dev->ChunkIdx - 1);           // after this escan the ring stayed put
+        Dev->ShGapStuck[NB_SHAPE_CHUNKS]++;
+        Dev->ChunkActive = FALSE;
+        Dev->ChunkIdx--;                                          // rec.Chunks = escans made
+        ScanFlowAfter(Dev, TRUE, Dev->ChunkStartMs, Dev->ChunkLastEndMs);
+        return;
+    }
+    ScanStartFw(Dev, TRUE);
+}
+
+// TestConnScanSec: a directed firmware scan every N s of a connection (since the association or the
+// last scan made while connected, Windows' or ours)
+static void SelfScanTick(PNWOA_DEVICE Dev)
+{
+    if (!Dev->Cfg.TestConnScanSec || !Dev->Connected || Dev->ScanRunning || Dev->ScanTask.Active || Dev->ChunkActive ||
+        Dev->ConnTask.Active || Dev->FlowState != 2 || Dev->Dead || !Dev->RingsUp || !Dev->RadioOn ||
+        !Dev->Conn.SsidLen)
+        return;
+    ULONG64 now = KeQueryInterruptTime();
+    ULONG64 last = Dev->ConnUpTime > Dev->LastConnScanAny ? Dev->ConnUpTime : Dev->LastConnScanAny;
+    if (!last || SinceMs(now, last) < Dev->Cfg.TestConnScanSec * 1000)
+        return;
+    SfIdleEnd(Dev);
+    ScanStartFw(Dev, TRUE);
 }
 
 // s258m: per scan completion a numbers-only record (NwoaScanDiag): is the connected BSS in this
@@ -638,6 +1320,7 @@ static void JobScanDone(PNWOA_DEVICE Dev)
     KIRQL irql;
     NWOA_SCANDIAG sd;
     BOOLEAN conn = Dev->Connected;
+    BOOLEAN self = Dev->SelfScan;                                 // s258o test scan: no WDI task, no list
     UCHAR cur[6];
     RtlZeroMemory(&sd, sizeof(sd));
     RtlCopyMemory(cur, Dev->CurBssid, 6);
@@ -663,6 +1346,7 @@ static void JobScanDone(PNWOA_DEVICE Dev)
     sd.Conn = conn ? 1 : 0;
     sd.Entries = (UCHAR)min(count, 255u);
     sd.Status = (USHORT)Dev->ScanStatus;
+    sd.Skipped = Dev->ScanSkipped ? 1 : 0;
     if (conn) {
         ULONG v = 0;
         if (NT_SUCCESS(NwoaGetInt(Dev, NB_C_GET_RSSI, &v)) && (LONG)v < 0 && (LONG)v > -120)
@@ -699,7 +1383,8 @@ static void JobScanDone(PNWOA_DEVICE Dev)
 
     // ---- what to report
     ULONG mode = (conn && Dev->Cfg.ScanReportConnectedOnly <= 2) ? Dev->Cfg.ScanReportConnectedOnly : 0;
-    BOOLEAN synth = mode != 0 && curIdx < 0 && conn && Dev->Conn.BeaconLen >= 12 && bodies != NULL;
+    BOOLEAN skipped = Dev->ScanSkipped;
+    BOOLEAN synth = (mode != 0 || skipped) && curIdx < 0 && conn && Dev->Conn.BeaconLen >= 12 && bodies != NULL;
     ULONG nrep = 0;
     WDI_BSS_ENTRY_CONTAINER* e = (count || synth) ? new WDI_BSS_ENTRY_CONTAINER[count + 1] : NULL;
     if (e) {
@@ -724,7 +1409,7 @@ static void JobScanDone(PNWOA_DEVICE Dev)
                 ULONG64 age = inow > snap[i].SeenTime ? inow - snap[i].SeenTime : 0;
                 x->Optional.EntryAgeInfo_IsPresent = 1;
                 x->EntryAgeInfo.HostTimeStamp = (UINT64)sys.QuadPart - age;
-                x->EntryAgeInfo.CachedInformation = FALSE;
+                x->EntryAgeInfo.CachedInformation = skipped ? TRUE : FALSE;   // s258n: no scan = stored entries
             }
             nrep++;
         }
@@ -751,7 +1436,7 @@ static void JobScanDone(PNWOA_DEVICE Dev)
             sd.Synth = 1;
             InterlockedIncrement(&Dev->CntScanSynth);
         }
-        if (nrep) {
+        if (nrep && !self) {
             WDI_INDICATION_BSS_ENTRY_LIST_PARAMETERS p;
             p.Optional.DeviceDescriptor_IsPresent = 1;
             p.DeviceDescriptor.SimpleAssign(e, nrep);
@@ -778,8 +1463,56 @@ static void JobScanDone(PNWOA_DEVICE Dev)
     KeReleaseSpinLock(&Dev->StateLock, irql);
     if (snap) ExFreePoolWithTag(snap, NWOA_TAG);
     if (bodies) ExFreePoolWithTag(bodies, NWOA_TAG);
+    Dev->ScanSkipped = FALSE;
+    BOOLEAN connScan = Dev->ScanWhileConn;
+    ULONG csStart = 0, csEnd = 0;
+    if (Dev->ScanWhileConn) {
+        // s258n: a firmware scan made while connected: TX in flight before / after, statuses during,
+        // PM before / after (PmKickAfterScan=1: PM changed and set back first)
+        Dev->ScanWhileConn = FALSE;
+        LONG pm = (Dev->Cfg.PmKickAfterScan && Dev->Connected) ? PmKick(Dev) : ReadPm(Dev);
+        ULONG out = NwoaTxOutstanding(Dev, NULL);
+        KeAcquireSpinLock(&Dev->StateLock, &irql);
+        NWOA_CSCAN* c = &Dev->CScan[(Dev->CScanNext - 1) % NWOA_CSCAN_N];
+        c->EndMs = NowMs();
+        c->OutEnd = out;
+        c->DoneDuring = (ULONG)Dev->CntTxStatus - Dev->CScanDoneMark;
+        c->PmAfter = pm;
+        Dev->ConnScanEnd = KeQueryInterruptTime();
+        csStart = c->StartMs;
+        csEnd = c->EndMs;
+        KeReleaseSpinLock(&Dev->StateLock, irql);
+    }
+    if (InterlockedExchange(&Dev->TxHold, 0))                     // s258o ScanTxHold: frames go now
+        NwoaTxSlotsFreed(Dev);
+    Dev->SelfScan = FALSE;
     // escan finished (SUCCESS / ABORT / timeout): the scan task is complete either way
-    TaskEnd(Dev, &Dev->ScanTask, (Dev->ScanStatus == NB_E_STATUS_FAIL) ? NDIS_STATUS_FAILURE : NDIS_STATUS_SUCCESS);
+    if (!self)
+        TaskEnd(Dev, &Dev->ScanTask, (Dev->ScanStatus == NB_E_STATUS_FAIL) ? NDIS_STATUS_FAILURE : NDIS_STATUS_SUCCESS);
+    if (self && Dev->ChunkActive) {                               // s258q shape 5
+        if (!connScan) {
+            ChunkAbort(Dev);
+        } else if ((ULONG)Dev->ChunkIdx + 1 < Dev->ChunkTotal) {
+            ULONG w = 0, r = 0;                                   // more escans: the gap first, no verdict yet
+            (void)NwoaFlowIdx(Dev, &w, &r);
+            Dev->ChunkW = w;
+            Dev->ChunkR = r;
+            Dev->ChunkLastEndMs = csEnd;
+            Dev->ChunkIdx++;
+            Dev->ChunkNextAt = KeQueryInterruptTime() + (ULONG64)Dev->Cfg.ShapeChunkGapMs * 10000ull;
+            connScan = FALSE;
+        } else {
+            Dev->ChunkActive = FALSE;                             // last one: verdict over the whole sequence
+            csStart = Dev->ChunkStartMs;
+        }
+    }
+    if (connScan)
+        ScanFlowAfter(Dev, self, csStart, csEnd);                // s258o
+    CandService(Dev);                                             // s258p
+    if (self && Dev->ScanStartDeferred) {
+        Dev->ScanStartDeferred = FALSE;
+        NwoaQueueJob(Dev, JOB_SCAN_START);
+    }
 }
 
 static void IndicateDisassoc(PNWOA_DEVICE Dev, const UCHAR* Bssid, ULONG Reason)
@@ -1023,6 +1756,10 @@ static void JobConnect(PNWOA_DEVICE Dev)
         }
         st = NwoaFlowringCreate(Dev, c->Bssid);
         NwoaDiagDword(Dev, L"NwoaFlowringCreate", (ULONG)st);
+        NwoaDiagDword(Dev, L"NwoaFwPmAtConnect", (ULONG)ReadPm(Dev));   // s258n
+        Dev->StallSm.state = 0;
+        Dev->ConnUpTime = KeQueryInterruptTime();
+        Dev->FwCntBaseDone = FALSE;
         NwoaGetInt(Dev, NB_C_GET_RSSI, &rssi);
         RtlCopyMemory(Dev->CurBssid, c->Bssid, 6);
         RtlCopyMemory(Dev->LastConnBssid, c->Bssid, 6);
@@ -1196,6 +1933,134 @@ static void JobRoamStay(PNWOA_DEVICE Dev)
     TaskEnd(Dev, &Dev->ConnTask, NDIS_STATUS_SUCCESS);
 }
 
+// ------------------------------------------------ s258n TX stall watchdog (2 s diag job)
+static void StallRecord(PNWOA_DEVICE Dev, int Action, ULONG Out, ULONG64 Oldest, LONG Pm)
+{
+    CHAR tmp[160];
+    KIRQL irql;
+    NWOA_STALLREC r;
+    ULONG64 now = KeQueryInterruptTime();
+    RtlZeroMemory(&r, sizeof(r));
+    r.Ms = NowMs();
+    r.Action = (UCHAR)Action;
+    r.Out = Out;
+    r.OldestMs = Out ? SinceMs(now, Oldest) : 0;
+    r.SinceDoneMs = SinceMs(now, Dev->LastTxDoneTime);
+    r.SinceScanStartMs = SinceMs(now, Dev->ConnScanStart);
+    r.SinceScanEndMs = SinceMs(now, Dev->ConnScanEnd);
+    r.SinceRxMs = SinceMs(now, Dev->LastRxTime);
+    r.ConnAgeMs = SinceMs(now, Dev->ConnUpTime);
+    r.Pm = Pm;
+    NwoaRingSnapshot(Dev, tmp, sizeof(tmp), &r.FlowW, &r.FlowR);
+    KeAcquireSpinLock(&Dev->StateLock, &irql);
+    Dev->Stall[Dev->StallNext % NWOA_STALL_N] = r;
+    Dev->StallNext++;
+    KeReleaseSpinLock(&Dev->StateLock, irql);
+}
+
+// the data path stayed dead after the PM kick and the flowring re-create: leave the BSS and report
+// the loss so Windows connects again at once (it otherwise waits 1-2.5 min, and gave up after 3)
+static void StallLinkLoss(PNWOA_DEVICE Dev)
+{
+    UCHAR bssid[6];
+    if (!Dev->Connected)
+        return;
+    InterlockedIncrement(&Dev->CntStallLinkLoss);
+    RtlCopyMemory(bssid, Dev->CurBssid, 6);
+    QuietDisconnect(Dev, DIS_TX_STALL);
+    IndicateDisassoc(Dev, bssid, WDI_ASSOC_STATUS_ROAMING_ASSOCIATION_LOST);
+    NwoaDiagDword(Dev, L"NwoaLostReasonWdi", WDI_ASSOC_STATUS_ROAMING_ASSOCIATION_LOST);
+    NwoaDiagEvents(Dev);
+    NwoaSetStage(Dev, "tx_stall_link_lost", STATUS_SUCCESS);
+}
+
+// firmware "counters" iovar, first bytes as hex (no addresses in it): once 30 s into a connection and
+// at each stall detection, to compare offline (wl_cnt layout of this firmware)
+static void FwCountersHex(PNWOA_DEVICE Dev, PCWSTR Name)
+{
+    const ULONG n = 1024;
+    PUCHAR raw = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, n, NWOA_TAG);
+    PCHAR hex = (PCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, 2 * n + 32, NWOA_TAG);
+    if (raw && hex) {
+        NTSTATUS st = NwoaGetVar(Dev, "counters", raw, n);
+        ULONG o = 0;
+        RtlStringCchPrintfA(hex, 32, "st%lx@%lu ", (ULONG)st, NowMs());
+        o = (ULONG)strlen(hex);
+        static const char hx[] = "0123456789abcdef";
+        for (ULONG i = 0; NT_SUCCESS(st) && i < n && o + 3 < 2 * n + 32; i++) {
+            hex[o++] = hx[raw[i] >> 4];
+            hex[o++] = hx[raw[i] & 15];
+        }
+        hex[o] = 0;
+        NwoaDiagSz(Dev, Name, hex);
+    }
+    if (raw) ExFreePoolWithTag(raw, NWOA_TAG);
+    if (hex) ExFreePoolWithTag(hex, NWOA_TAG);
+}
+
+static void StallTick(PNWOA_DEVICE Dev)
+{
+    ULONG64 now = KeQueryInterruptTime(), oldest = 0;
+    LONG pm = -1;
+    if (!Dev->Cfg.TxStallMs)
+        return;
+    if (!Dev->Connected || Dev->FlowState != 2 || Dev->ConnTask.Active || Dev->Dead || !Dev->RingsUp) {
+        Dev->StallSm.state = 0;
+        return;
+    }
+    if (!Dev->FwCntBaseDone && SinceMs(now, Dev->ConnUpTime) >= 30000) {
+        Dev->FwCntBaseDone = TRUE;
+        FwCountersHex(Dev, L"NwoaFwCntBase");
+    }
+    ULONG out = NwoaTxOutstanding(Dev, &oldest);
+    int stalled = nb_tx_stalled(out, out ? SinceMs(now, oldest) : 0, SinceMs(now, Dev->LastTxDoneTime), Dev->Cfg.TxStallMs);
+    int a = nb_stall_step(&Dev->StallSm, NowMs(), stalled, out, (ULONG)Dev->CntTxStatus, Dev->Cfg.TxStallRecover);
+    switch (a) {
+    case NB_SA_NONE:
+        return;
+    case NB_SA_DETECT:
+        InterlockedIncrement(&Dev->CntTxStall);
+        FwCountersHex(Dev, L"NwoaFwCntStall");                // before anything is changed
+        if (Dev->Cfg.TxStallRecover >= 1)
+            pm = PmKick(Dev);
+        StallRecord(Dev, a, out, oldest, pm);
+        nb_stall_mark(&Dev->StallSm, (ULONG)Dev->CntTxStatus, NowMs());
+        return;
+    case NB_SA_FLOW: {
+        StallRecord(Dev, a, out, oldest, Dev->FwPm);
+        NTSTATUS st = NwoaFlowringRecreate(Dev);
+        NwoaDiagDword(Dev, L"NwoaStallFlowRecreate", (ULONG)st);
+        nb_stall_mark(&Dev->StallSm, (ULONG)Dev->CntTxStatus, NowMs());   // after the flush statuses
+        if (!NT_SUCCESS(st)) {
+            Dev->StallSm.state = 0;
+            if (Dev->Cfg.TxStallRecover >= 2) {
+                StallRecord(Dev, NB_SA_LINKLOSS, 0, 0, Dev->FwPm);
+                StallLinkLoss(Dev);
+            } else {
+                InterlockedIncrement(&Dev->CntStallGiveUp);
+            }
+        }
+        return;
+    }
+    case NB_SA_OK_PM:
+        InterlockedIncrement(&Dev->CntStallPmOk);
+        break;
+    case NB_SA_OK_FLOW:
+        InterlockedIncrement(&Dev->CntStallFlowOk);
+        break;
+    case NB_SA_LINKLOSS:
+        StallRecord(Dev, a, out, oldest, Dev->FwPm);
+        StallLinkLoss(Dev);
+        return;
+    case NB_SA_GIVEUP:
+        InterlockedIncrement(&Dev->CntStallGiveUp);
+        break;
+    default:
+        break;
+    }
+    StallRecord(Dev, a, out, oldest, Dev->FwPm);
+}
+
 void NwoaEvtWork(WDFWORKITEM Work)
 {
     PNWOA_DEVICE Dev = NwoaGetDevice(WdfWorkItemGetParentObject(Work));
@@ -1212,7 +2077,19 @@ void NwoaEvtWork(WDFWORKITEM Work)
         if (j & JOB_CONNECT) JobConnect(Dev);
         if (j & JOB_SCAN_START) JobScanStart(Dev);
         if (j & JOB_SCAN_DONE) JobScanDone(Dev);
-        if (j & JOB_DIAG) { SampleTick(Dev); LinkQualityTick(Dev); NwoaDiagCounters(Dev); if (Dev->Dead) NwoaDiagConsole(Dev); }
+        if (j & JOB_DIAG) {
+            SampleTick(Dev);
+            LinkQualityTick(Dev);
+            NwoaMbPollTick(Dev);                               // s258n
+            NwoaConsoleLiveTick(Dev);
+            StallTick(Dev);
+            SfArmTick(Dev);                                    // s258o
+            CandService(Dev);                                  // s258p
+            ChunkTick(Dev);                                    // s258q
+            SelfScanTick(Dev);
+            NwoaDiagCounters(Dev);
+            if (Dev->Dead) NwoaDiagConsole(Dev);
+        }
     }
 }
 
@@ -1231,6 +2108,10 @@ void NwoaWifiPowerDown(PNWOA_DEVICE Dev)
     }
     InterlockedExchange(&Dev->ConnState, CONN_IDLE);
     InterlockedExchange(&Dev->ScanRunning, 0);
+    InterlockedExchange(&Dev->TxHold, 0);                     // s258o
+    Dev->SelfScan = FALSE;
+    Dev->ScanStartDeferred = FALSE;
+    Dev->SfArmed = FALSE;
     TaskEnd(Dev, &Dev->ScanTask, NDIS_STATUS_FAILURE);
     TaskEnd(Dev, &Dev->ConnTask, NDIS_STATUS_FAILURE);
     TaskEnd(Dev, &Dev->DiscTask, NDIS_STATUS_SUCCESS);

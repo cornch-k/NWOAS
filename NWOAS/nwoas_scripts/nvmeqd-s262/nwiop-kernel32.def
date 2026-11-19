@@ -1,0 +1,16 @@
+LIBRARY KERNEL32.dll
+EXPORTS
+GetStdHandle
+WriteFile
+ExitProcess
+GetCommandLineW
+GetLastError
+GetCurrentProcess
+GetCurrentThread
+GetPriorityClass
+CreateProcessW
+ResumeThread
+WaitForSingleObject
+GetExitCodeProcess
+TerminateProcess
+CloseHandle

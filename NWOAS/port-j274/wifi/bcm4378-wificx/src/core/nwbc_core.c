@@ -577,6 +577,17 @@ nb_u32 nb_enc_flowring_delete(nb_u8 *it, nb_u32 itemsz, nb_u8 ifidx, nb_u16 flow
     return itemsz;
 }
 
+nb_u32 nb_enc_flowring_resume(nb_u8 *it, nb_u32 itemsz, nb_u8 ifidx, nb_u16 flow_ring_id)
+{
+    if (!it || itemsz < 40)
+        return 0;
+    memset(it, 0, itemsz);
+    hdr(it, NB_MSG_FLOW_RING_RESUME, ifidx, 0);
+    nb_st16(it + 8, flow_ring_id);
+    nb_st16(it + 10, 0);         /* reason */
+    return itemsz;
+}
+
 nb_u32 nb_enc_h2d_mailbox(nb_u8 *it, nb_u32 itemsz, nb_u32 data)
 {
     if (!it || itemsz < 40)
@@ -706,56 +717,139 @@ void nb_event_mask(nb_u8 *mask, nb_u32 len, const nb_u32 *ev, nb_u32 n)
 nb_u32 nb_escan_params(nb_u8 *out, nb_u32 cap, int scan_ver, int scan_type, nb_u16 sync_id,
                        const nb_u8 *ssid, nb_u32 ssid_len)
 {
+    return nb_escan_params_ch(out, cap, scan_ver, scan_type, sync_id, ssid, ssid_len, NULL, 0);
+}
+
+nb_u32 nb_escan_params_ch(nb_u8 *out, nb_u32 cap, int scan_ver, int scan_type, nb_u16 sync_id,
+                          const nb_u8 *ssid, nb_u32 ssid_len, const nb_u16 *chs, nb_u32 nch)
+{
+    nb_escan_req r;
+    memset(&r, 0, sizeof(r));
+    r.scan_ver = scan_ver;
+    r.scan_type = scan_type;
+    r.sync_id = sync_id;
+    r.ssid = ssid;
+    r.ssid_len = ssid_len;
+    r.chs = chs;
+    r.nch = nch;
+    r.nprobes = r.active_ms = r.passive_ms = r.home_ms = -1;
+    return nb_escan_params_ex(out, cap, &r);
+}
+
+nb_u32 nb_escan_params_ex(nb_u8 *out, nb_u32 cap, const nb_escan_req *r)
+{
     nb_u8 *p;
-    if (!out || ssid_len > 32)
+    nb_u32 i, tail, slist, nch, cnum;
+    if (!out || !r || r->ssid_len > 32 || r->nch > NB_SCAN_CHLIST_MAX || (r->nch && !r->chs) ||
+        r->n_list_ssids > 1 || r->list_ssid_len > 32 || (r->list_ssid_len && !r->list_ssid) ||
+        (r->ssid_len && !r->ssid))
         return 0;
-    if (scan_ver == 2 || scan_ver == 3) {
+    nch = r->nch;
+    tail = (nch * 2 + 3) & ~3u;   /* u16 chanspecs, rounded up to u32 (brcmf length) */
+    slist = r->n_list_ssids * 36; /* brcmf_ssid_le */
+    cnum = (r->n_list_ssids << 16) | nch;
+    if (r->scan_ver == 2 || r->scan_ver == 3) {
         /* bwfm_escan_params_v2: version u32, action u16, sync u16,
          * then v2 params: version u16, length u16, ssid, bssid, bss_type, pad,
          * scan_type, nprobes, active, passive, home, channel_num (u32 each) */
-        if (cap < 8 + 72)
+        if (cap < 8 + 72 + tail + slist)
             return 0;
-        memset(out, 0, 8 + 72);
+        memset(out, 0, 8 + 72 + tail + slist);
         nb_st32(out, 2);
         nb_st16(out + 4, 1);
-        nb_st16(out + 6, sync_id);
+        nb_st16(out + 6, r->sync_id);
         p = out + 8;
-        nb_st16(p, (nb_u32)scan_ver);
+        nb_st16(p, (nb_u32)r->scan_ver);
         nb_st16(p + 2, 80);
-        nb_st32(p + 4, ssid_len);
-        if (ssid_len)
-            memcpy(p + 8, ssid, ssid_len);
+        nb_st32(p + 4, r->ssid_len);
+        if (r->ssid_len)
+            memcpy(p + 8, r->ssid, r->ssid_len);
         memset(p + 40, 0xFF, 6);
         p[46] = 2;               /* DOT11_BSSTYPE_ANY */
-        nb_st32(p + 48, (nb_u32)scan_type);
-        nb_st32(p + 52, 0xFFFFFFFFu);
-        nb_st32(p + 56, 0xFFFFFFFFu);
-        nb_st32(p + 60, 0xFFFFFFFFu);
-        nb_st32(p + 64, 0xFFFFFFFFu);
-        nb_st32(p + 68, 0);
-        return 8 + 72;
+        nb_st32(p + 48, (nb_u32)r->scan_type);
+        nb_st32(p + 52, (nb_u32)r->nprobes);
+        nb_st32(p + 56, (nb_u32)r->active_ms);
+        nb_st32(p + 60, (nb_u32)r->passive_ms);
+        nb_st32(p + 64, (nb_u32)r->home_ms);
+        nb_st32(p + 68, cnum);
+        for (i = 0; i < nch; i++)
+            nb_st16(p + 72 + 2 * i, r->chs[i]);
+        if (slist) {
+            nb_st32(p + 72 + tail, r->list_ssid_len);
+            if (r->list_ssid_len)
+                memcpy(p + 72 + tail + 4, r->list_ssid, r->list_ssid_len);
+        }
+        if (nch || slist)
+            nb_st16(p + 2, 72 + tail + slist);   /* brcmf v2: offsetof(channel_list) + list (+ SSIDs) */
+        return 8 + 72 + tail + slist;
     }
     /* bwfm_escan_params_v0 (version 1): ssid(36) bssid(6) bss_type scan_type
      * nprobes active passive home channel_num */
-    if (cap < 8 + 64)
+    if (cap < 8 + 64 + tail + slist)
         return 0;
-    memset(out, 0, 8 + 64);
+    memset(out, 0, 8 + 64 + tail + slist);
     nb_st32(out, 1);
     nb_st16(out + 4, 1);
-    nb_st16(out + 6, sync_id);
+    nb_st16(out + 6, r->sync_id);
     p = out + 8;
-    nb_st32(p, ssid_len);
-    if (ssid_len)
-        memcpy(p + 4, ssid, ssid_len);
+    nb_st32(p, r->ssid_len);
+    if (r->ssid_len)
+        memcpy(p + 4, r->ssid, r->ssid_len);
     memset(p + 36, 0xFF, 6);
     p[42] = 2;
-    p[43] = (nb_u8)scan_type;
-    nb_st32(p + 44, 0xFFFFFFFFu);
-    nb_st32(p + 48, 0xFFFFFFFFu);
-    nb_st32(p + 52, 0xFFFFFFFFu);
-    nb_st32(p + 56, 0xFFFFFFFFu);
-    nb_st32(p + 60, 0);
-    return 8 + 64;
+    p[43] = (nb_u8)r->scan_type;
+    nb_st32(p + 44, (nb_u32)r->nprobes);
+    nb_st32(p + 48, (nb_u32)r->active_ms);
+    nb_st32(p + 52, (nb_u32)r->passive_ms);
+    nb_st32(p + 56, (nb_u32)r->home_ms);
+    nb_st32(p + 60, cnum);
+    for (i = 0; i < nch; i++)
+        nb_st16(p + 64 + 2 * i, r->chs[i]);
+    if (slist) {
+        nb_st32(p + 64 + tail, r->list_ssid_len);
+        if (r->list_ssid_len)
+            memcpy(p + 64 + tail + 4, r->list_ssid, r->list_ssid_len);
+    }
+    return 8 + 64 + tail + slist;
+}
+
+nb_u16 nb_chanspec20(nb_u8 ch, int io_type)
+{
+    if (io_type == NB_IO_TYPE_D11N)
+        return (nb_u16)(ch | 0x0800 | 0x0300 | (ch <= 14 ? 0x2000 : 0x1000));
+    return (nb_u16)(ch | 0x1000 | (ch <= 14 ? 0x0000 : 0xC000));
+}
+
+nb_u32 nb_scan_chanlist(nb_u16 *out, nb_u32 cap, int mode, nb_u8 cur_ch, const nb_u32 *valid, nb_u32 nvalid,
+                        int io_type)
+{
+    static const nb_u8 fix2[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 };
+    static const nb_u8 fix5[] = { 36, 40, 44, 48, 149, 153, 157, 161, 165 };   /* no DFS */
+    nb_u32 n = 0, i;
+    int five = cur_ch > 14;
+    if (!out || !cap || !cur_ch || (mode != 1 && mode != 2))
+        return 0;
+    if (mode == 2) {
+        out[0] = nb_chanspec20(cur_ch, io_type);
+        return 1;
+    }
+    if (valid && nvalid) {
+        for (i = 0; i < nvalid && n < cap && n < NB_SCAN_CHLIST_MAX; i++) {
+            nb_u32 c = valid[i];
+            if (!c || c > 196 || ((c > 14) != five))
+                continue;
+            out[n++] = nb_chanspec20((nb_u8)c, io_type);
+        }
+        if (n)
+            return n;
+    }
+    {
+        const nb_u8 *f = five ? fix5 : fix2;
+        nb_u32 fn = five ? (nb_u32)sizeof(fix5) : (nb_u32)sizeof(fix2);
+        for (i = 0; i < fn && n < cap; i++)
+            out[n++] = nb_chanspec20(f[i], io_type);
+    }
+    return n;
 }
 
 int nb_escan_hdr_parse(const nb_u8 *body, nb_u32 len, nb_escan_hdr *h)
@@ -1261,4 +1355,228 @@ nb_u32 nb_board_build(nb_u8 *out, nb_u32 cap, const nb_u8 *mac, const nb_u8 *cal
         memcpy(out + NB_BOARD_HDR, cal, cal_len);
     nb_st32(out + 24, nb_crc32(out + NB_BOARD_HDR, cal_len));
     return NB_BOARD_HDR + cal_len;
+}
+
+/* ====================================================== s258n stall / mask */
+int nb_tx_stalled(nb_u32 out, nb_u32 oldest_age_ms, nb_u32 since_done_ms, nb_u32 thresh_ms)
+{
+    return thresh_ms && out >= 3 && oldest_age_ms >= thresh_ms && since_done_ms >= thresh_ms;
+}
+
+int nb_stall_step(nb_stall *s, nb_u32 now_ms, int stalled, nb_u32 out, nb_u32 done_count, nb_u32 recover)
+{
+    nb_u32 dt;
+    if (!s)
+        return NB_SA_NONE;
+    dt = now_ms - s->t_ms;
+    switch (s->state) {
+    case 0:
+        if (!stalled)
+            return NB_SA_NONE;
+        s->state = 1;
+        return NB_SA_DETECT;
+    case 1:
+        if (done_count != s->mark) { s->state = 0; return NB_SA_OK_PM; }
+        if (dt < 4000)
+            return NB_SA_NONE;
+        if (!recover) { s->state = 0; return NB_SA_GIVEUP; }
+        s->state = 2;
+        return NB_SA_FLOW;
+    case 2:
+        if (done_count != s->mark) { s->state = 0; return NB_SA_OK_FLOW; }
+        if (out && dt >= 6000) { s->state = 0; return recover >= 2 ? NB_SA_LINKLOSS : NB_SA_GIVEUP; }
+        if (!out && dt >= 30000) { s->state = 0; return NB_SA_IDLE; }
+        return NB_SA_NONE;
+    default:
+        s->state = 0;
+        return NB_SA_NONE;
+    }
+}
+
+void nb_stall_mark(nb_stall *s, nb_u32 done_count, nb_u32 now_ms)
+{
+    if (!s)
+        return;
+    s->mark = done_count;
+    s->t_ms = now_ms;
+}
+
+void nb_flowwatch_start(nb_flowwatch *s, nb_u32 now_ms, nb_u32 w, nb_u32 r)
+{
+    if (!s)
+        return;
+    s->t0 = now_ms;
+    s->tpend = now_ms;
+    s->rpend = r;
+    s->pend = w != r;
+    s->adv_ms = NB_FW_NONE;
+}
+
+int nb_flowwatch_step(nb_flowwatch *s, nb_u32 now_ms, nb_u32 w, nb_u32 r, nb_u32 probe_ms, nb_u32 idle_ms)
+{
+    if (!s)
+        return NB_FW_WAIT;
+    if (r != s->rpend) {                        /* the firmware took items */
+        s->adv_ms = now_ms - s->t0;
+        return NB_FW_ALIVE;
+    }
+    if (s->pend)
+        return now_ms - s->tpend >= probe_ms ? NB_FW_STUCK : NB_FW_WAIT;
+    if (w != r) {                               /* first items after the scan: the probe time starts */
+        s->pend = 1;
+        s->tpend = now_ms;
+        return NB_FW_WAIT;
+    }
+    return now_ms - s->t0 >= idle_ms ? NB_FW_IDLE : NB_FW_WAIT;
+}
+
+static int nb_ishex(char c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+static int nb_isalnum(char c)
+{
+    return nb_ishex(c) || (c >= 'g' && c <= 'z') || (c >= 'G' && c <= 'Z') || c == '_';
+}
+
+/* length of a MAC / 12-hex token starting at in[i] (0 = none) */
+static nb_u32 nb_mac_at(const char *in, nb_u32 len, nb_u32 i)
+{
+    nb_u32 k, j;
+    if (i > 0 && nb_isalnum(in[i - 1]))
+        return 0;
+    /* xx:xx:xx:xx:xx:xx or with '-' */
+    if (i + 17 <= len) {
+        char sep = in[i + 2];
+        int ok = sep == ':' || sep == '-';
+        for (k = 0; ok && k < 6; k++) {
+            if (!nb_ishex(in[i + 3 * k]) || !nb_ishex(in[i + 3 * k + 1]))
+                ok = 0;
+            if (k < 5 && in[i + 3 * k + 2] != sep)
+                ok = 0;
+        }
+        if (ok && (i + 17 == len || !nb_isalnum(in[i + 17])))
+            return 17;
+    }
+    /* [0x]hhhhhhhhhhhh */
+    j = i;
+    if (j + 2 <= len && in[j] == '0' && (in[j + 1] == 'x' || in[j + 1] == 'X'))
+        j += 2;
+    for (k = 0; j + k < len && nb_ishex(in[j + k]); k++)
+        ;
+    if (k == 12 && (j + k == len || !nb_isalnum(in[j + k])))
+        return (j - i) + 12;
+    return 0;
+}
+
+nb_u32 nb_mask_text(const char *in, nb_u32 len, const nb_u8 *ssid, nb_u32 ssid_len, char *out, nb_u32 cap)
+{
+    nb_u32 i = 0, o = 0, n;
+    if (!out || !cap)
+        return 0;
+    while (in && i < len && o + 1 < cap) {
+        if (ssid && ssid_len >= 2 && i + ssid_len <= len && memcmp(in + i, ssid, ssid_len) == 0) {
+            if (o + 3 >= cap) break;
+            memcpy(out + o, "<s>", 3); o += 3; i += ssid_len;
+            continue;
+        }
+        n = nb_mac_at(in, len, i);
+        if (n) {
+            if (o + 3 >= cap) break;
+            memcpy(out + o, "<m>", 3); o += 3; i += n;
+            continue;
+        }
+        {
+            unsigned char c = (unsigned char)in[i++];
+            out[o++] = (c == '\n') ? '\n' : (c < 0x20 || c >= 0x7F) ? (c == 0 || c == '\r' ? ' ' : '?') : (char)c;
+        }
+    }
+    out[o] = 0;
+    return o;
+}
+
+/* ============================================================== s258p */
+static const nb_u32 nb_cand_tab[NB_CAND_N] = {
+    0, NB_CAND_PM2, NB_CAND_CH2, NB_CAND_CH1, NB_CAND_RSM, NB_CAND_PM2 | NB_CAND_CH1, NB_CAND_IOV,
+    NB_CAND_PM2 | NB_CAND_CH1 | NB_CAND_IOV
+};
+static const char *const nb_cand_names[NB_CAND_N] = {
+    "base", "pm2", "ch2", "ch1", "rsm", "pm2+ch1", "iov", "pm2+ch1+iov"
+};
+
+nb_u32 nb_cand_bits(nb_u32 idx) { return nb_cand_tab[idx % NB_CAND_N]; }
+const char *nb_cand_name(nb_u32 idx) { return nb_cand_names[idx % NB_CAND_N]; }
+
+/* ============================================================== s258q */
+static const char *const nb_shape_names[NB_SHAPE_N + 1] = {
+    "base", "foreign", "homelong", "wild", "passive", "chunks", "win"
+};
+const char *nb_shape_name(nb_u32 idx) { return nb_shape_names[idx < NB_SHAPE_N ? idx : NB_SHAPE_N]; }
+
+static int nb_in_valid(nb_u8 ch, const nb_u32 *valid, nb_u32 nvalid)
+{
+    nb_u32 i;
+    if (!valid || !nvalid)
+        return 1;
+    for (i = 0; i < nvalid; i++)
+        if (valid[i] == ch)
+            return 1;
+    return 0;
+}
+
+nb_u8 nb_shape_foreign_ch(nb_u8 home, const nb_u32 *valid, nb_u32 nvalid)
+{
+    static const nb_u8 lo5[] = { 149, 153, 157, 161, 165, 36, 40, 44, 48 };   /* home below 100 */
+    static const nb_u8 hi5[] = { 36, 40, 44, 48, 149, 153, 157, 161, 165 };
+    static const nb_u8 lo2[] = { 11, 1, 6 };
+    static const nb_u8 hi2[] = { 1, 6, 11 };
+    const nb_u8 *t;
+    nb_u32 n, i;
+    if (!home)
+        return 0;
+    if (home > 14) { t = home < 100 ? lo5 : hi5; n = (nb_u32)sizeof(lo5); }
+    else           { t = home <= 6 ? lo2 : hi2; n = (nb_u32)sizeof(lo2); }
+    for (i = 0; i < n; i++)
+        if (t[i] != home && nb_in_valid(t[i], valid, nvalid))
+            return t[i];
+    return 0;
+}
+
+nb_u32 nb_shape_all_channels(nb_u16 *out, nb_u32 cap, const nb_u32 *valid, nb_u32 nvalid, int io_type)
+{
+    static const nb_u8 fix[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 36, 40, 44, 48, 149, 153, 157, 161, 165 };
+    nb_u32 n = 0, i;
+    if (!out || !cap)
+        return 0;
+    if (valid && nvalid) {
+        for (i = 0; i < nvalid && n < cap && n < NB_SCAN_CHLIST_MAX; i++)
+            if (valid[i] && valid[i] <= 196)
+                out[n++] = nb_chanspec20((nb_u8)valid[i], io_type);
+        if (n)
+            return n;
+    }
+    for (i = 0; i < (nb_u32)sizeof(fix) && n < cap; i++)
+        out[n++] = nb_chanspec20(fix[i], io_type);
+    return n;
+}
+
+int nb_cca_ev_parse(const nb_u8 *d, nb_u32 len, nb_cca_ev *o)
+{
+    if (!d || !o || len < 8)
+        return NB_E_FORMAT;
+    memset(o, 0, sizeof(*o));
+    o->status = nb_ld16(d);
+    o->id = nb_ld16(d + 2);
+    o->chanspec = nb_ld16(d + 4);
+    o->len = nb_ld16(d + 6);
+    if (o->id == 0 && len >= 20) {
+        o->duration = nb_ld32(d + 8);
+        o->congest = nb_ld32(d + 12);
+        o->timestamp = nb_ld32(d + 16);
+        o->has_cca = 1;
+    } else if (o->id != 0 && len >= 12) {
+        o->noise = (nb_s32)nb_ld32(d + 8);
+        o->has_noise = 1;
+    }
+    return 1;
 }

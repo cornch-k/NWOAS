@@ -11,8 +11,8 @@ HERE="$ROOT/nwoas_scripts/standalone-s264"
 DEV=/dev/cu.usbmodemC07HL05SQ6NY1
 VUART=/dev/cu.usbmodemC07HL05SQ6NY3
 PY="$M1N1/.venv-hv/bin/python3"
-HV="$ROOT/port-j274/gpu/hv/out-hv2/m1n1-s264A-agx-hv2-standalone.bin"
-HV_SIZE=2408448 HV_SHA=178a004f963d424f17a9fbac1662c1ffe1d1dd24045a464ffffccf266de46c11
+HV="$ROOT/port-j274/gpu/hv/out-hv2/m1n1-s264B-agx-hv2-standalone.bin"
+HV_SIZE=2408448 HV_SHA=a677658782f48367d32071325f137c8fcae02a9a38f62f2f5b40ac1304d7d927
 PAYLOAD="$ROOT/nwoas_scripts/fw-wifi-s259/out/s259/m1n1-payload-s259-wifi.bin"
 PAYLOAD_SHA=fbc4406b0103cf028be5be2eb8ec60844af8952d9c845405338d48cb64e50497
 S244="$ROOT/nwoas_scripts/display-s244"
@@ -28,7 +28,7 @@ export NWOAS_LOG="$OUT.log" NWOAS_LINK_DIR="$OUT.link" NWOAS_HV_IMAGE="$HV"
 ( cd "$HERE" && shasum -a 256 -c - ) <<'SUMS'
 bab895591f45582252bfe2cdef19cd4a79338a985a6c64b419398352534cddcb  s264_common.py
 c40f1d0dbcfca1ea2dcbdcdf67caac58271b161cd76ada80fa5859f6c7d25431  s264_pyref.py
-d44d6a278fd7d0f2a0499fd8becae4f19f4efc12373e148323c1a9017851ac76  s264_compare.py
+410da4e8e76c7202dae69db1801005eb5511bceebd3b44cccff698ae8eb76e4e  s264_compare.py
 SUMS
 [ "$(md5 -q "$ROOT/experiments/tahoe-afk-20260906/m1n1-dcp-defer.bin")" = 7bec0225edc101857be3b7f195dd7357 ]
 if /usr/sbin/lsof -t "$DEV" "$VUART" >/dev/null 2>&1; then echo 'STOP: CDC pipe busy'; exit 1; fi

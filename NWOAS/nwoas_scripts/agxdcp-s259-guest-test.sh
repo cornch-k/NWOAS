@@ -55,6 +55,9 @@ fi
 #                     NWOAS_NVME_QD_IRQ=0 (engine off unless NWOAS_NVME_QD_POLL=1 = tick-polled experiment),
 #                     NWOAS_NVME_QD_STRICT=1 (FUA writes alone), NWOAS_NVME_QD_KICK=0.
 S262="$ROOT/nwoas_scripts/nvmeqd-s262"
+# 2026-11-19 S262 default ON (user decision: concurrent NVMe is the normal PC default). Unset -> g262R + QD=32;
+# an explicit NWOAS_S262_HV= (empty) or 0 keeps the old one-at-a-time g254L path.
+if [ -z "${NWOAS_S262_HV+x}" ]; then export NWOAS_S262_HV=1; [ -z "${NWOAS_NVME_QD+x}" ] && export NWOAS_NVME_QD=32; fi
 if [ "${NWOAS_S262_HV:-0}" = 1 ]; then
     HV="/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/hv/out-hv2/m1n1-g262R-agx-hv2-nvmeqd.bin"
     HV_SIZE=2326528 HV_SHA=83add623acbd7658449e84b20d664205ac085ae92e841bf0fab47c5554af89d5

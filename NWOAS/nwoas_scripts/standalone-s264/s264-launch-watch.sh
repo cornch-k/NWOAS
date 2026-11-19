@@ -11,8 +11,8 @@ HERE="$ROOT/nwoas_scripts/standalone-s264"
 DEV=/dev/cu.usbmodemC07HL05SQ6NY1
 VUART=/dev/cu.usbmodemC07HL05SQ6NY3
 PY="$M1N1/.venv-hv/bin/python3"
-HV="$ROOT/port-j274/gpu/hv/out-hv2/m1n1-s264A-agx-hv2-standalone.bin"
-HV_SIZE=2408448 HV_SHA=178a004f963d424f17a9fbac1662c1ffe1d1dd24045a464ffffccf266de46c11
+HV="$ROOT/port-j274/gpu/hv/out-hv2/m1n1-s264B-agx-hv2-standalone.bin"
+HV_SIZE=2408448 HV_SHA=a677658782f48367d32071325f137c8fcae02a9a38f62f2f5b40ac1304d7d927
 PAYLOAD="$ROOT/nwoas_scripts/fw-wifi-s259/out/s259/m1n1-payload-s259-wifi.bin"
 PAYLOAD_SHA=fbc4406b0103cf028be5be2eb8ec60844af8952d9c845405338d48cb64e50497
 S244="$ROOT/nwoas_scripts/display-s244"

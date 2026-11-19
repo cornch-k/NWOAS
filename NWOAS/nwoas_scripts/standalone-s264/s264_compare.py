@@ -11,7 +11,7 @@ Order inside one proxy session:
      The payload bytes are not uploaded (only their length matters for the record).
      sound-s256/audio_module.py runs stage A only (the S264 milestone has no sound);
      NWOAS_WIFI=0 (no SMC).
-  4. compare -> $OUT/compare.md, compare.json, c-result.bin
+  4. compare -> $OUT/compare.md, compare.json, c-result.bin, c-adt.bin, py-adt.bin
 Afterwards the Mac mini sits in the proxy with an initialised but never-entered hypervisor:
 it must be rebooted before the next test.  HARDWARE-UNVERIFIED tool.
 """
@@ -105,7 +105,9 @@ def main():
     hv.start()            # recorder suppresses iodev/fb/SPRR/GXF/hv_start
     prec = rec.record(hv, audio_buf)
 
-    # ---- 4. compare
+    # ---- 4. compare (both guest ADTs are kept so a DIFF can be traced without another run)
+    (a.out / "c-adt.bin").write_bytes(crec["adt"] or b"")
+    (a.out / "py-adt.bin").write_bytes(prec["adt"] or b"")
     L = res["layout"]
     ok, _, rows = C.compare(crec, prec, (L["py_heap_base"], L["py_heap_top"]))
     md = C.write_report(a.out / "compare.json", ok, rows,

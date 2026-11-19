@@ -469,6 +469,265 @@ static void test_board(void)
     CHECK(nb_board_parse(f, n - 1, &b) == NB_E_FORMAT);
 }
 
+static void test_s258o(void)
+{
+    nb_flowwatch f;
+    /* s258n scan0 numbers: 11 items posted during the scan, firmware r frozen at 320 */
+    nb_flowwatch_start(&f, 1000, 331, 320);
+    CHECK(f.pend == 1 && f.adv_ms == NB_FW_NONE);
+    CHECK(nb_flowwatch_step(&f, 1010, 332, 320, 300, 1000) == NB_FW_WAIT);
+    CHECK(nb_flowwatch_step(&f, 1299, 335, 320, 300, 1000) == NB_FW_WAIT);
+    CHECK(nb_flowwatch_step(&f, 1300, 335, 320, 300, 1000) == NB_FW_STUCK);
+    /* healthy: the firmware takes them 30 ms after the scan */
+    nb_flowwatch_start(&f, 1000, 331, 320);
+    CHECK(nb_flowwatch_step(&f, 1030, 331, 331, 300, 1000) == NB_FW_ALIVE && f.adv_ms == 30);
+    /* partial take counts as alive */
+    nb_flowwatch_start(&f, 0, 10, 4);
+    CHECK(nb_flowwatch_step(&f, 20, 12, 5, 300, 1000) == NB_FW_ALIVE && f.adv_ms == 20);
+    /* nothing pending at the end; first post at 500 ms, never taken -> stuck 300 ms after that post */
+    nb_flowwatch_start(&f, 0, 7, 7);
+    CHECK(f.pend == 0);
+    CHECK(nb_flowwatch_step(&f, 400, 7, 7, 300, 1000) == NB_FW_WAIT);
+    CHECK(nb_flowwatch_step(&f, 500, 8, 7, 300, 1000) == NB_FW_WAIT && f.pend == 1 && f.tpend == 500);
+    CHECK(nb_flowwatch_step(&f, 799, 9, 7, 300, 1000) == NB_FW_WAIT);
+    CHECK(nb_flowwatch_step(&f, 1200, 9, 7, 300, 1000) == NB_FW_STUCK);       /* idle limit does not apply once pending */
+    /* posted and taken between two samples (w == r again, r moved): alive */
+    nb_flowwatch_start(&f, 0, 7, 7);
+    CHECK(nb_flowwatch_step(&f, 10, 9, 9, 300, 1000) == NB_FW_ALIVE);
+    /* nothing at all for idle_ms */
+    nb_flowwatch_start(&f, 0, 7, 7);
+    CHECK(nb_flowwatch_step(&f, 999, 7, 7, 300, 1000) == NB_FW_WAIT);
+    CHECK(nb_flowwatch_step(&f, 1000, 7, 7, 300, 1000) == NB_FW_IDLE);
+    /* ring wrap (512 items): 510 -> 3 is a move */
+    nb_flowwatch_start(&f, 0, 2, 510);
+    CHECK(nb_flowwatch_step(&f, 5, 2, 3, 300, 1000) == NB_FW_ALIVE);
+    /* 2 s tick use (deferred watch, probe 1500): pending seen at tick 1, unchanged at tick 2 */
+    nb_flowwatch_start(&f, 0, 50, 50);
+    CHECK(nb_flowwatch_step(&f, 2000, 52, 50, 1500, 30000) == NB_FW_WAIT);
+    CHECK(nb_flowwatch_step(&f, 4000, 53, 50, 1500, 30000) == NB_FW_STUCK);
+    nb_flowwatch_start(&f, 0, 50, 50);
+    CHECK(nb_flowwatch_step(&f, 2000, 52, 50, 1500, 30000) == NB_FW_WAIT);
+    CHECK(nb_flowwatch_step(&f, 4000, 53, 53, 1500, 30000) == NB_FW_ALIVE && f.adv_ms == 4000);
+    CHECK(nb_flowwatch_step(NULL, 0, 0, 0, 1, 1) == NB_FW_WAIT);
+}
+
+static void test_s258p(void)
+{
+    nb_u8 p[256], q[256];
+    nb_u8 it[48];
+    nb_u16 cl[NB_SCAN_CHLIST_MAX];
+    const nb_u32 valid[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 36, 40, 44, 48, 52, 100, 149, 165 };
+    nb_u32 n, m, k;
+    /* chanspecs (brcmu_d11.h): d11ac 2G ch1 0x1001, 5G ch36 0xd024; d11n 2G ch1 0x2b01, 5G ch36 0x1b24 */
+    CHECK(nb_chanspec20(1, NB_IO_TYPE_D11AC) == 0x1001);
+    CHECK(nb_chanspec20(36, NB_IO_TYPE_D11AC) == 0xD024);
+    CHECK(nb_chanspec20(165, NB_IO_TYPE_D11AC) == 0xD0A5);
+    CHECK(nb_chanspec20(1, NB_IO_TYPE_D11N) == 0x2B01);
+    CHECK(nb_chanspec20(36, NB_IO_TYPE_D11N) == 0x1B24);
+    {   /* decode round trip */
+        nb_u8 c = 0, b = 0; nb_u16 w = 0;
+        nb_chanspec_decode(nb_chanspec20(149, NB_IO_TYPE_D11AC), NB_IO_TYPE_D11AC, &c, &b, &w);
+        CHECK(c == 149 && b == 5 && w == 20);
+        nb_chanspec_decode(nb_chanspec20(6, NB_IO_TYPE_D11AC), NB_IO_TYPE_D11AC, &c, &b, &w);
+        CHECK(c == 6 && b == 2 && w == 20);
+    }
+    /* channel lists */
+    CHECK(nb_scan_chanlist(cl, NB_SCAN_CHLIST_MAX, 0, 36, valid, 21, NB_IO_TYPE_D11AC) == 0);
+    CHECK(nb_scan_chanlist(cl, NB_SCAN_CHLIST_MAX, 1, 0, valid, 21, NB_IO_TYPE_D11AC) == 0);
+    CHECK(nb_scan_chanlist(cl, NB_SCAN_CHLIST_MAX, 2, 36, valid, 21, NB_IO_TYPE_D11AC) == 1 && cl[0] == 0xD024);
+    n = nb_scan_chanlist(cl, NB_SCAN_CHLIST_MAX, 1, 36, valid, 21, NB_IO_TYPE_D11AC);
+    CHECK(n == 8 && cl[0] == 0xD024 && cl[4] == 0xD034 && cl[7] == 0xD0A5);
+    n = nb_scan_chanlist(cl, NB_SCAN_CHLIST_MAX, 1, 6, valid, 21, NB_IO_TYPE_D11AC);
+    CHECK(n == 13 && cl[0] == 0x1001 && cl[12] == 0x100D);
+    n = nb_scan_chanlist(cl, NB_SCAN_CHLIST_MAX, 1, 36, NULL, 0, NB_IO_TYPE_D11AC);   /* fixed 5 GHz list */
+    CHECK(n == 9 && cl[0] == 0xD024 && cl[8] == 0xD0A5);
+    n = nb_scan_chanlist(cl, NB_SCAN_CHLIST_MAX, 1, 11, NULL, 0, NB_IO_TYPE_D11AC);
+    CHECK(n == 11 && cl[10] == 0x100B);
+    n = nb_scan_chanlist(cl, 3, 1, 6, valid, 21, NB_IO_TYPE_D11AC);                  /* cap respected */
+    CHECK(n == 3);
+    /* escan with no list == the old encoding (byte for byte, v1 and v2) */
+    n = nb_escan_params(p, sizeof(p), 0, NB_SCANTYPE_ACTIVE, NB_ESCAN_SYNC_ID, (const nb_u8 *)"home", 4);
+    m = nb_escan_params_ch(q, sizeof(q), 0, NB_SCANTYPE_ACTIVE, NB_ESCAN_SYNC_ID, (const nb_u8 *)"home", 4, NULL, 0);
+    CHECK(n == 72 && m == 72 && memcmp(p, q, n) == 0);
+    n = nb_escan_params(p, sizeof(p), 2, NB_SCANTYPE_ACTIVE, NB_ESCAN_SYNC_ID, NULL, 0);
+    m = nb_escan_params_ch(q, sizeof(q), 2, NB_SCANTYPE_ACTIVE, NB_ESCAN_SYNC_ID, NULL, 0, NULL, 0);
+    CHECK(n == 80 && m == 80 && memcmp(p, q, n) == 0 && nb_ld16(q + 10) == 80);
+    /* v1 with 3 channels: channel_num 3 @ 8+60, list @ 8+64, rounded to 4 bytes */
+    cl[0] = 0xD024; cl[1] = 0xD028; cl[2] = 0xD02C;
+    m = nb_escan_params_ch(q, sizeof(q), 1, NB_SCANTYPE_ACTIVE, NB_ESCAN_SYNC_ID, (const nb_u8 *)"home", 4, cl, 3);
+    CHECK(m == 8 + 64 + 8 && nb_ld32(q + 8 + 60) == 3 && nb_ld16(q + 8 + 64) == 0xD024 &&
+          nb_ld16(q + 8 + 68) == 0xD02C && nb_ld16(q + 8 + 70) == 0);
+    CHECK(nb_ld32(q + 8) == 4 && memcmp(q + 12, "home", 4) == 0);
+    n = nb_escan_params(p, sizeof(p), 1, NB_SCANTYPE_ACTIVE, NB_ESCAN_SYNC_ID, (const nb_u8 *)"home", 4);
+    CHECK(n == 72 && memcmp(p, q, 8 + 60) == 0);   /* fixed part identical to the no-list request */
+    /* v2 with 1 channel: length 72 + 4 @ p+2, channel_num @ 8+68, list @ 8+72 */
+    m = nb_escan_params_ch(q, sizeof(q), 2, NB_SCANTYPE_ACTIVE, NB_ESCAN_SYNC_ID, NULL, 0, cl, 1);
+    CHECK(m == 8 + 72 + 4 && nb_ld16(q + 10) == 76 && nb_ld32(q + 8 + 68) == 1 && nb_ld16(q + 8 + 72) == 0xD024);
+    CHECK(nb_escan_params_ch(q, 8 + 64 + 4, 1, 0, 1, NULL, 0, cl, 3) == 0);   /* does not fit */
+    CHECK(nb_escan_params_ch(q, sizeof(q), 1, 0, 1, NULL, 0, NULL, 3) == 0);
+    CHECK(nb_escan_params_ch(q, sizeof(q), 1, 0, 1, NULL, 0, cl, NB_SCAN_CHLIST_MAX + 1) == 0);
+    /* flowring resume request: type 0x15, ifidx 0, request id 0, ring id 2 @ 8, reason 0 */
+    CHECK(nb_enc_flowring_resume(it, 40, 0, 2) == 40 && it[0] == NB_MSG_FLOW_RING_RESUME && it[1] == 0 &&
+          nb_ld32(it + 4) == 0 && nb_ld16(it + 8) == 2 && nb_ld16(it + 10) == 0 && it[12] == 0 && it[39] == 0);
+    CHECK(nb_enc_flowring_resume(it, 32, 0, 2) == 0);
+    /* candidate table */
+    CHECK(nb_cand_bits(0) == 0 && nb_cand_bits(1) == NB_CAND_PM2 && nb_cand_bits(2) == NB_CAND_CH2 &&
+          nb_cand_bits(3) == NB_CAND_CH1 && nb_cand_bits(4) == NB_CAND_RSM &&
+          nb_cand_bits(5) == (NB_CAND_PM2 | NB_CAND_CH1) && nb_cand_bits(6) == NB_CAND_IOV &&
+          nb_cand_bits(7) == (NB_CAND_PM2 | NB_CAND_CH1 | NB_CAND_IOV) && nb_cand_bits(8) == 0);
+    CHECK(strcmp(nb_cand_name(0), "base") == 0 && strcmp(nb_cand_name(7), "pm2+ch1+iov") == 0 &&
+          strcmp(nb_cand_name(9), "pm2") == 0);
+    for (k = 0; k < NB_CAND_N; k++)                 /* CH1 and CH2 never together */
+        CHECK((nb_cand_bits(k) & (NB_CAND_CH1 | NB_CAND_CH2)) != (NB_CAND_CH1 | NB_CAND_CH2));
+}
+
+static void test_s258n(void)
+{
+    char o[256];
+    nb_stall st = { 0, 0, 0 };
+    const nb_u8 ss[] = { 'h', 'o', 'm', 'e', 'n', 'e', 't' };
+    /* stall decision */
+    CHECK(!nb_tx_stalled(2, 20000, 20000, 8000));             /* fewer than 3 outstanding */
+    CHECK(!nb_tx_stalled(10, 20000, 5000, 8000));              /* a status came 5 s ago */
+    CHECK(!nb_tx_stalled(10, 7000, 20000, 8000));              /* oldest is young */
+    CHECK(nb_tx_stalled(10, 8000, 8000, 8000));
+    CHECK(!nb_tx_stalled(10, 20000, 20000, 0));                /* detector off */
+    /* state machine: detect -> PM kick works */
+    CHECK(nb_stall_step(&st, 1000, 0, 0, 5, 2) == NB_SA_NONE && st.state == 0);
+    CHECK(nb_stall_step(&st, 3000, 1, 9, 5, 2) == NB_SA_DETECT && st.state == 1);
+    nb_stall_mark(&st, 5, 3000);
+    CHECK(nb_stall_step(&st, 5000, 1, 9, 5, 2) == NB_SA_NONE);
+    CHECK(nb_stall_step(&st, 6000, 0, 2, 12, 2) == NB_SA_OK_PM && st.state == 0);
+    /* detect -> no progress -> flowring -> progress */
+    CHECK(nb_stall_step(&st, 10000, 1, 9, 12, 2) == NB_SA_DETECT);
+    nb_stall_mark(&st, 12, 10000);
+    CHECK(nb_stall_step(&st, 12000, 1, 11, 12, 2) == NB_SA_NONE);
+    CHECK(nb_stall_step(&st, 14000, 1, 13, 12, 2) == NB_SA_FLOW && st.state == 2);
+    nb_stall_mark(&st, 25, 14500);                             /* flush statuses counted before the mark */
+    CHECK(nb_stall_step(&st, 16000, 0, 1, 25, 2) == NB_SA_NONE);
+    CHECK(nb_stall_step(&st, 18000, 0, 0, 26, 2) == NB_SA_OK_FLOW && st.state == 0);
+    /* detect -> flowring -> still nothing -> link loss (recover 2) / give up (recover 1) */
+    CHECK(nb_stall_step(&st, 30000, 1, 9, 26, 2) == NB_SA_DETECT); nb_stall_mark(&st, 26, 30000);
+    CHECK(nb_stall_step(&st, 34000, 1, 9, 26, 2) == NB_SA_FLOW);   nb_stall_mark(&st, 40, 34000);
+    CHECK(nb_stall_step(&st, 38000, 0, 4, 40, 2) == NB_SA_NONE);
+    CHECK(nb_stall_step(&st, 40000, 0, 4, 40, 2) == NB_SA_LINKLOSS && st.state == 0);
+    CHECK(nb_stall_step(&st, 50000, 1, 9, 40, 1) == NB_SA_DETECT); nb_stall_mark(&st, 40, 50000);
+    CHECK(nb_stall_step(&st, 54000, 1, 9, 40, 1) == NB_SA_FLOW);   nb_stall_mark(&st, 41, 54000);
+    CHECK(nb_stall_step(&st, 60000, 0, 4, 41, 1) == NB_SA_GIVEUP);
+    CHECK(nb_stall_step(&st, 70000, 1, 9, 41, 0) == NB_SA_DETECT); nb_stall_mark(&st, 41, 70000);
+    CHECK(nb_stall_step(&st, 74000, 1, 9, 41, 0) == NB_SA_GIVEUP && st.state == 0);
+    /* nothing outstanding after the re-create: wait, then idle */
+    CHECK(nb_stall_step(&st, 80000, 1, 9, 41, 2) == NB_SA_DETECT); nb_stall_mark(&st, 41, 80000);
+    CHECK(nb_stall_step(&st, 84000, 1, 9, 41, 2) == NB_SA_FLOW);   nb_stall_mark(&st, 50, 84000);
+    CHECK(nb_stall_step(&st, 100000, 0, 0, 50, 2) == NB_SA_NONE);
+    CHECK(nb_stall_step(&st, 114000, 0, 0, 50, 2) == NB_SA_IDLE);
+    /* masking */
+    nb_mask_text("peer aa:BB:cc:01:02:03 ok", 25, NULL, 0, o, sizeof(o));
+    CHECK(strcmp(o, "peer <m> ok") == 0);
+    nb_mask_text("Peer 0xA1B2C3D4E5F6 self 0x0011223344aa", 39, NULL, 0, o, sizeof(o));
+    CHECK(strcmp(o, "Peer <m> self <m>") == 0);
+    nb_mask_text("bss a1b2c3d4e5f6, 11-22-33-44-55-66", 35, NULL, 0, o, sizeof(o));
+    CHECK(strcmp(o, "bss <m>, <m>") == 0);
+    nb_mask_text("t 0x1234 x123456789abc 1234567890abcd", 37, NULL, 0, o, sizeof(o));
+    CHECK(strcmp(o, "t 0x1234 x123456789abc 1234567890abcd") == 0);   /* 4 hex / glued / 14 hex: kept */
+    nb_mask_text("join homenet ch 36\r\n\x01", 21, ss, sizeof(ss), o, sizeof(o));
+    CHECK(strcmp(o, "join <s> ch 36 \n?") == 0);
+    CHECK(nb_mask_text("abcdef", 6, NULL, 0, o, 4) == 3 && strcmp(o, "abc") == 0);
+}
+
+static void test_s258q(void)
+{
+    nb_u8 p[512], q[512];
+    nb_u16 cl[NB_SCAN_CHLIST_MAX];
+    const nb_u32 valid[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 36, 40, 44, 48, 52, 100, 149, 165 };
+    const nb_u32 v36[] = { 1, 6, 11, 36, 40 };
+    nb_escan_req r;
+    nb_cca_ev ev;
+    nb_u32 n, m;
+    /* ex with defaults == _ch (v1, v2, with and without a list) */
+    memset(&r, 0, sizeof(r));
+    r.scan_ver = 1; r.scan_type = NB_SCANTYPE_ACTIVE; r.sync_id = NB_ESCAN_SYNC_ID;
+    r.ssid = (const nb_u8 *)"home"; r.ssid_len = 4;
+    r.nprobes = r.active_ms = r.passive_ms = r.home_ms = -1;
+    n = nb_escan_params_ex(p, sizeof(p), &r);
+    m = nb_escan_params_ch(q, sizeof(q), 1, NB_SCANTYPE_ACTIVE, NB_ESCAN_SYNC_ID, (const nb_u8 *)"home", 4, NULL, 0);
+    CHECK(n == 72 && m == 72 && memcmp(p, q, n) == 0);
+    cl[0] = 0xD095;
+    r.chs = cl; r.nch = 1;
+    n = nb_escan_params_ex(p, sizeof(p), &r);
+    m = nb_escan_params_ch(q, sizeof(q), 1, NB_SCANTYPE_ACTIVE, NB_ESCAN_SYNC_ID, (const nb_u8 *)"home", 4, cl, 1);
+    CHECK(n == 76 && m == 76 && memcmp(p, q, n) == 0);
+    r.scan_ver = 2;
+    n = nb_escan_params_ex(p, sizeof(p), &r);
+    m = nb_escan_params_ch(q, sizeof(q), 2, NB_SCANTYPE_ACTIVE, NB_ESCAN_SYNC_ID, (const nb_u8 *)"home", 4, cl, 1);
+    CHECK(n == 84 && m == 84 && memcmp(p, q, n) == 0);
+    /* shape 2: home channel, active dwell 3000 ms @ v1 p+48, others -1 */
+    r.scan_ver = 1; r.active_ms = 3000;
+    n = nb_escan_params_ex(p, sizeof(p), &r);
+    CHECK(n == 76 && nb_ld32(p + 8 + 44) == 0xFFFFFFFFu && nb_ld32(p + 8 + 48) == 3000 &&
+          nb_ld32(p + 8 + 52) == 0xFFFFFFFFu && nb_ld32(p + 8 + 56) == 0xFFFFFFFFu && nb_ld32(p + 8 + 60) == 1);
+    r.scan_ver = 2;
+    n = nb_escan_params_ex(p, sizeof(p), &r);
+    CHECK(n == 84 && nb_ld32(p + 8 + 56) == 3000 && nb_ld32(p + 8 + 52) == 0xFFFFFFFFu);
+    /* shape 3 (brcmf wildcard form): ssid_le empty, n_ssids 1 in channel_num, one empty brcmf_ssid_le after
+     * the (empty) list: v1 total 8 + 64 + 36, v2 length 72 + 36 */
+    r.scan_ver = 1; r.active_ms = -1; r.ssid = NULL; r.ssid_len = 0; r.chs = NULL; r.nch = 0;
+    r.n_list_ssids = 1; r.list_ssid = NULL; r.list_ssid_len = 0;
+    n = nb_escan_params_ex(p, sizeof(p), &r);
+    CHECK(n == 8 + 64 + 36 && nb_ld32(p + 8) == 0 && nb_ld32(p + 8 + 60) == 0x10000 && nb_ld32(p + 8 + 64) == 0 &&
+          p[8 + 43] == NB_SCANTYPE_ACTIVE);
+    r.scan_ver = 2;
+    n = nb_escan_params_ex(p, sizeof(p), &r);
+    CHECK(n == 8 + 72 + 36 && nb_ld16(p + 10) == 72 + 36 && nb_ld32(p + 8 + 68) == 0x10000);
+    /* list SSID after 3 channels: rounded list 8 bytes, entry len 4 + "home" */
+    r.scan_ver = 1; cl[0] = 0xD024; cl[1] = 0xD028; cl[2] = 0xD02C; r.chs = cl; r.nch = 3;
+    r.list_ssid = (const nb_u8 *)"home"; r.list_ssid_len = 4;
+    n = nb_escan_params_ex(p, sizeof(p), &r);
+    CHECK(n == 8 + 64 + 8 + 36 && nb_ld32(p + 8 + 60) == 0x10003 && nb_ld16(p + 8 + 68) == 0xD02C &&
+          nb_ld32(p + 8 + 72) == 4 && memcmp(p + 8 + 76, "home", 4) == 0);
+    CHECK(nb_escan_params_ex(p, 8 + 64 + 8 + 35, &r) == 0);          /* does not fit */
+    r.n_list_ssids = 2;
+    CHECK(nb_escan_params_ex(p, sizeof(p), &r) == 0);
+    r.n_list_ssids = 1; r.list_ssid_len = 33;
+    CHECK(nb_escan_params_ex(p, sizeof(p), &r) == 0);
+    /* shape 4: passive type byte */
+    memset(&r, 0, sizeof(r));
+    r.scan_ver = 1; r.scan_type = NB_SCANTYPE_PASSIVE; r.sync_id = NB_ESCAN_SYNC_ID;
+    r.nprobes = r.active_ms = r.passive_ms = r.home_ms = -1;
+    n = nb_escan_params_ex(p, sizeof(p), &r);
+    CHECK(n == 72 && p[8 + 43] == NB_SCANTYPE_PASSIVE && nb_ld32(p + 8) == 0 && nb_ld32(p + 8 + 60) == 0);
+    /* foreign channel */
+    CHECK(nb_shape_foreign_ch(0, valid, 21) == 0);
+    CHECK(nb_shape_foreign_ch(36, valid, 21) == 149);
+    CHECK(nb_shape_foreign_ch(149, valid, 21) == 36);
+    CHECK(nb_shape_foreign_ch(44, NULL, 0) == 149);
+    CHECK(nb_shape_foreign_ch(36, v36, 5) == 40);                     /* 149.. not valid: same band, not home */
+    CHECK(nb_shape_foreign_ch(6, valid, 21) == 11);
+    CHECK(nb_shape_foreign_ch(11, valid, 21) == 1);
+    CHECK(nb_shape_foreign_ch(1, valid, 21) == 11);
+    /* all channels */
+    n = nb_shape_all_channels(cl, NB_SCAN_CHLIST_MAX, valid, 21, NB_IO_TYPE_D11AC);
+    CHECK(n == 21 && cl[0] == 0x1001 && cl[13] == 0xD024 && cl[20] == 0xD0A5);
+    n = nb_shape_all_channels(cl, NB_SCAN_CHLIST_MAX, NULL, 0, NB_IO_TYPE_D11AC);
+    CHECK(n == 20 && cl[0] == 0x1001 && cl[11] == 0xD024 && cl[19] == 0xD0A5);
+    CHECK(nb_shape_all_channels(cl, 4, valid, 21, NB_IO_TYPE_D11AC) == 4);
+    /* names */
+    CHECK(strcmp(nb_shape_name(0), "base") == 0 && strcmp(nb_shape_name(5), "chunks") == 0 &&
+          strcmp(nb_shape_name(6), "win") == 0 && strcmp(nb_shape_name(200), "win") == 0);
+    /* event 124 (cca_chan_qual_event_t): CCA on 5 GHz ch 36 */
+    {
+        nb_u8 d[20];
+        nb_st16(d, 0); nb_st16(d + 2, 0); nb_st16(d + 4, 0xD024); nb_st16(d + 6, 12);
+        nb_st32(d + 8, 100); nb_st32(d + 12, 37); nb_st32(d + 16, 5000);
+        CHECK(nb_cca_ev_parse(d, 20, &ev) == 1 && ev.id == 0 && ev.chanspec == 0xD024 && ev.len == 12 &&
+              ev.has_cca && ev.duration == 100 && ev.congest == 37 && ev.timestamp == 5000 && !ev.has_noise);
+        nb_st16(d + 2, 1); nb_st32(d + 8, (nb_u32)-92);
+        CHECK(nb_cca_ev_parse(d, 12, &ev) == 1 && ev.has_noise && ev.noise == -92 && !ev.has_cca);
+        CHECK(nb_cca_ev_parse(d, 8, &ev) == 1 && !ev.has_noise && !ev.has_cca && ev.chanspec == 0xD024);
+        CHECK(nb_cca_ev_parse(d, 7, &ev) < 0);
+    }
+}
+
 int main(int argc, char **argv)
 {
     test_erom();
@@ -490,6 +749,10 @@ int main(int argc, char **argv)
     test_board();
     test_eapol_event();
     test_eapol_kinds();
+    test_s258n();
+    test_s258o();
+    test_s258p();
+    test_s258q();
     printf("%s: %d checks, %d failures\n", failures ? "FAIL" : "PASS", checks, failures);
     return failures ? 1 : 0;
 }

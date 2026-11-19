@@ -1,0 +1,11 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "NWIOP.EXE",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/nvmeqd-s262/NWIOP.EXE",
+   "bytes": 11776,
+   "sha256": "bf98fbf67b8fb72aa83ee59b9fac55d5da0ea8f63bb3f4647f84c127a3916e5a"
+  }
+ ]
+}

@@ -272,6 +272,12 @@ nb_u32 nb_ring_read_avail(nb_u32 r, nb_u32 w, nb_u32 n, nb_u32 *contig);
 #define NB_MSG_FLOW_RING_CREATE_CMPLT 0x04
 #define NB_MSG_FLOW_RING_DELETE      0x05
 #define NB_MSG_FLOW_RING_DELETE_CMPLT 0x06
+/* s258p: bcmdhd bcmmsgbuf.h MSG_TYPE_FLOW_RING_RESUME / _CMPLT (idle flowring management; brcmfmac
+ * only defines the numbers in the Asahi tree).  Request = tx_idle_flowring_resume_request_t:
+ * common header, flow_ring_id (u16 @8), reason (u16 @10), rsvd; the completion carries the usual
+ * compl_msg_hdr (status @8, flow_ring_id @10). */
+#define NB_MSG_FLOW_RING_RESUME      0x15
+#define NB_MSG_FLOW_RING_RESUME_CMPLT 0x16
 #define NB_MSG_IOCTLPTR_REQ          0x09
 #define NB_MSG_IOCTLPTR_REQ_ACK      0x0A
 #define NB_MSG_IOCTLRESP_BUF_POST    0x0B
@@ -297,6 +303,7 @@ nb_u32 nb_enc_tx_post(nb_u8 *it, nb_u32 itemsz, nb_u8 ifidx, nb_u32 req_id, cons
 nb_u32 nb_enc_flowring_create(nb_u8 *it, nb_u32 itemsz, nb_u8 ifidx, nb_u16 flow_ring_id, const nb_u8 *da,
                               const nb_u8 *sa, nb_u8 tid, nb_u16 max_items, nb_u16 len_item, nb_u64 iova);
 nb_u32 nb_enc_flowring_delete(nb_u8 *it, nb_u32 itemsz, nb_u8 ifidx, nb_u16 flow_ring_id);
+nb_u32 nb_enc_flowring_resume(nb_u8 *it, nb_u32 itemsz, nb_u8 ifidx, nb_u16 flow_ring_id);   /* s258p */
 nb_u32 nb_enc_h2d_mailbox(nb_u8 *it, nb_u32 itemsz, nb_u32 data);
 
 typedef struct nb_msg {
@@ -321,6 +328,7 @@ int nb_dec_msg(const nb_u8 *it, nb_u32 len, nb_msg *m);
 #define NB_C_SET_SSID           26
 #define NB_C_GET_CHANNEL        29
 #define NB_C_DISASSOC           52
+#define NB_C_GET_PM             85
 #define NB_C_SET_PM             86
 #define NB_C_SET_AP             118
 #define NB_C_GET_RSSI           127
@@ -330,6 +338,9 @@ int nb_dec_msg(const nb_u8 *it, nb_u32 len, nb_msg *m);
 #define NB_C_GET_VAR            262
 #define NB_C_SET_VAR            263
 #define NB_C_SET_SCAN_PASSIVE_TIME 258
+#define NB_C_GET_VALID_CHANNELS 217     /* brcmfmac fwil.h: wl_uint32_list { count, element[] } */
+#define NB_C_GET_FAKEFRAG       218     /* bcmdhd wlioctl WLC_GET_FAKEFRAG */
+#define NB_C_SET_FAKEFRAG       219     /* brcmfmac fwil.h (frameburst, brcmf_config_dongle) */
 #define NB_PM_CAM               0
 #define NB_PM_FAST_PS           2
 
@@ -397,6 +408,21 @@ void nb_event_mask(nb_u8 *mask, nb_u32 len, const nb_u32 *ev, nb_u32 n);
  * ssid may be NULL.  scan_ver 0/1 -> v1 layout, 2/3 -> v2 layout. */
 nb_u32 nb_escan_params(nb_u8 *out, nb_u32 cap, int scan_ver, int scan_type, nb_u16 sync_id,
                        const nb_u8 *ssid, nb_u32 ssid_len);
+/* s258p: the same with an explicit chanspec list (brcmf_scan_param_get_prepped_struct_v1/v2: u16
+ * chanspecs right after the fixed part, channel_num = count; the SSID stays in ssid_le as above, so the
+ * upper half of channel_num (n_ssids) is 0).  nch = 0 gives exactly nb_escan_params. */
+nb_u32 nb_escan_params_ch(nb_u8 *out, nb_u32 cap, int scan_ver, int scan_type, nb_u16 sync_id,
+                          const nb_u8 *ssid, nb_u32 ssid_len, const nb_u16 *chs, nb_u32 nch);
+/* 20 MHz chanspec of a channel (band from the number: <= 14 is 2.4 GHz), as brcmfmac
+ * channel_to_chanspec does for a cfg80211 channel: d11ac ch|BW_20 0x1000|BND 0x0000/0xC000,
+ * d11n ch|BW_20 0x0800|SB_N 0x0300|BND 0x2000/0x1000. */
+nb_u16 nb_chanspec20(nb_u8 ch, int io_type);
+/* s258p scan channel list while connected.  mode 1: every channel of valid[] (firmware
+ * WLC_GET_VALID_CHANNELS) in the band of cur_ch (nvalid 0: a fixed list of that band),
+ * mode 2: cur_ch only.  Returns the count (0 = none / mode 0 / cur_ch 0). */
+#define NB_SCAN_CHLIST_MAX 64
+nb_u32 nb_scan_chanlist(nb_u16 *out, nb_u32 cap, int mode, nb_u8 cur_ch, const nb_u32 *valid, nb_u32 nvalid,
+                        int io_type);
 
 typedef struct nb_escan_hdr {
     nb_u32 buflen, version;
@@ -524,6 +550,119 @@ typedef struct nb_board {
 int    nb_board_parse(const nb_u8 *f, nb_u32 len, nb_board *b);
 nb_u32 nb_board_build(nb_u8 *out, nb_u32 cap, const nb_u8 *mac, const nb_u8 *cal, nb_u32 cal_len);
 nb_u32 nb_crc32(const nb_u8 *p, nb_u32 n);
+
+/* --------------------------------------------------- s258n: data path stall
+ * Hardware 2026-11-19 (s258k/l/m): TX requests keep being posted but no TX status comes back
+ * (the firmware returns them all only at disassoc / flowring delete) and RX stops later.
+ * nb_tx_stalled: outstanding >= 3, the oldest outstanding post and the last TX status both at
+ * least thresh_ms old.  nb_stall_step: one 2 s watchdog tick.
+ *   state 0 normal -> stalled: NB_SA_DETECT (record; recover >= 1: PM kick), state 1
+ *   state 1: TX status count moved -> NB_SA_OK_PM, state 0; >= 4 s -> NB_SA_FLOW (flowring
+ *            re-create), state 2
+ *   state 2: TX status count moved since the re-create -> NB_SA_OK_FLOW, state 0;
+ *            >= 6 s with TX outstanding -> recover >= 2: NB_SA_LINKLOSS (else NB_SA_GIVEUP), state 0;
+ *            30 s with nothing outstanding (no traffic to judge) -> NB_SA_IDLE, state 0
+ * After an action the caller does it and calls nb_stall_mark(done_count_now, now_ms). */
+#define NB_SA_NONE      0
+#define NB_SA_DETECT    1
+#define NB_SA_FLOW      2
+#define NB_SA_LINKLOSS  3
+#define NB_SA_OK_PM     4
+#define NB_SA_OK_FLOW   5
+#define NB_SA_GIVEUP    6
+#define NB_SA_IDLE      7
+typedef struct nb_stall { nb_u32 state, t_ms, mark; } nb_stall;
+int  nb_tx_stalled(nb_u32 out, nb_u32 oldest_age_ms, nb_u32 since_done_ms, nb_u32 thresh_ms);
+int  nb_stall_step(nb_stall *s, nb_u32 now_ms, int stalled, nb_u32 out, nb_u32 done_count, nb_u32 recover);
+void nb_stall_mark(nb_stall *s, nb_u32 done_count, nb_u32 now_ms);
+
+/* --------------------------------------------------- s258o: TX flowring after a connected scan
+ * Hardware 2026-11-19 (s258n scan0): after a firmware scan made while connected the firmware read
+ * index of the TX flowring stayed at 320 while the host write pointer went 342 -> 346; a flowring
+ * delete + create made it move again.  nb_flowwatch_* decide from (w, r) samples:
+ *   start(w, r): items pending if w != r.
+ *   step: r moved since the start / since the items were first seen -> NB_FW_ALIVE (adv_ms = time to
+ *         the first move); items pending and r unchanged for probe_ms -> NB_FW_STUCK; nothing pending
+ *         for idle_ms -> NB_FW_IDLE (nothing to judge); else NB_FW_WAIT. */
+#define NB_FW_WAIT   0
+#define NB_FW_ALIVE  1
+#define NB_FW_STUCK  2
+#define NB_FW_IDLE   3
+#define NB_FW_NONE   0xFFFFFFFFu
+typedef struct nb_flowwatch { nb_u32 t0, tpend, rpend, pend, adv_ms; } nb_flowwatch;
+void nb_flowwatch_start(nb_flowwatch *s, nb_u32 now_ms, nb_u32 w, nb_u32 r);
+int  nb_flowwatch_step(nb_flowwatch *s, nb_u32 now_ms, nb_u32 w, nb_u32 r, nb_u32 probe_ms, nb_u32 idle_ms);
+
+/* s258p candidate settings rotated by CandidateCycle=1 (one per scan made while connected).
+ * PM2   : SET_PM 2 + pm2_sleep_ret 2000 while the candidate is active (brcmf_cfg80211_set_power_mgmt)
+ * CH1   : scan channel list = valid channels of the current band (cfg80211 passes a list)
+ * CH2   : scan channel list = the current channel only (the radio does not leave the home channel)
+ * RSM   : stuck after the scan -> FLOW_RING_RESUME first (bcmdhd message), then doorbell, re-create
+ * IOV   : the iovars brcmfmac sets and we do not (txbf 1, arp_ol 9 / arpoe 1 / ndoe 1, FAKEFRAG 1,
+ *         bcn_timeout 4, obss_coex -1), set at activation and put back at deactivation */
+#define NB_CAND_PM2  0x01
+#define NB_CAND_CH1  0x02
+#define NB_CAND_CH2  0x04
+#define NB_CAND_RSM  0x08
+#define NB_CAND_IOV  0x10
+#define NB_CAND_N    8
+nb_u32 nb_cand_bits(nb_u32 idx);          /* idx % NB_CAND_N */
+const char *nb_cand_name(nb_u32 idx);     /* "base", "pm2", "ch2", "ch1", "rsm", "pm2+ch1", "iov", "pm2+ch1+iov" */
+
+/* s258q test-scan shapes (TestScanShape / ShapeCycle; driver test scans only, Windows scans unchanged).
+ * 0 base    : directed to the connected SSID (ssid_le), active, firmware full list (s258o/p test scan)
+ * 1 foreign : the same, one non-home channel of the home band only (radio leaves home ~40 ms)
+ * 2 homelong: the same, home channel only, active dwell ShapeLongMs (default 3000): scan time without leaving home
+ * 3 wild    : brcmfmac form of a wildcard scan: ssid_le empty, one empty SSID after the channel list,
+ *             channel_num = 1 << 16 (n_ssids 1, firmware full list), active (brcmf_escan_prep, cfg80211 n_ssids 1)
+ * 4 passive : passive, no SSID, firmware full list
+ * 5 chunks  : directed, active, the valid channels of both bands in escans of ShapeChunkN channels, the
+ *             next one ShapeChunkGapMs after the previous one finished (TX may flow in between) */
+#define NB_SHAPE_N 6
+#define NB_SHAPE_BASE 0
+#define NB_SHAPE_FOREIGN 1
+#define NB_SHAPE_HOMELONG 2
+#define NB_SHAPE_WILD 3
+#define NB_SHAPE_PASSIVE 4
+#define NB_SHAPE_CHUNKS 5
+const char *nb_shape_name(nb_u32 idx);   /* idx >= NB_SHAPE_N: "win" (a Windows scan made while connected) */
+typedef struct nb_escan_req {
+    int scan_ver, scan_type;
+    nb_u16 sync_id;
+    const nb_u8 *ssid; nb_u32 ssid_len;           /* ssid_le (may be NULL / 0) */
+    const nb_u16 *chs; nb_u32 nch;                /* chanspec list (0 = firmware full list) */
+    nb_u32 n_list_ssids;                          /* 0 or 1 SSID entry after the channel list (brcmf form) */
+    const nb_u8 *list_ssid; nb_u32 list_ssid_len; /* that entry (len 0 = broadcast) */
+    nb_s32 nprobes, active_ms, passive_ms, home_ms;   /* -1 = firmware default */
+} nb_escan_req;
+/* nb_escan_params_ch == nb_escan_params_ex with times -1 and no SSID list (byte for byte).  With a list:
+ * channel_num = (n_list_ssids << 16) | nch; brcmf_ssid_le (u32 len + 32 bytes) at the 4-byte rounded end
+ * of the channel list. */
+nb_u32 nb_escan_params_ex(nb_u8 *out, nb_u32 cap, const nb_escan_req *r);
+/* shape 1: a non-home 20 MHz channel of the home band, non-DFS, far from home, in valid[] when given
+ * (0 = none / home 0) */
+nb_u8 nb_shape_foreign_ch(nb_u8 home, const nb_u32 *valid, nb_u32 nvalid);
+/* shape 5: chanspecs of every valid 2.4 / 5 GHz channel (nvalid 0: fixed 2.4 + non-DFS 5 GHz list) */
+nb_u32 nb_shape_all_channels(nb_u16 *out, nb_u32 cap, const nb_u32 *valid, nb_u32 nvalid, int io_type);
+/* firmware event 124 = WLC_E_CCA_CHAN_QUAL (bcmdhd bcmevent.h) with cca_chan_qual_event_t (wlioctl.h):
+ * u16 status, u16 id (0 CCA, 1 noise floor, 2 noise LTE), u16 chanspec, u16 len, then id 0:
+ * cca_congest_simple_t { u32 duration ms, u32 congest ms, u32 timestamp s } / id 1, 2: s32 noise.
+ * Returns 1 parsed (fields after len only when the data holds them), <0 too short. */
+typedef struct nb_cca_ev {
+    nb_u16 status, id, chanspec, len;
+    nb_u32 duration, congest, timestamp;
+    nb_s32 noise;
+    nb_u8 has_cca, has_noise;
+} nb_cca_ev;
+#define NB_E_CCA_CHAN_QUAL 124
+#define NB_E_MSCH          120
+int nb_cca_ev_parse(const nb_u8 *d, nb_u32 len, nb_cca_ev *o);
+
+/* Masks text for the status registry (firmware console): MAC addresses (6 hex pairs with ':' or
+ * '-'), 12-hex-digit tokens with or without 0x, and the given SSID bytes (>= 2 bytes) become
+ * "<m>" / "<s>".  Non-printable bytes become '?' (newline kept).  Returns the output length;
+ * out is always NUL terminated (cap >= 1). */
+nb_u32 nb_mask_text(const char *in, nb_u32 len, const nb_u8 *ssid, nb_u32 ssid_len, char *out, nb_u32 cap);
 
 /* ------------------------------------------------------- small helpers */
 /* NVRAM file name for this board: P-<board>_M-<module>_V-<vendor>.txt (the

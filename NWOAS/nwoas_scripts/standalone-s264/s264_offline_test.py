@@ -7,7 +7,14 @@ C planner (host/s264_plan_host, same nwoas_s264_plan.c as the hypervisor) on the
   ADT  = nwoas_scripts/agx-g1-s246/evidence/g0-adt-20261116-live1/adt.bin (J274, 13.5 iBoot)
   boot args / heap / carveouts = values printed by the S259 launcher log of 2026-11-19 01:00
 and compares the launch records.  Also compares the Wi-Fi control page register values and the
-PMGR hook addresses with that log.  Exit 0 = every item SAME.
+PMGR hook addresses with that log.  Exit 0 = every item SAME in every ADT input state.
+
+ADT input states (S264B): the same comparison runs twice,
+  "iboot"     = the dump as iBoot left it (no root pmgr-u8id; the later standalone case), and
+  "chainload" = what tools/chainload.py:106 u.push_adt() leaves in memory before the S264 HV runs
+                (load_adt() appended root pmgr-u8id via adt.py:813 / ADTNode.__setattr__ 622-629,
+                build() wrote it back over the 0x58000 region).  The 08:02 hardware dry-run read
+                this state; s264A (iboot state only) passed offline but appended a 2nd pmgr-u8id.
 
 usage: s264_offline_test.py [--workdir DIR] [--keep]
 """
@@ -61,6 +68,129 @@ def build_host_tool(work):
     return exe
 
 
+def chainload_state(adt):
+    """The ADT region as tools/chainload.py leaves it: u.push_adt() = load_adt(...).build() written
+    at the devtree base (proxyutils.py:300-305); bytes past the new length keep the old contents.
+    chainload.py's memory-map / RVBAR edits change values only (same length) and both sides read
+    the same bytes, so they are not reproduced here."""
+    from m1n1.adt import load_adt
+    built = load_adt(adt).build()
+    region = bytearray(adt)
+    region[:len(built)] = built
+    return bytes(region)
+
+
+def dup_props(adt):
+    """[(node offset, name)] for every property name that occurs twice in one node."""
+    out = []
+
+    def walk(off):
+        pc, cc = struct.unpack_from("<II", adt, off)
+        off += 8
+        seen = set()
+        for _ in range(pc):
+            name = adt[off:off + 32].split(b"\0")[0]
+            ln = struct.unpack_from("<I", adt, off + 32)[0] & 0x7fffffff
+            if name in seen:
+                out.append((off, name.decode(errors="replace")))
+            seen.add(name)
+            off += 36 + ((ln + 3) & ~3)
+        for _ in range(cc):
+            off = walk(off)
+        return off
+
+    walk(0)
+    return out
+
+
+def run_case(label, adt, exe, work):
+    work.mkdir(parents=True, exist_ok=True)
+    adt_path = work / "adt-in.bin"
+    adt_path.write_bytes(adt)
+    pc_in = struct.unpack_from("<I", adt, 0)[0]
+    print(f"== ADT input state '{label}': {len(adt)} B region, root properties {pc_in}, "
+          f"sha256 {hashlib.sha256(adt).hexdigest()}")
+    prec, hv, wifi, ba_raw = R.run_python_offline(adt, 2, BA, HEAPBLOCK_TOP, CARVEOUTS, PAYLOAD,
+                                                  MIDR, AMX, ACTLR)
+    (work / "ba.bin").write_bytes(ba_raw + bytes(1152 - len(ba_raw)))
+    args = [str(exe), "--adt", str(adt_path), "--ba", str(work / "ba.bin"), "--ba-rev", "2",
+            "--heapblock-top", hex(HEAPBLOCK_TOP), "--iodev", "3", "--midr", hex(MIDR),
+            "--amx", hex(AMX), "--actlr", hex(ACTLR), "--payload-size", str(PAYLOAD),
+            "--out", str(work / "c-result.bin"), "--wifi-dump", str(work / "c-wifi.bin")]
+    for b, n in CARVEOUTS:
+        args += ["--carveout", f"{b:#x}:{n:#x}"]
+    r = subprocess.run(args, capture_output=True, text=True)
+    print(r.stdout.strip())
+    if r.returncode:
+        print(r.stderr)
+        raise SystemExit(f"host planner failed rc={r.returncode}")
+    res = C.parse_result((work / "c-result.bin").read_bytes())
+    crec = C.c_record(res)
+    L = res["layout"]
+    heap = (L["py_heap_base"], L["py_heap_top"])
+    ok, _, rows = C.compare(crec, prec, heap)
+    # Wi-Fi page
+    cw = struct.unpack("<2048I", (work / "c-wifi.bin").read_bytes())
+    pw = tuple(wifi.reg_read(off) & 0xffffffff for off in range(0, 0x2000, 4))
+    rows.append(("Wi-Fi control page 0x0-0x1ffc (NWOAS_WIFI=0)", "SAME" if cw == pw else "DIFF",
+                 "" if cw == pw else str([(hex(i * 4), hex(x), hex(y)) for i, (x, y) in enumerate(zip(cw, pw)) if x != y][:4])))
+    ok &= cw == pw
+    pm = set(res["pmgr"])
+    rows.append(("PMGR hook addresses vs S259 log", "SAME" if pm == LOG_PMGR else "DIFF",
+                 ", ".join(hex(x) for x in sorted(pm))))
+    ok &= pm == LOG_PMGR
+    bad = {k: (hex(L[k]), hex(v)) for k, v in LOG_LAYOUT.items() if L[k] != v}
+    rows.append(("layout vs S259 log (phys_base, guest_base, bootargs, entry, low_backing, mem_size)",
+                 "SAME" if not bad else "DIFF", str(bad) if bad else f"{len(LOG_LAYOUT)} values"))
+    ok &= not bad
+    # Python hv object agrees with its own record
+    rows.append(("Python hv.entry/guest_base", "SAME" if (hv.entry, hv.guest_base) == (L["entry"], L["guest_base"]) else "DIFF",
+                 f"{hv.entry:#x} {hv.guest_base:#x}"))
+    print("| item | result | detail |\n|---|---|---|")
+    for name, res_, det in rows:
+        print(f"| {name} | {res_} | {det} |")
+    nsame = sum(1 for row in rows if row[1] == "SAME")
+    print(f"[{label}] {nsame}/{len(rows)} SAME")
+    # structural check independent of Python: no property name twice in one node
+    dups = dup_props(crec["adt"]) if crec["adt"] else [(-1, "no C ADT")]
+    print(f"[{label}] C guest ADT duplicate property names: {dups if dups else 'none'}; "
+          f"root properties C {struct.unpack_from('<I', crec['adt'], 0)[0] if crec['adt'] else '-'}"
+          f" / Python {struct.unpack_from('<I', prec['adt'], 0)[0] if prec['adt'] else '-'}")
+    ok &= not dups
+    sha = hashlib.sha256((work / "c-result.bin").read_bytes()).hexdigest()
+    print(f"C result blob sha256 {sha} ({(work / 'c-result.bin').stat().st_size} B), "
+          f"ADT {len(crec['adt'])} B sha256 {hashlib.sha256(crec['adt']).hexdigest()}")
+    # negative controls: each mutation of the Python record must be reported as DIFF
+    import copy
+    muts = {
+        "ADT byte": lambda r: r.__setitem__("adt", r["adt"][:100] + bytes([r["adt"][100] ^ 1]) + r["adt"][101:]),
+        "boot args mem_size patch": lambda r: r["w64"].__setitem__(
+            next(i for i, w in enumerate(r["w64"]) if w[0] == r["ba_base"] + 24),
+            (r["ba_base"] + 24, 0x2a4b48000)),
+        "one PMGR hook dropped": lambda r: r["maps"].remove(next(m for m in r["maps"] if m[0] == "map" and m[1] == 0x23b700220)),
+        "HACR value": lambda r: r["msr"].__setitem__(C.sysreg_enc((3, 4, 1, 1, 7)), 0x317000000004000),
+        "BYPASS range as HW": lambda r: r["maps"].append(("map", 0x6e0000000, 0x6e0000000 | 0x7fd, 0x900000, 1)),
+    }
+    neg_ok = True
+    for name, fn in muts.items():
+        m = copy.deepcopy(prec)
+        fn(m)
+        mok, _, _ = C.compare(crec, m, heap)
+        neg_ok &= not mok
+        print(f"[{label}] negative control '{name}': {'detected' if not mok else 'NOT DETECTED'}")
+    # the dup check itself must fire on an ADT with a doubled root property (the s264A defect)
+    pc0 = struct.unpack_from("<I", crec["adt"], 0)[0]
+    first = crec["adt"][8:8 + 36 + ((struct.unpack_from("<I", crec["adt"], 40)[0] & 0x7fffffff) + 3 & ~3)]
+    doubled = struct.pack("<I", pc0 + 1) + crec["adt"][4:8] + first + crec["adt"][8:]
+    dup_hit = bool(dup_props(doubled))
+    print(f"[{label}] negative control 'root property doubled (s264A defect)': "
+          f"{'detected' if dup_hit else 'NOT DETECTED'}")
+    neg_ok &= dup_hit
+    ok &= neg_ok
+    print(f"[{label}] {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workdir", type=Path)
@@ -72,67 +202,9 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     try:
         exe = build_host_tool(work)
-        prec, hv, wifi, ba_raw = R.run_python_offline(adt, 2, BA, HEAPBLOCK_TOP, CARVEOUTS, PAYLOAD,
-                                                      MIDR, AMX, ACTLR)
-        (work / "ba.bin").write_bytes(ba_raw + bytes(1152 - len(ba_raw)))
-        args = [str(exe), "--adt", str(ADT), "--ba", str(work / "ba.bin"), "--ba-rev", "2",
-                "--heapblock-top", hex(HEAPBLOCK_TOP), "--iodev", "3", "--midr", hex(MIDR),
-                "--amx", hex(AMX), "--actlr", hex(ACTLR), "--payload-size", str(PAYLOAD),
-                "--out", str(work / "c-result.bin"), "--wifi-dump", str(work / "c-wifi.bin")]
-        for b, n in CARVEOUTS:
-            args += ["--carveout", f"{b:#x}:{n:#x}"]
-        r = subprocess.run(args, capture_output=True, text=True)
-        print(r.stdout.strip())
-        if r.returncode:
-            print(r.stderr)
-            raise SystemExit(f"host planner failed rc={r.returncode}")
-        res = C.parse_result((work / "c-result.bin").read_bytes())
-        crec = C.c_record(res)
-        L = res["layout"]
-        heap = (L["py_heap_base"], L["py_heap_top"])
-        ok, _, rows = C.compare(crec, prec, heap)
-        # Wi-Fi page
-        cw = struct.unpack("<2048I", (work / "c-wifi.bin").read_bytes())
-        pw = tuple(wifi.reg_read(off) & 0xffffffff for off in range(0, 0x2000, 4))
-        rows.append(("Wi-Fi control page 0x0-0x1ffc (NWOAS_WIFI=0)", "SAME" if cw == pw else "DIFF",
-                     "" if cw == pw else str([(hex(i * 4), hex(x), hex(y)) for i, (x, y) in enumerate(zip(cw, pw)) if x != y][:4])))
-        ok &= cw == pw
-        pm = set(res["pmgr"])
-        rows.append(("PMGR hook addresses vs S259 log", "SAME" if pm == LOG_PMGR else "DIFF",
-                     ", ".join(hex(x) for x in sorted(pm))))
-        ok &= pm == LOG_PMGR
-        bad = {k: (hex(L[k]), hex(v)) for k, v in LOG_LAYOUT.items() if L[k] != v}
-        rows.append(("layout vs S259 log (phys_base, guest_base, bootargs, entry, low_backing, mem_size)",
-                     "SAME" if not bad else "DIFF", str(bad) if bad else f"{len(LOG_LAYOUT)} values"))
-        ok &= not bad
-        # Python hv object agrees with its own record
-        rows.append(("Python hv.entry/guest_base", "SAME" if (hv.entry, hv.guest_base) == (L["entry"], L["guest_base"]) else "DIFF",
-                     f"{hv.entry:#x} {hv.guest_base:#x}"))
-        print("| item | result | detail |\n|---|---|---|")
-        for name, res_, det in rows:
-            print(f"| {name} | {res_} | {det} |")
-        sha = hashlib.sha256((work / "c-result.bin").read_bytes()).hexdigest()
-        print(f"C result blob sha256 {sha} ({(work / 'c-result.bin').stat().st_size} B), "
-              f"ADT {len(crec['adt'])} B sha256 {hashlib.sha256(crec['adt']).hexdigest()}")
-        # negative controls: each mutation of the Python record must be reported as DIFF
-        import copy
-        muts = {
-            "ADT byte": lambda r: r.__setitem__("adt", r["adt"][:100] + bytes([r["adt"][100] ^ 1]) + r["adt"][101:]),
-            "boot args mem_size patch": lambda r: r["w64"].__setitem__(
-                next(i for i, w in enumerate(r["w64"]) if w[0] == r["ba_base"] + 24),
-                (r["ba_base"] + 24, 0x2a4b48000)),
-            "one PMGR hook dropped": lambda r: r["maps"].remove(next(m for m in r["maps"] if m[0] == "map" and m[1] == 0x23b700220)),
-            "HACR value": lambda r: r["msr"].__setitem__(C.sysreg_enc((3, 4, 1, 1, 7)), 0x317000000004000),
-            "BYPASS range as HW": lambda r: r["maps"].append(("map", 0x6e0000000, 0x6e0000000 | 0x7fd, 0x900000, 1)),
-        }
-        neg_ok = True
-        for name, fn in muts.items():
-            m = copy.deepcopy(prec)
-            fn(m)
-            mok, _, _ = C.compare(crec, m, heap)
-            neg_ok &= not mok
-            print(f"negative control '{name}': {'detected' if not mok else 'NOT DETECTED'}")
-        ok &= neg_ok
+        ok = True
+        for label, data in (("iboot", adt), ("chainload", chainload_state(adt))):
+            ok &= run_case(label, data, exe, work / label)
         print("OFFLINE EQUIVALENCE:", "PASS" if ok else "FAIL")
         return 0 if ok else 1
     finally:

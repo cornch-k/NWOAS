@@ -80,6 +80,60 @@ void NwoaReadConfig(PNWOA_DEVICE Dev)
     c->BssAgeInfo    = QueryUlong(key, L"BssAgeInfo", 1);
     c->LinkInfoReal  = QueryUlong(key, L"LinkInfoReal", 1);
     c->ReportWmm     = QueryUlong(key, L"ReportWmm", 0);
+    c->ConnectedScan = QueryUlong(key, L"ConnectedScan", 0);           // s258n (default 1) -> s258o 0
+    c->PmKickAfterScan = QueryUlong(key, L"PmKickAfterScan", 0);
+    c->TxStallMs     = QueryUlong(key, L"TxStallMs", 8000);
+    if (c->TxStallMs && (c->TxStallMs < 4000 || c->TxStallMs > 600000))
+        c->TxStallMs = 8000;
+    c->TxStallRecover = QueryUlong(key, L"TxStallRecover", 2);
+    c->MbPoll        = QueryUlong(key, L"MbPoll", 1);
+    c->ConsoleLive   = QueryUlong(key, L"ConsoleLive", 1);
+    c->DiagEvents    = QueryUlong(key, L"DiagEvents", 2);
+    c->ScanFlowCheck = QueryUlong(key, L"ScanFlowCheck", 1);           // s258o
+    if (c->ScanFlowCheck > 3)
+        c->ScanFlowCheck = 1;
+    c->ScanFlowProbeMs = QueryUlong(key, L"ScanFlowProbeMs", 300);
+    if (c->ScanFlowProbeMs < 50 || c->ScanFlowProbeMs > 3000)
+        c->ScanFlowProbeMs = 300;
+    c->ScanTxHold    = QueryUlong(key, L"ScanTxHold", 0);
+    c->TestConnScanSec = QueryUlong(key, L"TestConnScanSec", 0);
+    if (c->TestConnScanSec && (c->TestConnScanSec < 60 || c->TestConnScanSec > 3600))
+        c->TestConnScanSec = 0;
+    // s258p
+    c->ScanPm        = QueryUlong(key, L"ScanPm", 0);
+    if (c->ScanPm != 2)
+        c->ScanPm = 0;
+    c->ScanChanList  = QueryUlong(key, L"ScanChanList", 0);
+    if (c->ScanChanList > 2)
+        c->ScanChanList = 0;
+    c->FlowResume    = QueryUlong(key, L"FlowResume", 0) ? 1 : 0;
+    c->InitIovarSet  = QueryUlong(key, L"InitIovarSet", 0) & 0x3F;
+    c->CandidateCycle = QueryUlong(key, L"CandidateCycle", 0) ? 1 : 0;
+    if (c->CandidateCycle) {
+        c->ScanFlowCheck = 1;                     // the s258o fix is the safety net of every candidate
+        if (!c->TestConnScanSec)
+            c->TestConnScanSec = 120;
+    }
+    // s258q
+    c->TestScanShape = QueryUlong(key, L"TestScanShape", 0);
+    if (c->TestScanShape >= NB_SHAPE_N)
+        c->TestScanShape = 0;
+    c->ShapeCycle    = QueryUlong(key, L"ShapeCycle", 0) ? 1 : 0;
+    c->ShapeChunkN   = QueryUlong(key, L"ShapeChunkN", 3);
+    if (c->ShapeChunkN < 1 || c->ShapeChunkN > 16)
+        c->ShapeChunkN = 3;
+    c->ShapeChunkGapMs = QueryUlong(key, L"ShapeChunkGapMs", 2000);
+    if (c->ShapeChunkGapMs < 1000 || c->ShapeChunkGapMs > 10000)
+        c->ShapeChunkGapMs = 2000;
+    c->ShapeLongMs   = QueryUlong(key, L"ShapeLongMs", 3000);
+    if (c->ShapeLongMs < 100 || c->ShapeLongMs > 10000)
+        c->ShapeLongMs = 3000;
+    if (c->ShapeCycle) {
+        c->ScanFlowCheck = 1;                     // the s258o fix stays the safety net of every shape
+        c->CandidateCycle = 0;                    // one variable at a time
+        if (!c->TestConnScanSec)
+            c->TestConnScanSec = 120;
+    }
     if (c->SettleMs > 10000)
         c->SettleMs = 10000;
     if (key)
@@ -199,9 +253,9 @@ static void NwoaDiagS258m(PNWOA_DEVICE Dev, PCHAR b, SIZE_T cap)
     b[0] = 0;
     for (ULONG k = ns > NWOA_SCANDIAG_N ? ns - NWOA_SCANDIAG_N : 0; k < ns; k++) {
         const NWOA_SCANDIAG* r = &sd[k % NWOA_SCANDIAG_N];
-        RtlStringCchPrintfA(one, sizeof(one), "t%u d%u c%u n%u/%u p%u s%u r%d k%u ss%u o%d/%u ch%u b%u bw%u ie%u cap%x fw%d st%u@%lu ",
+        RtlStringCchPrintfA(one, sizeof(one), "t%u d%u c%u n%u/%u p%u s%u r%d k%u ss%u o%d/%u ch%u b%u bw%u ie%u cap%x fw%d st%u sk%u@%lu ",
             r->Trigger, r->Directed, r->Conn, r->Entries, r->Reported, r->Present, r->Synth, r->Rssi, r->Rank, r->SameSsid,
-            r->OtherRssi, r->OtherBand, r->Channel, r->Band, r->Bw, r->IeLen, r->Cap, r->FwRssi, r->Status, r->Ms);
+            r->OtherRssi, r->OtherBand, r->Channel, r->Band, r->Bw, r->IeLen, r->Cap, r->FwRssi, r->Status, r->Skipped, r->Ms);
         RtlStringCchCatA(b, cap, one);
     }
     NwoaDiagSz(Dev, L"NwoaScanDiag", b);
@@ -346,6 +400,10 @@ void NwoaDiagDisconnect(PNWOA_DEVICE Dev)
     NwoaDiagDword(Dev, L"NwoaStatsLastStatus", Dev->StatsLastStatus);
     NwoaDiagDword(Dev, L"NwoaNowMs", (ULONG)(KeQueryInterruptTime() / 10000));
     NwoaDiagS258m(Dev, b, cap);
+    NwoaDiagS258n(Dev, b, cap);
+    NwoaDiagS258o(Dev, b, cap);
+    NwoaDiagS258p(Dev, b, cap);
+    NwoaDiagS258q(Dev, b, cap);
     ExFreePoolWithTag(rec, NWOA_TAG);
     ExFreePoolWithTag(b, NWOA_TAG);
 }
@@ -393,4 +451,260 @@ void NwoaDiagConsole(PNWOA_DEVICE Dev)
     if (NT_SUCCESS(NwoaReadConsoleTail(Dev, b, 1500)))
         NwoaDiagSz(Dev, L"NwoaConsoleTail", b);
     ExFreePoolWithTag(b, NWOA_TAG);
+}
+
+// s258n records (numbers only; the console text is masked by nb_mask_text before it is kept)
+//  NwoaCfgS258n   the switches in force
+//  NwoaPool       tx out/free/max, rx buffers at the firmware / in the OS queue / repost pending, repost
+//                 failures and retries, ctrl buffer post failures, TX status non-zero count/last,
+//                 GEN_STATUS and RING_STATUS count/last
+//  NwoaRingIdx    per ring host pointer / firmware index (H2D: w/fw r, D2H: fw w/r)
+//  NwoaStallLog   a<NB_SA action> out<n> old<ms> d<ms since status> ss<ms since connected scan start>/<end>
+//                 fl<flow w>/<fw r> pm<firmware PM>@ms
+//  NwoaConnScan   s<start> e<end> o<out at start>/<at end> d<statuses during> pm<before>/<after>
+//  NwoaMb         mailbox int / D2H word last value and non-zero counts
+//  NwoaEvDiag     <event>:<count>@<last ms>
+void NwoaDiagS258n(PNWOA_DEVICE Dev, PCHAR b, SIZE_T cap)
+{
+    KIRQL irql;
+    CHAR one[200];
+    NWOA_STALLREC st[NWOA_STALL_N];
+    NWOA_CSCAN cs[NWOA_CSCAN_N];
+    ULONG ns, nc;
+    RtlStringCchPrintfA(b, cap, "ConnectedScan=%lu PmKickAfterScan=%lu TxStallMs=%lu TxStallRecover=%lu MbPoll=%lu ConsoleLive=%lu DiagEvents=%lu",
+        Dev->Cfg.ConnectedScan, Dev->Cfg.PmKickAfterScan, Dev->Cfg.TxStallMs, Dev->Cfg.TxStallRecover,
+        Dev->Cfg.MbPoll, Dev->Cfg.ConsoleLive, Dev->Cfg.DiagEvents);
+    NwoaDiagSz(Dev, L"NwoaCfgS258n", b);
+    NwoaPoolSnapshot(Dev, b, cap);
+    NwoaDiagSz(Dev, L"NwoaPool", b);
+    NwoaRingSnapshot(Dev, b, cap, NULL, NULL);
+    NwoaDiagSz(Dev, L"NwoaRingIdx", b);
+
+    KeAcquireSpinLock(&Dev->StateLock, &irql);
+    RtlCopyMemory(st, Dev->Stall, sizeof(st)); ns = Dev->StallNext;
+    RtlCopyMemory(cs, Dev->CScan, sizeof(cs)); nc = Dev->CScanNext;
+    KeReleaseSpinLock(&Dev->StateLock, irql);
+    b[0] = 0;
+    for (ULONG k = ns > NWOA_STALL_N ? ns - NWOA_STALL_N : 0; k < ns; k++) {
+        const NWOA_STALLREC* r = &st[k % NWOA_STALL_N];
+        RtlStringCchPrintfA(one, sizeof(one), "a%u out%lu old%lu d%lu rx%lu age%lu ss%lu/%lu fl%lu/%lu pm%ld@%lu ",
+            r->Action, r->Out, r->OldestMs, r->SinceDoneMs, r->SinceRxMs, r->ConnAgeMs, r->SinceScanStartMs,
+            r->SinceScanEndMs, r->FlowW, r->FlowR, r->Pm, r->Ms);
+        RtlStringCchCatA(b, cap, one);
+    }
+    NwoaDiagSz(Dev, L"NwoaStallLog", b);
+    b[0] = 0;
+    for (ULONG k = nc > NWOA_CSCAN_N ? nc - NWOA_CSCAN_N : 0; k < nc; k++) {
+        const NWOA_CSCAN* r = &cs[k % NWOA_CSCAN_N];
+        RtlStringCchPrintfA(one, sizeof(one), "s%lu e%lu o%lu/%lu d%lu pm%ld/%ld ",
+            r->StartMs, r->EndMs, r->OutStart, r->OutEnd, r->DoneDuring, r->PmBefore, r->PmAfter);
+        RtlStringCchCatA(b, cap, one);
+    }
+    NwoaDiagSz(Dev, L"NwoaConnScan", b);
+    NwoaDiagDword(Dev, L"NwoaCntTxStall", (ULONG)Dev->CntTxStall);
+    NwoaDiagDword(Dev, L"NwoaCntStallPmOk", (ULONG)Dev->CntStallPmOk);
+    NwoaDiagDword(Dev, L"NwoaCntStallFlowOk", (ULONG)Dev->CntStallFlowOk);
+    NwoaDiagDword(Dev, L"NwoaCntStallLinkLoss", (ULONG)Dev->CntStallLinkLoss);
+    NwoaDiagDword(Dev, L"NwoaCntStallGiveUp", (ULONG)Dev->CntStallGiveUp);
+    NwoaDiagDword(Dev, L"NwoaCntScanSkipped", (ULONG)Dev->CntScanSkipped);
+    NwoaDiagDword(Dev, L"NwoaCntPmKick", (ULONG)Dev->CntPmKick);
+    NwoaDiagDword(Dev, L"NwoaFwPm", (ULONG)Dev->FwPm);
+    RtlStringCchPrintfA(b, cap, "int=%lx intnz=%ld dtoh=%lx dtohnz=%ld", Dev->MbIntLast, Dev->CntMbIntNz,
+        Dev->DtohMbLast, Dev->CntDtohMbNz);
+    NwoaDiagSz(Dev, L"NwoaMb", b);
+    b[0] = 0;
+    for (ULONG i = 0; i < NWOA_EVDIAG_N; i++) {
+        RtlStringCchPrintfA(one, sizeof(one), "%lu:%ld@%lu ", NwoaDiagEventTypes[i], Dev->EvDiagCnt[i], Dev->EvDiagLastMs[i]);
+        RtlStringCchCatA(b, cap, one);
+    }
+    NwoaDiagSz(Dev, L"NwoaEvDiag", b);
+    b[0] = 0;
+    for (ULONG t = 0; t <= NB_E_LAST; t++) {
+        if (!Dev->EvAllCnt[t])
+            continue;
+        RtlStringCchPrintfA(one, sizeof(one), "%lu:%ld@%lu ", t, Dev->EvAllCnt[t], Dev->EvAllMs[t]);
+        RtlStringCchCatA(b, cap, one);
+    }
+    NwoaDiagSz(Dev, L"NwoaEvAll", b);
+    PCHAR cb = Dev->Cfg.ConsoleLive && Dev->ConDirty ?
+               (PCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, NWOA_CONLIVE + 1, NWOA_TAG) : NULL;
+    if (Dev->Cfg.ConsoleLive) {
+        if (cb) {
+            KeAcquireSpinLock(&Dev->StateLock, &irql);
+            Dev->ConDirty = FALSE;
+            RtlCopyMemory(cb, Dev->ConBuf, Dev->ConLen);
+            cb[Dev->ConLen] = 0;
+            KeReleaseSpinLock(&Dev->StateLock, irql);
+            NwoaDiagSz(Dev, L"NwoaConsoleLive", cb);
+            ExFreePoolWithTag(cb, NWOA_TAG);
+        }
+        NwoaDiagDword(Dev, L"NwoaConsoleBytes", Dev->ConBytes);
+        NwoaDiagDword(Dev, L"NwoaConsoleSkipped", Dev->ConSkipped);
+    }
+}
+
+// s258o records (numbers only)
+//  NwoaCfgS258o    switches in force
+//  NwoaScanFlow    verdict counts after firmware scans made while connected (see NWOA_SF_* in nwoa.h),
+//                  scans started while connected / by the test timer, Windows scans that waited, frames held
+//  NwoaScanFlowLog v<verdict>[t=test scan][d=found by the 2 s tick] s<scan start> e<scan end>
+//                  w<host w at end>/<at verdict> r<fw r at end>/<at verdict> adv<ms to first take>
+//                  db<flowring doorbells meanwhile> fw<TCM w>/<TCM r of the flowring> cs<TCM w>/<host w of
+//                  the control submit ring> fix<re-create NTSTATUS>@<verdict ms>
+//  NwoaFwIdxNow    the same TCM / host index pair now (every 2 s): does the TCM copy follow the host?
+//  NwoaTcmIdxPtr   ring_info index array pointers h2d w / h2d r / d2h w / d2h r (chip TCM offsets)
+void NwoaDiagS258o(PNWOA_DEVICE Dev, PCHAR b, SIZE_T cap)
+{
+    KIRQL irql;
+    CHAR one[200];
+    NWOA_SFREC sf[NWOA_SF_N];
+    ULONG n;
+    RtlStringCchPrintfA(b, cap, "ConnectedScan=%lu ScanFlowCheck=%lu ScanFlowProbeMs=%lu ScanTxHold=%lu TestConnScanSec=%lu",
+        Dev->Cfg.ConnectedScan, Dev->Cfg.ScanFlowCheck, Dev->Cfg.ScanFlowProbeMs, Dev->Cfg.ScanTxHold,
+        Dev->Cfg.TestConnScanSec);
+    NwoaDiagSz(Dev, L"NwoaCfgS258o", b);
+    RtlStringCchPrintfA(b, cap, "conn=%ld test=%ld alive=%ld stuck=%ld dbfix=%ld refresh=%ld refreshfail=%ld idle=%ld forced=%ld "
+        "deferred=%ld held=%ld armed=%u",
+        Dev->CntConnScan, Dev->CntSelfScan, Dev->CntSfAlive, Dev->CntSfStuck, Dev->CntSfDbFix, Dev->CntSfRefresh,
+        Dev->CntSfRefreshFail, Dev->CntSfIdle, Dev->CntSfForced, Dev->CntScanDeferred, Dev->CntTxHeld,
+        Dev->SfArmed ? 1u : 0u);
+    NwoaDiagSz(Dev, L"NwoaScanFlow", b);
+    KeAcquireSpinLock(&Dev->StateLock, &irql);
+    RtlCopyMemory(sf, Dev->Sf, sizeof(sf)); n = Dev->SfNext;
+    KeReleaseSpinLock(&Dev->StateLock, irql);
+    b[0] = 0;
+    for (ULONG k = n > NWOA_SF_N ? n - NWOA_SF_N : 0; k < n; k++) {
+        const NWOA_SFREC* r = &sf[k % NWOA_SF_N];
+        // s258p: k<candidate> (255 = no CandidateCycle) b<NB_CAND_* bits> n<chanspecs in the escan> first
+        // s258q: q<shape> (255 = Windows scan) c<escans in the sequence> x<events 124>/<events 120>
+        RtlStringCchPrintfA(one, sizeof(one), "v%u%s%s k%u b%x n%u q%u c%u x%u/%u s%lu e%lu w%lu/%lu r%lu/%lu adv%lu db%lu fw%lx/%lx cs%lx/%lx fix%lx@%lu ",
+            r->Verdict, r->Self ? "t" : "", r->Deferred ? "d" : "", r->Cand, r->Bits, r->NCh, r->Shape, r->Chunks,
+            r->Ev124, r->Ev120, r->ScanStartMs,
+            r->ScanEndMs, r->W0, r->W1, r->R0, r->R1, r->AdvMs, r->Db, r->FwW, r->FwR, r->FwW0, r->HostW0,
+            (ULONG)r->Fix, r->Ms);
+        RtlStringCchCatA(b, cap, one);
+    }
+    NwoaDiagSz(Dev, L"NwoaScanFlowLog", b);
+    {
+        ULONG fw, fr, cw, cr, w, r;
+        NwoaFwIdxView(Dev, 0, &cw, &cr);
+        NwoaFwIdxView(Dev, Dev->Flow.D.idx, &fw, &fr);
+        if (!NwoaFlowIdx(Dev, &w, &r))
+            w = r = 0xFFFFFFFFu;
+        RtlStringCchPrintfA(b, cap, "cs host%lx tcm%lx/%lx fl host%lx/%lx tcm%lx/%lx",
+            NwoaHostWIdx(Dev, 0), cw, cr, w, r, fw, fr);
+        NwoaDiagSz(Dev, L"NwoaFwIdxNow", b);
+        RtlStringCchPrintfA(b, cap, "hw%lx hr%lx dw%lx dr%lx", Dev->Sh.tcm_idx[0], Dev->Sh.tcm_idx[1],
+            Dev->Sh.tcm_idx[2], Dev->Sh.tcm_idx[3]);
+        NwoaDiagSz(Dev, L"NwoaTcmIdxPtr", b);
+    }
+    NwoaDiagDword(Dev, L"NwoaCntDbell", (ULONG)Dev->CntDbell);
+    NwoaDiagDword(Dev, L"NwoaCntFlowDbell", (ULONG)Dev->CntFlowDbell);
+}
+
+// s258p records (numbers only)
+//  NwoaCfgS258p    switches in force (after CandidateCycle forced ScanFlowCheck / TestConnScanSec)
+//  NwoaCand        cur=<active candidate> name adv=<rotations> on=<bits applied now> pm=<PM2 apply status>
+//                  iov old/set/back=<bit per iovar: read old / set / put back> vch=<valid channels>/<status>
+//                  rsm sent/cmplt/fix last=<status>@<ring> initiov=<InitIovarSet bits that were set>
+//  NwoaCandStats   per candidate: k<i> <name> n<connected scans judged> a<alive: taken by itself>
+//                  s<stuck: not taken> i<idle> g<gone> db<freed by doorbell> rs<freed by resume>
+//                  e<escan refused> rf<freed by re-create>, separated by " | "
+void NwoaDiagS258p(PNWOA_DEVICE Dev, PCHAR b, SIZE_T cap)
+{
+    CHAR one[96];
+    RtlStringCchPrintfA(b, cap, "ScanPm=%lu ScanChanList=%lu FlowResume=%lu InitIovarSet=%lu CandidateCycle=%lu "
+        "ScanFlowCheck=%lu TestConnScanSec=%lu PowerSave=%lu Mpc=%lu",
+        Dev->Cfg.ScanPm, Dev->Cfg.ScanChanList, Dev->Cfg.FlowResume, Dev->Cfg.InitIovarSet, Dev->Cfg.CandidateCycle,
+        Dev->Cfg.ScanFlowCheck, Dev->Cfg.TestConnScanSec, Dev->Cfg.PowerSave, Dev->Cfg.Mpc);
+    NwoaDiagSz(Dev, L"NwoaCfgS258p", b);
+    RtlStringCchPrintfA(b, cap, "cur=%lu %s adv=%ld on=%lx pm=%lx iov old%lx set%lx back%lx vch=%lu/%ld "
+        "rsm sent%ld cmplt%ld fix%ld last%ld@%lu initiov=%lx",
+        Dev->CandCur, nb_cand_name(Dev->CandCur), Dev->CntCandAdv, Dev->CandOn, Dev->CandPmSt,
+        Dev->IovOldOk, Dev->IovSetOk, Dev->IovBackOk, Dev->NValidCh, Dev->ValidChSt,
+        Dev->CntRsmSent, Dev->CntRsmCmplt, Dev->CntSfRsmFix, Dev->RsmLastStatus, Dev->RsmLastRing, Dev->InitIovSt);
+    NwoaDiagSz(Dev, L"NwoaCand", b);
+    b[0] = 0;
+    for (ULONG k = 0; k < NB_CAND_N; k++) {
+        RtlStringCchPrintfA(one, sizeof(one), "%sk%lu %s n%ld a%ld s%ld i%ld g%ld e%ld db%ld rs%ld rf%ld",
+            k ? " | " : "", k, nb_cand_name(k), Dev->CandN[k], Dev->CandAlive[k], Dev->CandStuck[k],
+            Dev->CandIdle[k], Dev->CandGone[k], Dev->CandErr[k], Dev->CandDb[k], Dev->CandRsm[k], Dev->CandRef[k]);
+        RtlStringCchCatA(b, cap, one);
+    }
+    NwoaDiagSz(Dev, L"NwoaCandStats", b);
+}
+
+// s258q records (numbers only)
+//  NwoaCfgS258q    switches in force (after ShapeCycle forced ScanFlowCheck / CandidateCycle / TestConnScanSec)
+//  NwoaShape       cur=<active shape> name adv=<rotations> fch=<foreign channel of the last shape 1>
+//                  seq act/idx/total/nch stuckat=<gap index, 255 none> vch=<valid channels>/<status>
+//  NwoaShapeStats  per shape (q6 win = Windows scans made while connected): n<judged> a<alive> s<stuck>
+//                  i<idle> g<gone> e<escan refused> db<freed by doorbell> rf<freed by re-create> ab<sequence
+//                  aborted> gs<shape 5: items not taken in a gap> fb<fell back to base> ms<mean>/<max scan ms>
+//                  x<mean events 124>/<mean events 120> per judged scan
+//  NwoaEv124       events 124 (WLC_E_CCA_CHAN_QUAL): n<all> scan<while a scan ran> bad<too short> id<0/1/2/other>
+//                  last st/id/cs/len dur/cong/ts or nf@ms dl<data length>, ch<distinct chanspecs in the last test
+//                  scan>:<first ones>, first<data length>@ms=<first 24 data bytes, own MAC / AP BSSID masked xx>
+void NwoaDiagS258q(PNWOA_DEVICE Dev, PCHAR b, SIZE_T cap)
+{
+    CHAR one[160];
+    RtlStringCchPrintfA(b, cap, "TestScanShape=%lu ShapeCycle=%lu ShapeChunkN=%lu ShapeChunkGapMs=%lu ShapeLongMs=%lu "
+        "ScanFlowCheck=%lu CandidateCycle=%lu TestConnScanSec=%lu DiagEvents=%lu",
+        Dev->Cfg.TestScanShape, Dev->Cfg.ShapeCycle, Dev->Cfg.ShapeChunkN, Dev->Cfg.ShapeChunkGapMs, Dev->Cfg.ShapeLongMs,
+        Dev->Cfg.ScanFlowCheck, Dev->Cfg.CandidateCycle, Dev->Cfg.TestConnScanSec, Dev->Cfg.DiagEvents);
+    NwoaDiagSz(Dev, L"NwoaCfgS258q", b);
+    RtlStringCchPrintfA(b, cap, "cur=%lu %s adv=%ld fch=%u seq act%u idx%u/%u nch%lu stuckat=%u vch=%lu/%ld",
+        Dev->ShapeCur, nb_shape_name(Dev->ShapeCur), Dev->CntShapeAdv, Dev->ShapeFch, Dev->ChunkActive ? 1u : 0u,
+        Dev->ChunkIdx, Dev->ChunkTotal, Dev->ChunkNCh, Dev->ChunkStuckAt, Dev->NValidCh, Dev->ValidChSt);
+    NwoaDiagSz(Dev, L"NwoaShape", b);
+    b[0] = 0;
+    for (ULONG k = 0; k <= NB_SHAPE_N; k++) {
+        LONG n = Dev->ShN[k];
+        RtlStringCchPrintfA(one, sizeof(one), "%sq%lu %s n%ld a%ld s%ld i%ld g%ld e%ld db%ld rf%ld ab%ld gs%ld fb%ld ms%lu/%lu x%lu/%lu",
+            k ? " | " : "", k, nb_shape_name(k), n, Dev->ShAlive[k], Dev->ShStuck[k], Dev->ShIdle[k], Dev->ShGone[k],
+            Dev->ShErr[k], Dev->ShDb[k], Dev->ShRef[k], Dev->ShAbort[k], Dev->ShGapStuck[k], Dev->ShFallback[k],
+            n > 0 ? Dev->ShMsSum[k] / (ULONG)n : 0ul, Dev->ShMsMax[k],
+            n > 0 ? Dev->ShEv124[k] / (ULONG)n : 0ul, n > 0 ? Dev->ShEv120[k] / (ULONG)n : 0ul);
+        RtlStringCchCatA(b, cap, one);
+    }
+    NwoaDiagSz(Dev, L"NwoaShapeStats", b);
+    {
+        const nb_cca_ev* e = &Dev->Ev124Last;
+        UCHAR raw[24];
+        ULONG rl = min(Dev->Ev124FirstLen, (ULONG)sizeof(raw));
+        BOOLEAN mask[24];
+        RtlCopyMemory(raw, Dev->Ev124First, rl);
+        RtlZeroMemory(mask, sizeof(mask));
+        for (ULONG i = 0; i + 6 <= rl; i++)          // never a MAC address in the record
+            if (RtlEqualMemory(raw + i, Dev->Mac, 6) || RtlEqualMemory(raw + i, Dev->CurBssid, 6))
+                for (ULONG j = 0; j < 6; j++)
+                    mask[i + j] = TRUE;
+        RtlStringCchPrintfA(b, cap, "n%ld scan%ld bad%ld id%ld/%ld/%ld/%ld last st%u id%u cs%x len%u ",
+            Dev->CntEv124, Dev->CntEv124Scan, Dev->CntEv124Bad, Dev->Ev124Id[0], Dev->Ev124Id[1], Dev->Ev124Id[2],
+            Dev->Ev124Id[3], e->status, e->id, e->chanspec, e->len);
+        if (e->has_cca)
+            RtlStringCchPrintfA(one, sizeof(one), "dur%lu cong%lu ts%lu", (ULONG)e->duration, (ULONG)e->congest,
+                (ULONG)e->timestamp);
+        else if (e->has_noise)
+            RtlStringCchPrintfA(one, sizeof(one), "nf%ld", (LONG)e->noise);
+        else
+            RtlStringCchPrintfA(one, sizeof(one), "nodata");
+        RtlStringCchCatA(b, cap, one);
+        RtlStringCchPrintfA(one, sizeof(one), "@%lu dl%lu ch%lu:", Dev->Ev124LastMs, Dev->Ev124LastDl, Dev->Ev124NCs);
+        RtlStringCchCatA(b, cap, one);
+        for (ULONG i = 0; i < Dev->Ev124NCs && i < 12; i++) {
+            RtlStringCchPrintfA(one, sizeof(one), "%s%x", i ? "," : "", Dev->Ev124Cs[i]);
+            RtlStringCchCatA(b, cap, one);
+        }
+        RtlStringCchPrintfA(one, sizeof(one), " first%lu@%lu=", Dev->Ev124FirstDl, Dev->Ev124FirstMs);
+        RtlStringCchCatA(b, cap, one);
+        for (ULONG i = 0; i < rl; i++) {
+            if (mask[i])
+                RtlStringCchCopyA(one, sizeof(one), "xx");
+            else
+                RtlStringCchPrintfA(one, sizeof(one), "%02x", raw[i]);
+            RtlStringCchCatA(b, cap, one);
+        }
+    }
+    NwoaDiagSz(Dev, L"NwoaEv124", b);
 }

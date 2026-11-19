@@ -1,6 +1,6 @@
-# S264 — 맥북 없이 켜기 4-3·4-4: C 게스트 실행기 (첫 판)
+# S264 — 맥북 없이 켜기 4-3·4-4: C 게스트 실행기 (지금 판 s264B)
 
-**상태: [빌드만]. 이 맥북에서 빌드와 호스트 시험만 했습니다. 맥미니에서는 한 번도 실행하지 않았습니다.** 빌드 성공과 호스트 시험 통과는 부팅 성공이 아닙니다.
+**상태: s264A는 실기 미리보기 비교 (가)를 1번 돌렸고(11월 19일 08:02, 게스트 시작 안 함) 손님 ADT 한 줄만 달랐습니다. 그 차이를 고친 s264B는 [빌드만]입니다 — 이 맥북에서 빌드와 호스트 시험만 했고 맥미니에서는 아직 실행하지 않았습니다.** 빌드 성공과 호스트 시험 통과는 부팅 성공이 아닙니다.
 
 표기: **[사실]** = 파일:줄·기록·이 맥북에서 실제로 돌린 결과로 확인한 것, **[가설]** = 확인하지 않은 추측, **[빌드만]** = 빌드·호스트 시험까지만 된 것.
 경로 줄임: `N/` = `/Users/angigyeom/Desktop/DEV/NWOAS/`, `HVPY` = `N/m1n1_windows/proxyclient/m1n1/hv/__init__.py`, `SRC/` = `N/m1n1-standalone-s264/src/`, `LOG0100` = `N/nwoas_scripts/logs/agxmed1g-s249-20261119-010040.QNzidN`(S259 실행기 실기 기록).
@@ -9,12 +9,13 @@
 
 ## 0. 결론
 
+0. **[11-19 08:02 실기 (가) 결과와 s264B] s264A 실기 비교 11줄 중 10줄이 같았고, 손님 ADT만 달랐습니다. 원인은 C 계획이 ADT 뿌리에 `pmgr-u8id`를 무조건 하나 더 붙인 것입니다. 실기에서 하이퍼바이저가 읽는 ADT에는 체인로드 때 Python이 이미 이 속성을 써 넣어 두었으므로 C 결과에 같은 이름이 두 번 들어갔습니다(속성 23개, Python은 22개, 40바이트 차이). s264B는 이미 있으면 그 자리 값만 바꾸고 없을 때만 붙입니다. 호스트 시험을 "iBoot가 남긴 ADT"와 "체인로드 뒤 ADT" 두 상태로 늘렸고, 두 상태 모두 15/15 같음입니다.** 고치기 전 s264A를 새 시험에 넣으면 실기와 똑같은 DIFF 줄이 나옵니다. 자세한 것은 5.3장입니다. [사실: 실기 기록·이 맥북 실행. s264B 실기는 아직]
 1. **맥북의 Python 실행기가 게스트를 띄우기 전에 하는 일을 C로 옮긴 하이퍼바이저를 만들었습니다.** 맥북은 "C 실행기를 불러라"라는 명령 하나(`P_HV_NWOAS_S264`, 0xc3e)만 보내면 됩니다. 바탕은 지금 쓰는 최신 트리 g262Q입니다. [빌드만]
 2. **같은 입력을 넣으면 C가 만든 결과가 Python 실행기 결과와 바이트 단위로 같습니다(호스트 시험).** 실제 Python 코드(`HVPY` 의 `HV.init`·`load_raw`·`start`, 실제 `guest_map.py`·`pmgr_gate.py`·`guest_module.py`·`agx_hv2_module.py`, 소리 모듈 A단계)를 가짜 통신 위에서 돌린 결과와, 하이퍼바이저에 들어간 것과 같은 C 계획 코드를 비교했습니다. 15개 항목이 모두 같았고, 일부러 바꾼 값 5개는 모두 "다름"으로 잡혔습니다. [사실: 이 맥북에서 실행, 5장]
 3. **C가 계산한 값이 실제 맥미니 기록과도 맞습니다.** 손님 ADT 크기 0x4f248 B, 메모리 배치 8개 값, 전원 관리 감시 주소 7개가 `LOG0100` 과 같습니다. [사실: 5장 표]
 4. **부팅 중 맥북에 묻던 70번(레지스터 통과 14·무시 1, 전원 관리 읽기 39·쓰기 2, 보조 CPU 켜기 쓰기 14)을 모두 C 처리기로 바꿨고, 같은 이름의 계수기로 셉니다.** 실기에서 이 수가 그대로 나오는지는 모릅니다. [빌드만]
 5. **첫 판에서 빠진 것**: 소리(A단계 창만 만들고 상태 0 → 드라이버가 시작하지 않음), NS2 작업 통로(NS1만 알림), 와이파이 켜기(제어 페이지는 "꺼짐"만 보고), 맥북 없는 상태의 예외 처리(4-5), 디스크에서 파일을 읽어 혼자 시작하는 경로(4-1·4-2). 7장에 전부 적었습니다.
-6. **다음은 콘치님 손이 필요 없는 실기 시험 (가)입니다**: 맥북이 이 하이퍼바이저를 체인로드하고 C 계획과 Python 실행기를 같은 부팅에서 비교합니다. 게스트는 시작하지 않습니다. 명령은 `bash N/nwoas_scripts/standalone-s264/s264-dryrun-compare.sh` 한 줄입니다(6장).
+6. **다음 실기 단계는 (나) C가 게스트 시작입니다**: `bash N/nwoas_scripts/standalone-s264/s264-launch-watch.sh` 한 줄이고 콘치님 손은 필요 없습니다(화면 확인만 콘치님 눈). 스크립트는 s264B 바이너리 지문으로 고정했습니다. s264B로 (가)를 다시 돌리면 ADT 줄까지 실기로 확인되고, 명령은 그대로 `s264-dryrun-compare.sh`입니다(8장).
 
 ---
 
@@ -26,7 +27,9 @@
 |---|---|
 | 하이퍼바이저 소스(새 사본, g262Q + S264) | `N/m1n1-standalone-s264/` |
 | 패치 (g262Q → S264) | `N/port-j274/gpu/hv/hv2-g262Q-to-s264.patch` |
-| 바이너리 / 디버그 ELF | `N/port-j274/gpu/hv/out-hv2/m1n1-s264A-agx-hv2-standalone.bin` / `.elf` |
+| 바이너리 / 디버그 ELF (첫 판, 실기 (가) 1번) | `N/port-j274/gpu/hv/out-hv2/m1n1-s264A-agx-hv2-standalone.bin` / `.elf` |
+| 패치 (s264A → s264B, ADT `pmgr-u8id` 수정) | `N/port-j274/gpu/hv/hv2-s264A-to-s264B.patch` |
+| 바이너리 / 디버그 ELF (지금 판) | `N/port-j274/gpu/hv/out-hv2/m1n1-s264B-agx-hv2-standalone.bin` / `.elf` |
 | C 계획 (하드웨어를 건드리지 않음, 호스트에서도 컴파일됨) | `SRC/nwoas_s264_plan.c`, `SRC/nwoas_s264_plan.h` |
 | C 실행 (프록시 명령, 처리기, 하드웨어 단계) | `SRC/nwoas_s264.c`, `SRC/nwoas_s264.h` |
 | 기존 파일에 넣은 연결 지점 | `SRC/hv_exc.c`(레지스터 표), `SRC/hv_vm.c`(NS1만·NVMe 처리기 연결), `SRC/nwoas_s229_adapter.inc`(동작 27), `SRC/nwoas_nvmeqd.inc`(NS1만), `SRC/proxy.c`·`proxy.h`(0xc3e), `Makefile` |
@@ -69,7 +72,7 @@ S264 명령을 부르지 않으면 동작은 g262Q와 같습니다. 새 레지�
 | 7 | 가상 UART 연결 | `HVPY:1945, 1957-1964` | C(기존) | `hv_map_vuart` |
 | 8 | ACTLR EnMDSB | `HVPY:1947-1953` | C로(이번) | `do_msr()` |
 | 9 | ADT 고치기: 제품 이름 3개, USB0 관련 노드 18개 지우기 | `HVPY:2107-2156` | C로(이번) | `emit_node()` |
-| 10 | ADT 뿌리에 `pmgr-u8id` 속성이 붙음(Python ADT 라이브러리가 붙임) | `adt.py:812-813, 827-830` | C로(이번) | `root_extra_val` |
+| 10 | ADT 뿌리에 `pmgr-u8id` 속성이 붙음(Python ADT 라이브러리가 붙임). 이미 있으면 그 자리 값만 바뀜(s264B) | `adt.py:813, 622-629, 827-830` | C로(이번) | `root_extra_val` / `w.set` |
 
 ### 2.2 손님 메모리 배치 (`load_raw`)
 
@@ -183,7 +186,7 @@ C는 손님이 처음 NVMe에 닿을 때(UEFI 저장장치 시작, 게스트 m1n
 
 ## 5. 같은지 확인하는 도구와 결과
 
-결론: 호스트 시험은 통과했습니다. 실기 비교는 아직입니다.
+결론: 호스트 시험은 s264B로 두 ADT 입력 상태 모두 통과했습니다. 실기 비교 (가)는 s264A로 1번 돌려 ADT 한 줄이 달랐고(5.3장), s264B 실기 비교는 아직입니다.
 
 ### 5.1 호스트 시험 (지금 돌릴 수 있음, 맥미니 안 건드림)
 
@@ -193,7 +196,16 @@ C는 손님이 처음 NVMe에 닿을 때(UEFI 저장장치 시작, 게스트 m1n
 ```
 입력: J274 ADT 덤프 `N/nwoas_scripts/agx-g1-s246/evidence/g0-adt-20261116-live1/adt.bin`(sha256 32e63706…, iBoot-8422.141.2), 부트 인자·힙 위치·carveout은 `LOG0100` 값, GPT는 `guest_module.py`의 보호 칸으로 만든 합성 디스크.
 
-결과(2026-11-19 이 맥북에서 실행) [사실]:
+s264B부터는 같은 시험을 ADT 입력 두 상태로 돌립니다 [사실: `s264_offline_test.py` `chainload_state`]:
+
+| 상태 | 무엇 | 뿌리 속성 수 | 언제 쓰이는가 |
+|---|---|---|---|
+| `iboot` | 위 덤프 그대로 | 21 | 나중에 맥북 없이 켤 때(iBoot가 넘긴 ADT) |
+| `chainload` | 덤프를 Python `load_adt()` → `build()` 한 바이트를 같은 0x58000 자리에 덮어쓴 것(`chainload.py:106` `u.push_adt()`, `proxyutils.py:300-305`) | 22 (`pmgr-u8id` 포함) | 지금의 실기 (가)·(나): 맥북이 체인로드한 뒤 하이퍼바이저가 읽는 ADT |
+
+두 상태 모두 아래 15항목이 같아야 하고, 추가로 C 손님 ADT의 한 노드 안에 같은 이름 속성이 두 번 있으면 실패로 봅니다(일부러 뿌리 속성 하나를 두 번 넣은 ADT로 이 검사가 잡히는지도 확인). 체인로드가 바꾸는 memory-map·보조 CPU 시작 주소 값은 길이가 같고 C와 Python이 같은 바이트를 읽으므로 재현하지 않았습니다.
+
+결과(2026-11-19 이 맥북에서 실행, s264A 첫 판 기준 표. s264B 결과는 5.3장) [사실]:
 
 | 항목 | 결과 | 내용 |
 |---|---|---|
@@ -223,24 +235,68 @@ C는 손님이 처음 NVMe에 닿을 때(UEFI 저장장치 시작, 게스트 m1n
 ```
 bash /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/s264-dryrun-compare.sh
 ```
-같은 부팅 안에서 ① C 미리보기 ② 실제 S259 Python 실행기 경로(실제 모듈 전부, 단 소리는 A단계만, NWOAS_WIFI=0, 펌웨어 묶음 내용은 올리지 않음)를 돌리고, `hv.start`의 통로 변경·화면 끄기·SPRR/GXF·`hv_start`만 막은 채 기록해 비교합니다. 결과: `N/nwoas_scripts/logs/s264-compare-<시각>/compare.md`.
+같은 부팅 안에서 ① C 미리보기 ② 실제 S259 Python 실행기 경로(실제 모듈 전부, 단 소리는 A단계만, NWOAS_WIFI=0, 펌웨어 묶음 내용은 올리지 않음)를 돌리고, `hv.start`의 통로 변경·화면 끄기·SPRR/GXF·`hv_start`만 막은 채 기록해 비교합니다. 결과: `N/nwoas_scripts/logs/s264-compare-<시각>/compare.md`. s264B부터는 두 손님 ADT도 `c-adt.bin`·`py-adt.bin`으로 남깁니다(08:02 실행에는 C 결과 묶음만 남아 Python ADT 바이트는 없음).
+
+### 5.3 실기 (가) 1번째 결과 (s264A, 2026-11-19 08:02)와 s264B 수정
+
+결론: 손님 ADT만 달랐고, 원인은 C가 뿌리 `pmgr-u8id`를 중복으로 붙인 것이며, s264B에서 고쳐 호스트 시험 두 상태 모두 15/15 같음입니다. [사실]
+
+기록: `N/nwoas_scripts/logs/s264-compare-20261119-080223/`(`compare.md`, `compare.json`, `c-result.bin`)과 같은 이름의 `.log`.
+
+| 항목 | 실기 결과 |
+|---|---|
+| 같음 | 10줄 (부트 인자 736 B, 2단계 주소 연결 48구간, 레지스터 10개, 보조 CPU 시작 주소 7번, 통로 설정 20번, 복사 4번, GPU 중개 설정, 소리 머리말, 진입 주소 0x83d190800 / x0 0x83f788000, PMU SPMI 쓰기 2번) |
+| 다름 | 1줄: 손님 ADT 길이 C 324,208 B / Python 324,168 B, 첫 차이 +0x0(뿌리 속성 수 C 0x17 / Python 0x16) |
+
+실기 비교 표는 11줄입니다. 호스트 시험의 나머지 4줄(와이파이 제어 페이지, 기록과 맞추는 3줄)은 실기 도구에 없습니다.
+
+실기 C ADT 뿌리 속성(`c-result.bin`을 풀어 확인) [사실]:
+
+| 순서 | 이름 | 길이 (B) | 값 |
+|---|---|---|---|
+| 0~20 | iBoot 속성 21개 (`regulatory-model-number` … `#size-cells`) | | |
+| 21 | `pmgr-u8id` | 4 | 0 — 입력 ADT에 이미 있던 것 |
+| 22 | `pmgr-u8id` | 4 | 0 — C가 새로 붙인 것 (속성 1개 = 이름 32 + 길이 4 + 값 4 = 40 B) |
+
+왜 생겼나 [사실: 코드·기록]:
+1. Python `load_adt()`는 `pmgr_init()`에서 `self.pmgr_u8id = …`를 합니다(`N/m1n1_windows/proxyclient/m1n1/adt.py:813, 829-830`). `ADTNode.__setattr__`가 이것을 뿌리 속성 사전 `_properties["pmgr-u8id"]`에 넣습니다(`adt.py:622-629`). 사전이므로 이미 있으면 값만 바뀌고 순서·개수는 그대로, 없으면 맨 뒤에 붙습니다. 다시 읽으면 4바이트 정수로 읽히고 같은 바이트로 다시 만들어집니다(이 맥북에서 확인).
+2. 실기 (가)의 `chainload.py -r`가 106번째 줄에서 `u.push_adt()`를 부릅니다. 이것은 `load_adt()`로 읽은 ADT를 `build()`해 원래 자리에 다시 씁니다(`proxyclient/m1n1/proxyutils.py:300-305`). 기록에 `Pushing ADT (354044 bytes)...`가 찍혔습니다. 덤프 원본을 같은 식으로 만들면 354,044 B이고 원본보다 40 B 큽니다. 그래서 S264 하이퍼바이저가 읽은 ADT 뿌리에는 이미 `pmgr-u8id`가 있었습니다(속성 22개).
+3. Python 실행기(`HV.init`, `N/m1n1_windows/proxyclient/m1n1/hv/__init__.py:1843`)는 이 ADT를 다시 `load_adt()` 합니다 → 값만 바뀌고 22개. C 계획 s264A는 입력에 있는지 보지 않고 뿌리 끝에 항상 하나 더 붙였습니다(s264A `SRC/nwoas_s264_plan.c` 363줄 `pc + 1`, 397-401줄 `out_prop_named(w, "pmgr-u8id", …)`, 951-960줄 `w.root_extra_val = u8id ? 1 : 0`) → 23개.
+4. 호스트 시험은 iBoot 덤프(뿌리 21개, `pmgr-u8id` 없음)만 넣었기 때문에 두 쪽 모두 1개씩 붙여 같았습니다. 덤프 파일은 체인로드 전에 뜬 것이고, 실기 입력은 체인로드 뒤 것이라 달랐습니다.
+
+고친 것 (s264B, `hv2-s264A-to-s264B.patch`, `SRC/nwoas_s264_plan.c` 한 곳) [사실: 코드]: 입력 뿌리에 `pmgr-u8id`가 있으면 기존 바꿔치기 표(`w.set`)에 넣어 그 자리 값만 새 값(4바이트, 원래 플래그 유지)으로 쓰고 끝에 붙이지 않습니다. 없으면 전처럼 끝에 붙입니다.
+
+확인 [사실: 이 맥북에서 실행]:
+
+| 시험 | `iboot` 상태 | `chainload` 상태 |
+|---|---|---|
+| 고치기 전 s264A 소스 | 15/15 같음 | 14/15 — ADT 다름, 실기와 같은 문구(C 324,208 / Python 324,168, 0x17 / 0x16), 중복 `pmgr-u8id` 잡힘, C 결과 묶음 330,304 B(실기와 같은 크기) |
+| s264B 소스 | 15/15 같음, 중복 없음 | 15/15 같음, 중복 없음, ADT 324,168 B |
+| 일부러 바꾼 값 5개 + 뿌리 속성 중복 1개 | 6개 모두 잡힘 | 6개 모두 잡힘 |
+
+- s264B의 `iboot` 상태 C 결과 묶음과 ADT 지문은 s264A와 같습니다(`5b5c07cf…`, `b2b83b98…`). 즉 체인로드가 없는 경우의 출력은 바뀌지 않았습니다.
+- 실기 C ADT에서 C가 붙인 22번 속성 하나를 빼면 324,168 B로 실기 Python 길이와 같습니다. Python ADT 바이트는 남아 있지 않아 바이트 비교는 하지 못했습니다.
+- (나) 실행도 같은 C 계획을 쓰므로 s264A로 (나)를 했다면 Windows가 받는 ADT에 `pmgr-u8id`가 두 번 들어갔을 것입니다. 그것이 부팅에 영향을 주었을지는 모릅니다. [가설]
 
 ---
 
 ## 6. 빌드와 지문
 
-결론: 같은 패치로 새 폴더에서 처음부터 다시 빌드해 같은 지문이 나왔습니다. 경고 44개는 g262Q와 같은 목록입니다(새 경고 0). [사실]
+결론: 같은 패치로 새 폴더에서 처음부터(g262Q → s264A → s264B) 다시 빌드해 같은 지문이 나왔습니다. 경고 44개는 g262Q와 같은 목록이고 s264B도 s264A와 같은 목록입니다(새 경고 0). [사실]
 
 | 파일 | 크기 (B) | sha256 |
 |---|---|---|
 | `m1n1-s264A-agx-hv2-standalone.bin` | 2,408,448 | `178a004f963d424f17a9fbac1662c1ffe1d1dd24045a464ffffccf266de46c11` |
 | `m1n1-s264A-agx-hv2-standalone.elf` | 3,787,208 | `8f7491f1d1b0896ac47a23a99b203160a66cd625201be8bb98427940c915d19c` |
 | `hv2-g262Q-to-s264.patch` | 103,499 | `220611a7d7a21138cba9810c87057c63367dffc6204c245cf943aedbb5e39ede` |
+| `m1n1-s264B-agx-hv2-standalone.bin` (지금 판) | 2,408,448 | `a677658782f48367d32071325f137c8fcae02a9a38f62f2f5b40ac1304d7d927` |
+| `m1n1-s264B-agx-hv2-standalone.elf` | 3,787,616 | `1ed22207a624d50df7dab3584baafe079f6d39d518dadb43d6f37e23f57d7265` |
+| `hv2-s264A-to-s264B.patch` | 2,389 | `26ceeddb2833d2750073d9141b3cf598dbd62f04331b39c6c3c1445104cf9814` |
 | 바탕 g262Q (재현 확인) | 2,326,528 | `6a1ce6d4519146ae66940a5296803e44cf8dee65710956322ba20e778cca25d2` |
 | 오프라인 C 결과 묶음 | 330,264 | `5b5c07cf12ecddbc2b94ebbadbd500b7da77735d3d3b12f75d59c435107956d3` |
 | 오프라인 손님 ADT | 324,168 | `b2b83b988c2c1accf84e03714d18fb3fc75dc534f7840459aa49fc695fd2b264` |
 
-다시 빌드: `bash /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/build-s264.sh <없는 새 폴더>` (g262Q 재현 → 패치 → `buildvar.sh … s264A NWOAS_AGX=1` → 지문 비교 → 호스트 시험).
+다시 빌드: `bash /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/build-s264.sh <없는 새 폴더>` (g262Q 재현 → 패치 → `buildvar.sh … s264A NWOAS_AGX=1` → 지문 비교 → s264B 패치 → `buildvar.sh … s264B NWOAS_AGX=1` → 지문 비교 → s264B 소스로 호스트 시험 두 상태). 2026-11-19 08:26 이 맥북에서 끝까지 돌려 두 지문이 모두 같고 호스트 시험 PASS였습니다. [사실]
 
 이 바이너리는 ESP에 둘 2단계 파일 후보입니다. 스텁에 등록할 1단계 파일 크기 제한(D4 2,097,152 B 이하)은 이 파일에 해당하지 않습니다. [가설: 2단계 크기 한도는 힙 여유에 달림, `standalone-boot.md` 1단계 위험]
 
@@ -262,12 +318,12 @@ bash /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/s264-dryru
 
 ## 8. 실기 검증 순서 (안전한 것부터)
 
-결론: (가)는 게스트를 시작하지 않는 비교만, (나)는 C가 게스트를 시작하고 맥북은 지켜보기만, (다)는 오늘 하지 않습니다. 모두 콘치님 손은 필요 없습니다((나)의 화면 확인만 콘치님 눈).
+결론: 다음 실기는 (나) `s264-launch-watch.sh`입니다. (가)는 s264A로 1번 돌려 ADT 한 줄만 달랐고(5.3장), 그 원인을 호스트에서 같은 문구로 재현한 뒤 s264B에서 고쳤습니다. s264B로 (가)를 다시 돌리면 ADT 줄까지 실기로 확인됩니다(게스트를 시작하지 않으므로 더 안전한 순서). (다)는 오늘 하지 않습니다. 모두 콘치님 손은 필요 없습니다((나)의 화면 확인만 콘치님 눈). 두 스크립트 모두 s264B 바이너리(2,408,448 B, `a6776587…`)와 도구 지문으로 고정했고, 이 맥북에서 고정값이 실제 파일과 맞는지 확인했습니다. [사실]
 
 ### (가) 체인로드 + C 미리보기 비교 — 게스트 시작 안 함
 
 - 명령: `bash /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/s264-dryrun-compare.sh`
-  - 앞부분은 S259 실행기와 같습니다: 통로 확인 → `proxy_ready.py` → `probe_fw135_s244.py`(D4 확인, 실패하면 아무것도 올리지 않음) → `chainload.py -r m1n1-s264A…bin`(크기·지문 고정) → 진단 출력 기록 → `s264_compare.py`.
+  - 앞부분은 S259 실행기와 같습니다: 통로 확인 → `proxy_ready.py` → `probe_fw135_s244.py`(D4 확인, 실패하면 아무것도 올리지 않음) → `chainload.py -r m1n1-s264B…bin`(크기·지문 고정) → 진단 출력 기록 → `s264_compare.py`.
 - 통과 기준:
   1. `compare.md`의 모든 줄이 SAME, 종료 코드 0.
   2. 진단 출력에 `HVLOG: S264 dry-run plan err=0 ops=…`.
@@ -279,7 +335,8 @@ bash /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/s264-dryru
 
 ### (나) 체인로드 + C가 게스트 시작, 맥북은 지켜보기만
 
-- 조건: (가) 통과.
+- 조건: (가)에서 ADT 말고 다른 줄은 모두 같았음(s264A, 08:02). s264B의 ADT 줄은 호스트 시험 `chainload` 상태로만 확인했습니다. [사실]
+- s264B와 맞는지 [사실: 이 맥북에서 확인]: `HV=…m1n1-s264B-agx-hv2-standalone.bin`, 크기·지문 고정값이 실제 파일과 같음, `s264_common.py`·`s264_pyref.py`·`s264_launch.py` 지문 확인 통과, `bash -n` 통과. `s264_launch.py`는 ADT를 따로 만들지 않고 하이퍼바이저 안 C 계획을 그대로 쓰므로 이번 수정이 그대로 적용됩니다.
 - 명령: `bash /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/s264-launch-watch.sh`
   - 맥북이 펌웨어 묶음을 Python 힙에 올리고(앞·가운데·끝 4 KiB 다시 읽어 확인) 실행 명령 하나만 보냅니다. 그 뒤로 맥북으로 넘어오는 사건은 기존 처리기가 처리하되 모두 셉니다.
 - 통과 기준:

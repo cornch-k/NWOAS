@@ -12,6 +12,7 @@
 
 static void Dbell(PNWOA_DEVICE Dev)
 {
+    InterlockedIncrement(&Dev->CntDbell);                  // s258o: counted
     NwoaRegWrite(Dev, Dev->PciReg64 ? NB_PCIE2_64_H2D_MB0 : NB_PCIE2_H2D_MB0, 1);
 }
 
@@ -162,6 +163,8 @@ static NTSTATUS Submit(PNWOA_DEVICE Dev, NWOA_RING* R, const UCHAR* Items, ULONG
     IdxSet(Dev, 0, R->D.idx, R->WPtr);
     KeMemoryBarrier();
     Dbell(Dev);
+    if (R == &Dev->Flow)
+        InterlockedIncrement(&Dev->CntFlowDbell);          // s258o: doorbells after a connected scan
     return STATUS_SUCCESS;
 }
 
@@ -183,15 +186,68 @@ static void PostCtlBuf(PNWOA_DEVICE Dev, ULONG Id)
         type = NB_MSG_IOCTLRESP_BUF_POST;
     }
     nb_enc_buf_post(it, Dev->Ring[NB_RING_CTRL_SUBMIT].D.itemsz, type, Id, NB_CTL_PKT_SIZE, Dev->Ctl.La + off);
-    (void)SubmitCtl(Dev, it);
+    // s258n: up to s258m a failed post (ring full) lost the buffer for good; brcmfmac counts
+    // its posted buffers and refills (brcmf_msgbuf_rxbuf_ctrl_post).  Retried in RetryPending.
+    ULONG bit = (Id >= ID_EVENT) ? 8 + (Id - ID_EVENT) : (Id - ID_IOCTLRESP);
+    if (NT_SUCCESS(SubmitCtl(Dev, it))) {
+        Dev->CtlPend &= ~(1u << bit);
+    } else if (Dev->RingsUp) {
+        if (!(Dev->CtlPend & (1u << bit)))
+            InterlockedIncrement(&Dev->CntCtlPostFail);
+        Dev->CtlPend |= 1u << bit;
+    }
 }
 
-void NwoaRxRepost(PNWOA_DEVICE Dev, USHORT Slot)
+static BOOLEAN RxRepostOnce(PNWOA_DEVICE Dev, USHORT Slot)
 {
     UCHAR it[64];
     nb_enc_rxbuf_post(it, Dev->Ring[NB_RING_RXPOST].D.itemsz, ID_RX + Slot, NWOA_SLOT_SIZE,
                       Dev->RxPool.La + (ULONG64)Slot * NWOA_SLOT_SIZE);
-    (void)Submit(Dev, &Dev->Ring[NB_RING_RXPOST], it, 1);
+    return NT_SUCCESS(Submit(Dev, &Dev->Ring[NB_RING_RXPOST], it, 1));
+}
+
+// caller holds RingLock.  s258n: a buffer whose repost fails is kept in RxPend and retried
+// (brcmfmac brcmf_msgbuf_rxbuf_data_fill refills up to max_rxbufpost) instead of being lost.
+void NwoaRxRepost(PNWOA_DEVICE Dev, USHORT Slot)
+{
+    if (Slot >= NWOA_RX_SLOTS_MAX)
+        return;
+    if (RxRepostOnce(Dev, Slot)) {
+        Dev->RxPend[Slot / 32] &= ~(1u << (Slot % 32));
+        return;
+    }
+    if (Dev->RingsUp) {
+        InterlockedIncrement(&Dev->CntRxRepostFail);
+        Dev->RxPend[Slot / 32] |= 1u << (Slot % 32);
+    }
+}
+
+// caller holds RingLock
+static void RetryPending(PNWOA_DEVICE Dev)
+{
+    for (ULONG w = 0; w < NWOA_RX_SLOTS_MAX / 32; w++) {
+        ULONG m = Dev->RxPend[w];
+        for (ULONG b = 0; m && b < 32; b++) {
+            if (!(m & (1u << b)))
+                continue;
+            if (!RxRepostOnce(Dev, (USHORT)(w * 32 + b)))
+                return;                                       // ring still full: next poll
+            m &= ~(1u << b);
+            Dev->RxPend[w] = m;
+            InterlockedIncrement(&Dev->CntRxRepostRetry);
+        }
+    }
+    if (Dev->CtlPend) {
+        for (ULONG b = 0; b < 16; b++) {
+            if (!(Dev->CtlPend & (1u << b)))
+                continue;
+            ULONG id = b < 8 ? ID_IOCTLRESP + b : ID_EVENT + (b - 8);
+            PostCtlBuf(Dev, id);
+            if (Dev->CtlPend & (1u << b))
+                return;
+            InterlockedIncrement(&Dev->CntCtlPostRetry);
+        }
+    }
 }
 
 // EAPOL received on the data path and again in an E_EAPOL_MSG event is the same frame twice
@@ -307,6 +363,9 @@ NTSTATUS NwoaRingsInit(PNWOA_DEVICE Dev)
     }
     Dev->EapolPending = 0;
     Dev->RxQHead = Dev->RxQTail = 0;
+    RtlZeroMemory(Dev->RxPend, sizeof(Dev->RxPend));
+    Dev->CtlPend = 0;
+    Dev->TxMaxOut = 0;
 
     NwoaFixDevCtl(Dev);
     NwoaBusMaster(Dev, TRUE);
@@ -342,13 +401,15 @@ void NwoaRingsStop(PNWOA_DEVICE Dev)
     Dev->RingsUp = FALSE;
     Dev->RxQHead = Dev->RxQTail = 0;                      // firmware buffers are not reposted any more
     Dev->EvRxBusy = 0;
+    RtlZeroMemory(Dev->RxPend, sizeof(Dev->RxPend));
+    Dev->CtlPend = 0;
     KeReleaseSpinLock(&Dev->RingLock, irql);
     if (Dev->Bar0 && Dev->BusMasterOn)
         NwoaBusMaster(Dev, FALSE);
 }
 
 // -------------------------------------------------------- message dispatch
-static void OnTxStatus(PNWOA_DEVICE Dev, ULONG ReqId)
+static void OnTxStatus(PNWOA_DEVICE Dev, ULONG ReqId, LONG FwStatus)
 {
     KIRQL irql;
     ULONG slot = ReqId - 1;
@@ -369,6 +430,10 @@ static void OnTxStatus(PNWOA_DEVICE Dev, ULONG ReqId)
     KeReleaseSpinLock(&Dev->TxLock, irql);
     InterlockedIncrement(&Dev->CntTxStatus);
     Dev->LastTxDoneTime = KeQueryInterruptTime();          // s258m: NwoaDiscDiag
+    if (FwStatus) {                                        // s258n: firmware TX status field
+        InterlockedIncrement(&Dev->CntTxStatusNz);
+        Dev->TxStatusLast = FwStatus;
+    }
 }
 
 static void OnRx(PNWOA_DEVICE Dev, const nb_msg* m)
@@ -463,7 +528,7 @@ static void Dispatch(PNWOA_DEVICE Dev, const UCHAR* It, ULONG Sz, BOOLEAN* RxQue
         *RxQueued = TRUE;
         break;
     case NB_MSG_TX_STATUS:
-        OnTxStatus(Dev, m.req_id);
+        OnTxStatus(Dev, m.req_id, m.status);
         *TxFreed = TRUE;
         break;
     case NB_MSG_FLOW_RING_CREATE_CMPLT:
@@ -488,8 +553,19 @@ static void Dispatch(PNWOA_DEVICE Dev, const UCHAR* It, ULONG Sz, BOOLEAN* RxQue
             (void)SubmitCtl(Dev, it);
         }
         break;
-    case NB_MSG_GEN_STATUS:
+    case NB_MSG_FLOW_RING_RESUME_CMPLT:                   // s258p: answer to NwoaFlowResume
+        InterlockedIncrement(&Dev->CntRsmCmplt);
+        Dev->RsmLastStatus = m.status;
+        Dev->RsmLastRing = m.flow_ring_id;
+        break;
+    case NB_MSG_GEN_STATUS:                               // s258n: counted (ignored before)
+        InterlockedIncrement(&Dev->CntGenStatus);
+        Dev->GenStatusLast = m.status;
+        break;
     case NB_MSG_RING_STATUS:
+        InterlockedIncrement(&Dev->CntRingStatus);
+        Dev->RingStatusLast = m.status;
+        Dev->RingStatusRing = m.flow_ring_id;
         break;
     default:
         InterlockedIncrement(&Dev->CntUnknown);
@@ -526,6 +602,7 @@ void NwoaProcess(PNWOA_DEVICE Dev)
         Drain(Dev, NB_RING_CTRL_COMPLETE, &rx, &tx);
         Drain(Dev, NB_RING_RX_COMPLETE, &rx, &tx);
         Drain(Dev, NB_RING_TX_COMPLETE, &rx, &tx);
+        RetryPending(Dev);
     }
     KeReleaseSpinLock(&Dev->RingLock, irql);
     if (InterlockedExchange(&Dev->RxNotifyPending, 0))
@@ -748,6 +825,10 @@ NTSTATUS NwoaTxFrame(PNWOA_DEVICE Dev, const UCHAR* Eth, ULONG Len)
         return STATUS_INVALID_PARAMETER;
     if (Dev->FlowState != 2 || !Dev->RingsUp || Dev->Dead)
         return STATUS_DEVICE_NOT_READY;
+    if (Dev->TxHold) {                                     // s258o ScanTxHold: the frame stays in the OS ring
+        InterlockedIncrement(&Dev->CntTxHeld);
+        return STATUS_DEVICE_BUSY;
+    }
     eapol = nb_be16(Eth + 12) == NB_ETHERTYPE_EAPOL;
     if (eapol) {
         int k = nb_eapol_key_msg(Eth, Len);
@@ -763,6 +844,9 @@ NTSTATUS NwoaTxFrame(PNWOA_DEVICE Dev, const UCHAR* Eth, ULONG Len)
     slot = Dev->TxFree[--Dev->TxFreeCount];
     Dev->TxBusy[slot] = TRUE;
     Dev->TxEapol[slot] = eapol;
+    Dev->TxPostTime[slot] = KeQueryInterruptTime();       // s258n: age of the oldest outstanding TX
+    if (NWOA_TX_SLOTS - Dev->TxFreeCount > Dev->TxMaxOut)
+        Dev->TxMaxOut = NWOA_TX_SLOTS - Dev->TxFreeCount;
     if (eapol)
         InterlockedIncrement(&Dev->EapolPending);
     KeReleaseSpinLock(&Dev->TxLock, irql);
@@ -775,7 +859,7 @@ NTSTATUS NwoaTxFrame(PNWOA_DEVICE Dev, const UCHAR* Eth, ULONG Len)
     st = Dev->FlowState == 2 ? Submit(Dev, &Dev->Flow, it, 1) : STATUS_DEVICE_NOT_READY;
     KeReleaseSpinLock(&Dev->RingLock, irql);
     if (!NT_SUCCESS(st)) {
-        OnTxStatus(Dev, slot + 1);                             // give the slot back
+        OnTxStatus(Dev, slot + 1, 0);                          // give the slot back
         return st;
     }
     InterlockedIncrement(&Dev->CntTx);
@@ -881,4 +965,187 @@ void NwoaEvtPollTimer(WDFTIMER Timer)
     InterlockedExchange(&Dev->PollIdle, busy ? 0 : 1);
     if (Dev->PollRunning)
         WdfTimerStart(Timer, WDF_REL_TIMEOUT_IN_MS(ms));
+}
+
+// ------------------------------------------------------------- s258n
+ULONG NwoaTxOutstanding(PNWOA_DEVICE Dev, ULONG64* OldestPost)
+{
+    KIRQL irql;
+    ULONG n = 0;
+    ULONG64 oldest = 0;
+    KeAcquireSpinLock(&Dev->TxLock, &irql);
+    for (ULONG i = 0; i < NWOA_TX_SLOTS; i++) {
+        if (!Dev->TxBusy[i])
+            continue;
+        n++;
+        if (!oldest || Dev->TxPostTime[i] < oldest)
+            oldest = Dev->TxPostTime[i];
+    }
+    KeReleaseSpinLock(&Dev->TxLock, irql);
+    if (OldestPost)
+        *OldestPost = oldest;
+    return n;
+}
+
+// "cs<w>/<fw r> rp<w>/<fw r> cc<fw w>/<r> tc<fw w>/<r> rc<fw w>/<r> fl<w>/<fw r>|-" (host copy / firmware index)
+void NwoaRingSnapshot(PNWOA_DEVICE Dev, PCHAR B, SIZE_T Cap, ULONG* FlowW, ULONG* FlowR)
+{
+    static const char* nm[NB_NUM_COMMON_RINGS] = { "cs", "rp", "cc", "tc", "rc" };
+    KIRQL irql;
+    ULONG v[NB_NUM_COMMON_RINGS][2], fw = 0, fr = 0;
+    BOOLEAN up, flow;
+    KeAcquireSpinLock(&Dev->RingLock, &irql);
+    up = Dev->RingsUp && Dev->Ctl.Va;
+    flow = up && Dev->FlowState == 2;
+    for (int k = 0; k < NB_NUM_COMMON_RINGS; k++) {
+        NWOA_RING* R = &Dev->Ring[k];
+        if (!up) { v[k][0] = v[k][1] = 0; continue; }
+        if (R->D.is_h2d) { v[k][0] = R->WPtr; v[k][1] = IdxGet(Dev, 1, R->D.idx); }
+        else             { v[k][0] = IdxGet(Dev, 2, R->D.idx); v[k][1] = R->RPtr; }
+    }
+    if (flow) { fw = Dev->Flow.WPtr; fr = IdxGet(Dev, 1, Dev->Flow.D.idx); }
+    KeReleaseSpinLock(&Dev->RingLock, irql);
+    B[0] = 0;
+    for (int k = 0; k < NB_NUM_COMMON_RINGS; k++) {
+        CHAR one[32];
+        RtlStringCchPrintfA(one, sizeof(one), "%s%lu/%lu ", nm[k], v[k][0], v[k][1]);
+        RtlStringCchCatA(B, Cap, one);
+    }
+    if (flow) {
+        CHAR one[32];
+        RtlStringCchPrintfA(one, sizeof(one), "fl%lu/%lu", fw, fr);
+        RtlStringCchCatA(B, Cap, one);
+    } else {
+        RtlStringCchCatA(B, Cap, "fl-");
+    }
+    if (FlowW) *FlowW = flow ? fw : 0xFFFFFFFFu;
+    if (FlowR) *FlowR = flow ? fr : 0xFFFFFFFFu;
+}
+
+void NwoaPoolSnapshot(PNWOA_DEVICE Dev, PCHAR B, SIZE_T Cap)
+{
+    KIRQL irql;
+    ULONG inq = 0, local = 0, pend = 0, ctlpend;
+    ULONG out = NwoaTxOutstanding(Dev, NULL);
+    KeAcquireSpinLock(&Dev->RingLock, &irql);
+    for (ULONG i = Dev->RxQHead; i != Dev->RxQTail; i = (i + 1) % NWOA_RXQ) {
+        if (Dev->RxQ[i].Local) local++; else inq++;
+    }
+    for (ULONG w = 0; w < NWOA_RX_SLOTS_MAX / 32; w++)
+        for (ULONG m = Dev->RxPend[w]; m; m &= m - 1)
+            pend++;
+    ctlpend = Dev->CtlPend;
+    KeReleaseSpinLock(&Dev->RingLock, irql);
+    ULONG atfw = Dev->NumRx >= inq + pend ? Dev->NumRx - inq - pend : 0;
+    RtlStringCchPrintfA(B, Cap, "txout=%lu txfree=%lu txmax=%lu rxnum=%lu rxfw=%lu rxq=%lu rxqlocal=%lu rxpend=%lu "
+        "rxfail=%ld rxretry=%ld ctlpend=%lx ctlfail=%ld ctlretry=%ld txnz=%ld/%ld gen=%ld/%ld ring=%ld/%ld/%lu",
+        out, NWOA_TX_SLOTS - out, Dev->TxMaxOut, Dev->NumRx, atfw, inq, local, pend,
+        Dev->CntRxRepostFail, Dev->CntRxRepostRetry, ctlpend, Dev->CntCtlPostFail, Dev->CntCtlPostRetry,
+        Dev->CntTxStatusNz, Dev->TxStatusLast, Dev->CntGenStatus, Dev->GenStatusLast,
+        Dev->CntRingStatus, Dev->RingStatusLast, Dev->RingStatusRing);
+}
+
+// delete + create the TX flowring to the current AP (the firmware returns what it holds on delete)
+NTSTATUS NwoaFlowringRecreate(PNWOA_DEVICE Dev)
+{
+    UCHAR da[6];
+    RtlCopyMemory(da, Dev->FlowDa, 6);
+    NwoaFlowringDelete(Dev);
+    return NwoaFlowringCreate(Dev, da);
+}
+
+// PASSIVE, 2 s diag job: the PCIe mailbox interrupt status and the D2H mailbox word in TCM are
+// what brcmfmac's interrupt handler reads (brcmf_pcie_handle_mb_data).  Polled here, read only.
+void NwoaMbPollTick(PNWOA_DEVICE Dev)
+{
+    if (!Dev->Cfg.MbPoll || !Dev->RingsUp || Dev->Dead || !Dev->Bar0)
+        return;
+    if (Dev->WindowValid && Dev->CurWindow == Dev->Pcie2Base) {
+        ULONG mi = NwoaRegRead(Dev, Dev->PciReg64 ? NB_PCIE2_64_MAILBOXINT : NB_PCIE2_MAILBOXINT);
+        if (mi && mi != 0xFFFFFFFF)
+            InterlockedIncrement(&Dev->CntMbIntNz);
+        Dev->MbIntLast = mi;
+    }
+    if (Dev->Sh.dtoh_mb) {
+        ULONG d = NwoaTcmRead32(Dev, Dev->Sh.dtoh_mb);
+        if (d && d != 0xFFFFFFFF)
+            InterlockedIncrement(&Dev->CntDtohMbNz);
+        Dev->DtohMbLast = d;
+    }
+}
+
+// ------------------------------------------------------------- s258o
+// TX flowring host write pointer / firmware read index (read from the DMA index buffer)
+BOOLEAN NwoaFlowIdx(PNWOA_DEVICE Dev, ULONG* W, ULONG* R)
+{
+    KIRQL irql;
+    BOOLEAN ok;
+    KeAcquireSpinLock(&Dev->RingLock, &irql);
+    ok = Dev->RingsUp && Dev->Ctl.Va && Dev->FlowState == 2 && !Dev->Dead;
+    *W = ok ? Dev->Flow.WPtr : 0xFFFFFFFFu;
+    *R = ok ? IdxGet(Dev, 1, Dev->Flow.D.idx) : 0xFFFFFFFFu;
+    KeReleaseSpinLock(&Dev->RingLock, irql);
+    return ok;
+}
+
+// The same commit again: w index rewritten, barrier, doorbell (brcmf_commonring_write_complete does
+// write_wptr + ring_bell for every commit; this repeats it once without a new item)
+void NwoaFlowKick(PNWOA_DEVICE Dev)
+{
+    KIRQL irql;
+    KeAcquireSpinLock(&Dev->RingLock, &irql);
+    if (Dev->RingsUp && Dev->Ctl.Va && Dev->FlowState == 2 && !Dev->Dead) {
+        KeMemoryBarrier();
+        IdxSet(Dev, 0, Dev->Flow.D.idx, Dev->Flow.WPtr);
+        KeMemoryBarrier();
+        Dbell(Dev);
+        InterlockedIncrement(&Dev->CntFlowDbell);
+    }
+    KeReleaseSpinLock(&Dev->RingLock, irql);
+}
+
+// s258p: FLOW_RING_RESUME (bcmdhd dhd_prot_flow_ring_resume: if_id, request_id 0, flow_ring_id) on the
+// control submit ring.  [hypothesis] the firmware holds this flowring as suspended after the scan; a
+// firmware without idle flowring management answers with an error status or not at all.
+NTSTATUS NwoaFlowResume(PNWOA_DEVICE Dev)
+{
+    UCHAR it[64];
+    KIRQL irql;
+    NTSTATUS st = STATUS_DEVICE_NOT_READY;
+    if (Dev->FlowState != 2 || !Dev->RingsUp || Dev->Dead)
+        return st;
+    if (!nb_enc_flowring_resume(it, Dev->Ring[NB_RING_CTRL_SUBMIT].D.itemsz, 0, Dev->Flow.D.idx))
+        return STATUS_INVALID_PARAMETER;
+    KeAcquireSpinLock(&Dev->RingLock, &irql);
+    st = SubmitCtl(Dev, it);
+    KeReleaseSpinLock(&Dev->RingLock, irql);
+    if (NT_SUCCESS(st))
+        InterlockedIncrement(&Dev->CntRsmSent);
+    return st;
+}
+
+// [hypothesis about their meaning] ring_info h2d_w/h2d_r_idx_ptr still point at the firmware's own
+// index arrays in TCM when DMA indices are used (brcmfmac ignores them then).  Read only, 4 bytes
+// per ring as in TCM index mode; compared with the control submit ring (slot 0) to see what they hold.
+void NwoaFwIdxView(PNWOA_DEVICE Dev, ULONG Slot, ULONG* FwW, ULONG* FwR)
+{
+    *FwW = *FwR = 0xFFFFFFFFu;
+    if (!Dev->RingsUp || Dev->Dead || !Dev->Bar2)
+        return;
+    ULONG a = Dev->Sh.tcm_idx[0], b = Dev->Sh.tcm_idx[1];
+    if (a && a + Slot * 4 + 4 <= Dev->Bar2Len)
+        *FwW = NwoaTcmRead32(Dev, a + Slot * 4);
+    if (b && b + Slot * 4 + 4 <= Dev->Bar2Len)
+        *FwR = NwoaTcmRead32(Dev, b + Slot * 4);
+}
+
+ULONG NwoaHostWIdx(PNWOA_DEVICE Dev, ULONG Slot)
+{
+    KIRQL irql;
+    ULONG v = 0xFFFFFFFFu;
+    KeAcquireSpinLock(&Dev->RingLock, &irql);
+    if (Dev->RingsUp && Dev->Ctl.Va && !Dev->Dead)
+        v = Slot == 0 ? Dev->Ring[NB_RING_CTRL_SUBMIT].WPtr : (Slot == Dev->Flow.D.idx ? Dev->Flow.WPtr : IdxGet(Dev, 0, Slot));
+    KeReleaseSpinLock(&Dev->RingLock, irql);
+    return v;
 }

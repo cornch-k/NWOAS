@@ -1,0 +1,6 @@
+LIBRARY ntdll.dll
+EXPORTS
+NtQueryInformationProcess
+NtSetInformationProcess
+NtQueryInformationThread
+NtSetInformationThread

@@ -107,10 +107,91 @@ static void LinkLost(PNWOA_DEVICE Dev, ULONG WdiReason)
     NwoaQueueJob(Dev, JOB_LINK_LOST);
 }
 
+// s258n: extra firmware events enabled with DiagEvents=1 (brcmfmac fweh.h numbers): QUIET_START 13,
+// QUIET_END 14, MIC_ERROR 17, TXFAIL 20, BCNLOST_MSG 31, PSM_WATCHDOG 41, ICV_ERROR 49,
+// UNICAST_DECODE_ERROR 50.  Counted with the time of the last one; not put into EvLog.
+const ULONG NwoaDiagEventTypes[NWOA_EVDIAG_N] = { 13, 14, 17, 20, 31, 41, 49, 50 };
+
+// the types this file acts on (the s258m event mask in NwoaFirmwareConfigure)
+BOOLEAN NwoaEventIsBase(ULONG Type)
+{
+    switch (Type) {
+    case NB_E_SET_SSID: case NB_E_AUTH: case NB_E_DEAUTH: case NB_E_DEAUTH_IND: case NB_E_ASSOC:
+    case NB_E_REASSOC: case NB_E_DISASSOC: case NB_E_DISASSOC_IND: case NB_E_LINK: case NB_E_ROAM:
+    case NB_E_EAPOL_MSG: case NB_E_IF: case NB_E_ESCAN_RESULT:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+// BEACON_RX 15, BCNRX_MSG 30, PROBREQ_MSG 44, TRACE 52, EXTLOG_MSG 58: may come many times a second
+BOOLEAN NwoaEventIsNoisy(ULONG Type)
+{
+    return Type == 15 || Type == 30 || Type == 44 || Type == 52 || Type == 58;
+}
+
+static BOOLEAN DiagEventCount(PNWOA_DEVICE Dev, ULONG Type)
+{
+    ULONG ms = (ULONG)(KeQueryInterruptTime() / 10000);
+    if (NwoaEventIsBase(Type))
+        return FALSE;
+    if (Type <= NB_E_LAST) {
+        InterlockedIncrement(&Dev->EvAllCnt[Type]);
+        Dev->EvAllMs[Type] = ms;
+    }
+    for (ULONG i = 0; i < NWOA_EVDIAG_N; i++)
+        if (NwoaDiagEventTypes[i] == Type) {
+            InterlockedIncrement(&Dev->EvDiagCnt[i]);
+            Dev->EvDiagLastMs[i] = ms;
+        }
+    return TRUE;                                              // counted only (not in EvLog)
+}
+
+// s258q: event 124 (WLC_E_CCA_CHAN_QUAL in bcmdhd bcmevent.h) fires hundreds of times while a scan runs.
+// Counted, decoded as cca_chan_qual_event_t, the first data bytes kept (masked when written out) and the
+// distinct chanspecs seen during a test scan collected.  Numbers only; DISPATCH, single writer.
+static void Ev124Record(PNWOA_DEVICE Dev, const nb_event* e)
+{
+    nb_cca_ev c;
+    ULONG ms = (ULONG)(KeQueryInterruptTime() / 10000);
+    InterlockedIncrement(&Dev->CntEv124);
+    if (Dev->ScanRunning)
+        InterlockedIncrement(&Dev->CntEv124Scan);
+    if (!Dev->Ev124FirstMs) {
+        ULONG n = min((ULONG)e->datalen, (ULONG)sizeof(Dev->Ev124First));
+        if (n)
+            RtlCopyMemory(Dev->Ev124First, e->data, n);
+        Dev->Ev124FirstLen = n;
+        Dev->Ev124FirstDl = e->datalen;
+        Dev->Ev124FirstMs = ms ? ms : 1;
+    }
+    if (nb_cca_ev_parse(e->data, e->datalen, &c) != 1) {
+        InterlockedIncrement(&Dev->CntEv124Bad);
+        return;
+    }
+    Dev->Ev124Id[c.id < 3 ? c.id : 3]++;
+    Dev->Ev124Last = c;
+    Dev->Ev124LastMs = ms;
+    Dev->Ev124LastDl = e->datalen;
+    if (Dev->ScanRunning && Dev->SelfScan) {
+        ULONG i;
+        for (i = 0; i < Dev->Ev124NCs; i++)
+            if (Dev->Ev124Cs[i] == c.chanspec)
+                break;
+        if (i == Dev->Ev124NCs && i < RTL_NUMBER_OF(Dev->Ev124Cs))
+            Dev->Ev124Cs[Dev->Ev124NCs++] = c.chanspec;
+    }
+}
+
 void NwoaHandleEvent(PNWOA_DEVICE Dev, const UCHAR* Frame, ULONG Len)
 {
     nb_event e;
     if (nb_event_parse(Frame, Len, &e) != 1)
+        return;
+    if (e.type == NB_E_CCA_CHAN_QUAL)
+        Ev124Record(Dev, &e);
+    if (DiagEventCount(Dev, e.type))
         return;
     if (e.type != NB_E_ESCAN_RESULT) {
         NWOA_EVREC* r = &Dev->EvLog[Dev->EvLogNext % NWOA_EVLOG];

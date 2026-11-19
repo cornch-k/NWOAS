@@ -332,3 +332,83 @@ NTSTATUS NwoaReadConsoleTail(PNWOA_DEVICE Dev, PCHAR Out, ULONG Cap)
     Out[n] = 0;
     return STATUS_SUCCESS;
 }
+
+// s258n: new firmware console text since the last 2 s diag tick, whole lines only, masked
+// (nb_mask_text: MAC / 12-hex tokens, the SSID of the last connect), kept as a rolling tail
+// of NWOA_CONLIVE characters for NwoaConsoleLive.  At most 2048 new bytes per tick.
+static void ConAppendLine(PNWOA_DEVICE Dev, const CHAR* L, ULONG Len)
+{
+    CHAR m[600];
+    KIRQL irql;
+    ULONG n = nb_mask_text(L, Len, Dev->Conn.Ssid, Dev->Conn.SsidLen, m, sizeof(m));
+    while (n && (m[n - 1] == '\n' || m[n - 1] == ' '))
+        n--;
+    if (!n)
+        return;
+    if (n > NWOA_CONLIVE - 1)
+        n = NWOA_CONLIVE - 1;
+    KeAcquireSpinLock(&Dev->StateLock, &irql);
+    if (Dev->ConLen + n + 1 > NWOA_CONLIVE) {
+        ULONG drop = Dev->ConLen + n + 1 - NWOA_CONLIVE;
+        while (drop < Dev->ConLen && Dev->ConBuf[drop - 1] != '\n')
+            drop++;                                           // whole lines only
+        if (drop > Dev->ConLen)
+            drop = Dev->ConLen;
+        RtlMoveMemory(Dev->ConBuf, Dev->ConBuf + drop, Dev->ConLen - drop);
+        Dev->ConLen -= drop;
+    }
+    RtlCopyMemory(Dev->ConBuf + Dev->ConLen, m, n);
+    Dev->ConLen += n;
+    Dev->ConBuf[Dev->ConLen++] = '\n';
+    Dev->ConBuf[Dev->ConLen] = 0;
+    Dev->ConDirty = TRUE;
+    KeReleaseSpinLock(&Dev->StateLock, irql);
+}
+
+void NwoaConsoleLiveTick(PNWOA_DEVICE Dev)
+{
+    ULONG con = Dev->Sh.console, buf, size, widx, n, start;
+    if (!Dev->Cfg.ConsoleLive || !Dev->FwUp || !con)
+        return;
+    buf = NwoaTcmRead32(Dev, con + NB_CON_BUFADDR);
+    size = NwoaTcmRead32(Dev, con + NB_CON_BUFSIZE);
+    widx = NwoaTcmRead32(Dev, con + NB_CON_WRITEIDX);
+    if (buf < Dev->Ram.rambase || buf + size > Dev->Ram.top || !size || size > 0x10000 || widx >= size)
+        return;
+    if (!Dev->ConInit || Dev->ConIdx >= size) {
+        Dev->ConIdx = widx;                                   // start now: the boot text is in NwoaConsoleTail
+        Dev->ConInit = TRUE;
+        return;
+    }
+    if (widx == Dev->ConIdx)
+        return;
+    n = (widx + size - Dev->ConIdx) % size;
+    start = Dev->ConIdx;
+    if (n > 2048) {
+        Dev->ConSkipped += n - 2048;
+        start = (widx + size - 2048) % size;
+        n = 2048;
+    }
+    PUCHAR raw = (PUCHAR)ExAllocatePool2(POOL_FLAG_NON_PAGED, n, NWOA_TAG);
+    if (!raw)
+        return;
+    for (ULONG o = 0, s = start; o < n;) {
+        ULONG chunk = min(n - o, size - s);
+        NwoaTcmReadBuf(Dev, buf + s, raw + o, chunk);
+        o += chunk;
+        s = 0;
+    }
+    Dev->ConIdx = widx;
+    Dev->ConBytes += n;
+    for (ULONG i = 0; i < n; i++) {
+        CHAR c = (CHAR)raw[i];
+        if (c == 0)
+            continue;
+        Dev->ConLine[Dev->ConLineLen++] = c;
+        if (c == '\n' || Dev->ConLineLen >= sizeof(Dev->ConLine) - 1) {
+            ConAppendLine(Dev, Dev->ConLine, Dev->ConLineLen);
+            Dev->ConLineLen = 0;
+        }
+    }
+    ExFreePoolWithTag(raw, NWOA_TAG);
+}

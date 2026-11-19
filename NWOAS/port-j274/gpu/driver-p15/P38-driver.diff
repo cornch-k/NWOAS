@@ -1,0 +1,443 @@
+diff --git a/drivers/apple-agx/mesa/winsys/agx_d3d12_windows.cpp b/drivers/apple-agx/mesa/winsys/agx_d3d12_windows.cpp
+index 7a460f7..ed8e5a9 100644
+--- a/drivers/apple-agx/mesa/winsys/agx_d3d12_windows.cpp
++++ b/drivers/apple-agx/mesa/winsys/agx_d3d12_windows.cpp
+@@ -1513,16 +1513,29 @@ extern "C" HRESULT AgxD3d12OwnerCopy(AGX_D3D12_OWNER *owner, const AGX_D3D12_BUF
+   OwnerLock lock(owner);
+   if (!owner || !owner->Context || !dst || !src || !dst->Resource || !src->Resource || !bytes ||
+       dst_offset > dst->Bytes || bytes > dst->Bytes - dst_offset || src_offset > src->Bytes ||
+-      bytes > src->Bytes - src_offset || dst->Bytes > 0x7fffffffull || src->Bytes > 0x7fffffffull)
++      bytes > src->Bytes - src_offset || dst->Bytes > 0xffffffffull || src->Bytes > 0xffffffffull)
+     return E_INVALIDARG;
+-  struct pipe_box box = {}; /* u_box_1d: the UMD Mesa tree has no util/u_box.h */
+-  box.x = static_cast<int>(src_offset);
+-  box.width = static_cast<int>(bytes);
+-  box.height = 1;
+-  box.depth = 1;
+-  owner->Context->resource_copy_region(owner->Context, static_cast<struct pipe_resource *>(dst->Resource), 0,
+-                                       static_cast<unsigned>(dst_offset), 0, 0,
+-                                       static_cast<struct pipe_resource *>(src->Resource), 0, &box);
++  /* P38 (S265 K43, 2773): the 2 GiB heap cap (Bytes > 0x7fffffff -> E_INVALIDARG -> pfnSetErrorCb ->
++   * DXGI_ERROR_DRIVER_INTERNAL_ERROR) refused every copy into a 2 GiB+ buffer. pipe_box x/width are
++   * int32_t (Mesa 9aa1215f util/box.h:14-15). Asahi's buffer copy (agx_blit.c agx_resource_copy_region,
++   * PIPE_BUFFER x PIPE_BUFFER, unpatched here) computes `src_box->x * bs` and `bs * src_box->width` in
++   * unsigned arithmetic (bs = 1, R8_UNORM), so the two's-complement int32 of a 32-bit offset gives the
++   * exact unsigned offset; dstx and agx_batch_writes_range are unsigned. Heaps stay below 4 GiB (the
++   * checks above), so offset + size never wraps 32 bits. Pieces of at most 1 GiB keep width positive. */
++  const unsigned long long kPiece = 0x40000000ull;
++  for (unsigned long long done = 0; done < bytes;) {
++    const unsigned long long n = bytes - done < kPiece ? bytes - done : kPiece;
++    const unsigned so = static_cast<unsigned>(src_offset + done);
++    struct pipe_box box = {}; /* u_box_1d: the UMD Mesa tree has no util/u_box.h */
++    box.x = static_cast<int>(so); /* two's complement above INT32_MAX (see above) */
++    box.width = static_cast<int>(n);
++    box.height = 1;
++    box.depth = 1;
++    owner->Context->resource_copy_region(owner->Context, static_cast<struct pipe_resource *>(dst->Resource), 0,
++                                         static_cast<unsigned>(dst_offset + done), 0, 0,
++                                         static_cast<struct pipe_resource *>(src->Resource), 0, &box);
++    done += n;
++  }
+   ++owner->PendingCopies;
+   return S_OK;
+ }
+diff --git a/drivers/apple-agx/mesa/winsys/agx_win32_asahi_bo.c b/drivers/apple-agx/mesa/winsys/agx_win32_asahi_bo.c
+index 994124b..b4da56c 100644
+--- a/drivers/apple-agx/mesa/winsys/agx_win32_asahi_bo.c
++++ b/drivers/apple-agx/mesa/winsys/agx_win32_asahi_bo.c
+@@ -513,10 +513,16 @@ struct agx_bo *agx_bo_create(struct agx_device *native,size_t bytes,unsigned ali
+       bo->Backing.Buffer.Transport.Token,bytes,(flags&AGX_BO_LOW_VA)!=0,
+       ((flags&AGX_BO_READONLY)?0:AGX_GPUVA_MAP_WRITE)|
+       ((flags&AGX_BO_EXEC)?AGX_GPUVA_MAP_EXECUTE:0))) {
++    /* P38: AgxWin32GpuvaBind frees its VA on every failure that does not set
++     * Terminal (agx_win32_gpuva.c). With the allocation also destroyed the
++     * rollback is clean, like the EXP1265-C creation refusal above: only
++     * this creation fails (E_OUTOFMEMORY), the backend is not poisoned. */
+     if(b->Gpuva.Terminal || AgxWin32NativeDeviceDestroyBo(&b->Buffers,&bo->Backing)!=
+-        AgxWin32NativeDeviceSuccess) b->UnpublishedBo=bo;
+-    else free(bo);
+-    AGX_WIN32_ASAHI_FAIL(b, 1u);return NULL;
++        AgxWin32NativeDeviceSuccess) {
++      b->UnpublishedBo=bo;
++      AGX_WIN32_ASAHI_FAIL(b, 1u);
++    } else free(bo);
++    return NULL;
+   }
+   bo->Coordinate.addr=bo->Gpuva.Va;
+   timed_bound=os_time_get_nano();
+diff --git a/drivers/apple-agx/render-admission/include/render_admission.h b/drivers/apple-agx/render-admission/include/render_admission.h
+index 67d3cbb..7c7bea7 100644
+--- a/drivers/apple-agx/render-admission/include/render_admission.h
++++ b/drivers/apple-agx/render-admission/include/render_admission.h
+@@ -846,6 +846,10 @@ typedef struct _ADMISSION_CONTEXT {
+   UINT PagingLastSubmittedFence;
+   UINT PagingLastCompletedFence;
+   NTSTATUS PagingCompletionStatus;
++  /* P38: Wom1PagingExecFailure (render_paging.h), updated by the paging
++   * worker and the G3 contract completion; staged to the registry. */
++  ADMISSION_PAGING_EXEC_FAILURE PagingExecFailure;
++  KSPIN_LOCK PagingExecFailureLock;
+   volatile LONG PagingPending;
+   volatile LONG PagingWorkersActive, PagingDpcsActive;
+   volatile LONG PagingCallbacksActive; /* includes final dispatch/retry tail */
+@@ -1577,6 +1581,10 @@ BOOLEAN AdmissionMemoryPoolTvbGive(_In_opt_ ADMISSION_CONTEXT *Context,
+ _IRQL_requires_(PASSIVE_LEVEL)
+ void AdmissionRecordM2PoolProbe(_In_opt_ ADMISSION_CONTEXT *Context,
+                                 _In_ const ADMISSION_POOL_PROBE *Probe);
++/* P38 receipt Wom1PagingExecFailure (staged; written and flushed by the
++ * paging receipt work item). Callers fill Context->PagingExecFailure under
++ * PagingExecFailureLock first. IRQL <= DISPATCH_LEVEL. */
++void AdmissionRecordPagingExecFailure(_In_opt_ ADMISSION_CONTEXT *Context);
+ /* M2-f3 receipt Wom1M2PoolDemand (staged; written by a work item). */
+ void AdmissionRecordM2PoolDemand(
+     _In_opt_ ADMISSION_CONTEXT *Context,
+diff --git a/drivers/apple-agx/render-admission/include/render_paging.h b/drivers/apple-agx/render-admission/include/render_paging.h
+index ec83a49..a20daf8 100644
+--- a/drivers/apple-agx/render-admission/include/render_paging.h
++++ b/drivers/apple-agx/render-admission/include/render_paging.h
+@@ -58,6 +58,28 @@ typedef struct _ADMISSION_PAGING_RECORD {
+ #pragma warning(pop)
+ #endif
+ 
++/* P38 receipt Wom1PagingExecFailure (flushed): the CPU paging worker's
++ * failed records (reported to VidMm as DXGK_INTERRUPT_DMA_PAGE_FAULTED with
++ * a device-specific code) and the G3 UpdatePageTable/FlushTlb contract
++ * completions that poisoned a process (gpuva_g3_paging_windows.c site 0x26).
++ * Neither had a receipt before; S265 K43 lost a 2 GiB buffer's device with
++ * no trace of either. */
++#define ADMISSION_PAGING_EXEC_FAILURE_VERSION 1u
++typedef struct _ADMISSION_PAGING_EXEC_FAILURE {
++  unsigned int Version, Bytes;
++  unsigned int Failures, LastStatus;      /* worker records that failed */
++  unsigned int LastKind, LastIndex;       /* record kind, index in packet */
++  unsigned int DestinationSegment, SourceSegment;
++  unsigned long long DestinationIpa, SourceIpa;
++  unsigned long long DestinationVa, SourceVa;
++  unsigned int RecordBytes, RecordCount;  /* failed record, records in packet */
++  unsigned int Fence, Node;
++  unsigned long long Qpc;                 /* KeQueryPerformanceCounter */
++  unsigned int ContractCompletions;       /* poisoning completions */
++  unsigned int ContractLastStatus, ContractLastOperation, Reserved;
++  unsigned long long ContractQpc;
++} ADMISSION_PAGING_EXEC_FAILURE;
++
+ int AdmissionPagingFenceCanSubmit(unsigned int LastSubmitted,
+                                   unsigned int Candidate,
+                                   unsigned int Resubmission);
+diff --git a/drivers/apple-agx/render-admission/include/render_pool_demand.h b/drivers/apple-agx/render-admission/include/render_pool_demand.h
+index 899a35b..76f3f25 100644
+--- a/drivers/apple-agx/render-admission/include/render_pool_demand.h
++++ b/drivers/apple-agx/render-admission/include/render_pool_demand.h
+@@ -102,6 +102,19 @@ typedef enum _ADMISSION_POOL_PLACE {
+  * HighMemoryCondition is clear or unavailable. Counted in the v15
+  * HeadroomRefusals, not in RefusalCounts (whose v9 layout has 4 entries). */
+ #define ADMISSION_POOL_REFUSAL_HEADROOM 5u
++/* P38 (S265 K43 fill2, 2773): a creation whose promise would take the
++ * promised total past the admission cap (segment granules less the
++ * Wom1PoolAdmitMarginMiB margin). ReserveCap lets promises run past the
++ * segment (render_pool_slab.c Promised); VidMm then has to evict a pool-only
++ * BO (EvictionSegmentSet 0) into 4 KiB system pages the UAT cannot map,
++ * and the device was reset (DXGI_ERROR_DEVICE_RESET) at the 17th 256 MiB
++ * heap instead of the creation failing. Counted in the v16 SegmentRefusals,
++ * not in RefusalCounts. */
++#define ADMISSION_POOL_REFUSAL_SEGMENT 6u
++/* P38: default margin (MiB) kept below the segment size for VidMm's own
++ * placements and fragmentation; REG_DWORD Wom1PoolAdmitMarginMiB overrides,
++ * 0 turns the cap off (pre-P38 behaviour), at most half the segment. */
++#define ADMISSION_POOL_ADMIT_MARGIN_DEFAULT_MIB 256u
+ typedef struct _ADMISSION_POOL_RESERVE_FAILURE {
+   unsigned long long RequestBytes, ReservedBytes, HeldBytes, CommittedBytes;
+   unsigned long long TimeMs;
+@@ -111,7 +124,7 @@ typedef struct _ADMISSION_POOL_RESERVE_FAILURE {
+   unsigned long long PrivateGranules;
+ } ADMISSION_POOL_RESERVE_FAILURE;
+ 
+-#define ADMISSION_POOL_DEMAND_RECEIPT_VERSION 15u /* v15: graphics policy */
++#define ADMISSION_POOL_DEMAND_RECEIPT_VERSION 16u /* v16: P38 admission cap */
+ #define ADMISSION_POOL_DEMAND_RECEIPT_STEP 256u /* 16 MiB */
+ typedef struct _ADMISSION_POOL_DEMAND_RECEIPT {
+   unsigned int Version, Bytes, GranuleBytes, LastWindowResult;
+@@ -187,6 +200,9 @@ typedef struct _ADMISSION_POOL_DEMAND_RECEIPT {
+   unsigned int PoolPercent, PolicyPercent, PolicyMaxPercent, PolicyCpuOnlyMiB;
+   unsigned int PolicyFlags, PolicyReserved;
+   unsigned long long HeadroomRefusals;
++  /* v16 (P38): the admission cap in granules (0: off) and the creations it
++   * refused (ADMISSION_POOL_REFUSAL_SEGMENT). Appended: v15 offsets hold. */
++  unsigned long long AdmitGranules, SegmentRefusals;
+ } ADMISSION_POOL_DEMAND_RECEIPT;
+ 
+ /* M2-f4a: the declared size of the demand-backed segment 3 for a machine.
+diff --git a/drivers/apple-agx/render-admission/src/allocation_windows.c b/drivers/apple-agx/render-admission/src/allocation_windows.c
+index 518e4a5..3a66df6 100644
+--- a/drivers/apple-agx/render-admission/src/allocation_windows.c
++++ b/drivers/apple-agx/render-admission/src/allocation_windows.c
+@@ -83,9 +83,17 @@ _Use_decl_annotations_ ULONGLONG AdmissionGeneralMaximumBytes(
+ #if defined(APPLE_AGX_GPUVA_G3_QUALIFICATION)
+   ADMISSION_SCANOUT_MEMORY_VIEW pool;
+   if (Context != NULL && AdmissionMemoryPoolView(Context, &pool) &&
+-      Context->PoolBytes > ADMISSION_WIN32_ALLOCATION_LEGACY_MAX_BYTES)
+-    return Context->PoolBytes &
+-           ~(ULONGLONG)(ADMISSION_ALLOCATION_ALIGNMENT - 1u);
++      Context->PoolBytes > ADMISSION_WIN32_ALLOCATION_LEGACY_MAX_BYTES) {
++    /* P38: VidMm's VIRTUAL_FILL/TRANSFER of a whole allocation is refused
++     * above MAXULONG (gpuva_g3_paging_windows.c, STATUS_INVALID_PARAMETER,
++     * which BuildPagingBuffer may not return), and a 4 GiB segment made a
++     * 4 GiB General BO admissible. Keep the largest BO below 4 GiB. */
++    ULONGLONG max = Context->PoolBytes &
++                    ~(ULONGLONG)(ADMISSION_ALLOCATION_ALIGNMENT - 1u);
++    ULONGLONG cap = ((ULONGLONG)MAXULONG + 1ULL) -
++                    (ULONGLONG)ADMISSION_ALLOCATION_ALIGNMENT;
++    return max < cap ? max : cap;
++  }
+ #endif
+ #if defined(APPLE_AGX_BOARD_J274)
+   /* NWOAS-J274 PATCH P22: without a pool window (NWOAS_AGX_POOL_IPA=0, the
+diff --git a/drivers/apple-agx/render-admission/src/gpuva_g3_paging_windows.c b/drivers/apple-agx/render-admission/src/gpuva_g3_paging_windows.c
+index f3a8738..9243763 100644
+--- a/drivers/apple-agx/render-admission/src/gpuva_g3_paging_windows.c
++++ b/drivers/apple-agx/render-admission/src/gpuva_g3_paging_windows.c
+@@ -1634,8 +1634,21 @@ NTSTATUS AdmissionGpuvaG3BuildPagingBufferChecked(ADMISSION_CONTEXT *adapter,
+     ExReleaseFastMutex(&state->Lock);
+   }
+   if (adapter != NULL) {
+-    (void)InterlockedIncrement(&adapter->G3PagingContractCompletions);
++    KIRQL failIrql;
++    ADMISSION_PAGING_EXEC_FAILURE *f = &adapter->PagingExecFailure;
++    LONG completions =
++        InterlockedIncrement(&adapter->G3PagingContractCompletions);
+     InterlockedExchange(&adapter->G3PagingContractLastStatus, (LONG)status);
++    /* P38: Wom1PagingExecFailure (memory-only before). */
++    KeAcquireSpinLock(&adapter->PagingExecFailureLock, &failIrql);
++    f->Version = ADMISSION_PAGING_EXEC_FAILURE_VERSION;
++    f->Bytes = (unsigned int)sizeof(*f);
++    f->ContractCompletions = (unsigned int)completions;
++    f->ContractLastStatus = (unsigned int)status;
++    f->ContractLastOperation = (unsigned int)args->Operation;
++    f->ContractQpc = (unsigned long long)KeQueryPerformanceCounter(NULL).QuadPart;
++    KeReleaseSpinLock(&adapter->PagingExecFailureLock, failIrql);
++    AdmissionRecordPagingExecFailure(adapter);
+   }
+   return STATUS_SUCCESS;
+ }
+diff --git a/drivers/apple-agx/render-admission/src/paging_windows.c b/drivers/apple-agx/render-admission/src/paging_windows.c
+index 70c88c9..77a9db8 100644
+--- a/drivers/apple-agx/render-admission/src/paging_windows.c
++++ b/drivers/apple-agx/render-admission/src/paging_windows.c
+@@ -466,8 +466,37 @@ static VOID AdmissionPagingWorker(_In_ PDEVICE_OBJECT DeviceObject,
+ #endif
+     status = AdmissionMemoryRuntimeExecutePaging(
+         context, &context->PagingRecords[index]);
+-    if (!NT_SUCCESS(status))
++    if (!NT_SUCCESS(status)) {
++      /* P38: Wom1PagingExecFailure, the record VidMm will see as faulted. */
++      const ADMISSION_PAGING_RECORD *failed = &context->PagingRecords[index];
++      ADMISSION_PAGING_EXEC_FAILURE *f = &context->PagingExecFailure;
++      KIRQL failIrql;
++      KeAcquireSpinLock(&context->PagingExecFailureLock, &failIrql);
++      f->Version = ADMISSION_PAGING_EXEC_FAILURE_VERSION;
++      f->Bytes = (unsigned int)sizeof(*f);
++      ++f->Failures;
++      f->LastStatus = (unsigned int)status;
++      f->LastKind = failed->Kind;
++      f->LastIndex = index;
++      f->DestinationSegment = failed->DestinationSegment;
++      f->SourceSegment = failed->SourceSegment;
++      f->DestinationIpa = failed->DestinationIpa;
++      f->SourceIpa = failed->SourceIpa;
++      f->DestinationVa = failed->Kind != AdmissionPagingPhysical ?
++          failed->Virtual.DestinationVa : 0ULL;
++      f->SourceVa = failed->Kind != AdmissionPagingPhysical ?
++          failed->Virtual.SourceVa : 0ULL;
++      f->RecordBytes = failed->Bytes;
++      f->RecordCount = context->PagingRecordCount;
++      f->Fence = context->PagingFence;
++      f->Node = context->PagingActiveNode;
++      f->Qpc = (unsigned long long)KeQueryPerformanceCounter(NULL).QuadPart;
++      KeReleaseSpinLock(&context->PagingExecFailureLock, failIrql);
++#if defined(APPLE_AGX_GPUVA_G3_QUALIFICATION)
++      AdmissionRecordPagingExecFailure(context); /* receipts.c G3 section */
++#endif
+       break;
++    }
+     if (context->PagingRecords[index].Seq > executedSeq)
+       executedSeq = context->PagingRecords[index].Seq;
+   }
+@@ -556,6 +585,7 @@ _Use_decl_annotations_ NTSTATUS AdmissionPagingStart(
+       Context->Memory.UatReady != APPLE_AGX_TRUE)
+     return STATUS_INVALID_DEVICE_STATE;
+   KeInitializeSpinLock(&Context->PagingLock);
++  KeInitializeSpinLock(&Context->PagingExecFailureLock); /* P38 */
+   KeInitializeEvent(&Context->PagingIdle, NotificationEvent, TRUE);
+   Context->PagingWorkItem = IoAllocateWorkItem(Context->PhysicalDeviceObject);
+   if (Context->PagingWorkItem == NULL)
+diff --git a/drivers/apple-agx/render-admission/src/pool_windows.c b/drivers/apple-agx/render-admission/src/pool_windows.c
+index 31df754..03d6cd7 100644
+--- a/drivers/apple-agx/render-admission/src/pool_windows.c
++++ b/drivers/apple-agx/render-admission/src/pool_windows.c
+@@ -287,6 +287,8 @@ typedef struct _ADMISSION_POOL_RUNTIME {
+   ULONGLONG BaseGranules, HeadroomRefusals;
+   /* rc115: growth past BaseGranules allowed in neutral memory. */
+   ULONGLONG NeutralHeadroomGranules;
++  /* P38: promises past AdmitGranules are refused (0: no cap). */
++  ULONGLONG AdmitGranules, SegmentRefusals;
+ } ADMISSION_POOL_RUNTIME;
+ 
+ /* rc88: what one AdmissionPoolAllocSlab call cost, folded into the runtime
+@@ -709,6 +711,8 @@ _Use_decl_annotations_ VOID AdmissionMemoryPoolUnlock(ADMISSION_CONTEXT *Context
+     receipt.PolicyCpuOnlyMiB = pool->Policy.CpuOnlyMiB;
+     receipt.PolicyFlags = pool->PolicyFlags;
+     receipt.HeadroomRefusals = pool->HeadroomRefusals;
++    receipt.AdmitGranules = pool->AdmitGranules;
++    receipt.SegmentRefusals = pool->SegmentRefusals;
+     pool->StagedPressure = pressure;
+     pool->StagedSlabs = pool->Slabs.Stats.Slabs;
+     pool->StagedGranules = stats->CommittedGranules;
+@@ -791,9 +795,21 @@ static BOOLEAN AdmissionPoolReserveOnce(ADMISSION_CONTEXT *Context,
+   attempt.PrivateGranules = pool->Slabs.PrivateCount;
+   pool->ReserveAttempt = attempt;
+   slabFailures = pool->Slabs.Stats.NewSlabFailures;
+-  reserved = AdmissionPoolSlabReserve(&pool->Slabs,
+-      (Bytes + ADMISSION_POOL_DEMAND_GRANULE - 1ULL) /
+-          ADMISSION_POOL_DEMAND_GRANULE) ? TRUE : FALSE;
++  {
++    ULONGLONG granules = (Bytes + ADMISSION_POOL_DEMAND_GRANULE - 1ULL) /
++        ADMISSION_POOL_DEMAND_GRANULE;
++    /* P38: refuse at the admission cap instead of promising past the
++     * segment (render_pool_demand.h ADMISSION_POOL_REFUSAL_SEGMENT). */
++    if (pool->AdmitGranules != 0ULL &&
++        (granules > pool->AdmitGranules ||
++         pool->Slabs.Reserved > pool->AdmitGranules - granules)) {
++      pool->ReserveAttempt.Reason = ADMISSION_POOL_REFUSAL_SEGMENT;
++      pool->ReserveAttempt.RequiredGranules = pool->Slabs.Reserved + granules;
++      reserved = FALSE;
++    } else {
++      reserved = AdmissionPoolSlabReserve(&pool->Slabs, granules) ? TRUE : FALSE;
++    }
++  }
+   if (!reserved) {
+     /* The last policy sample belongs to the slab that failed, including
+      * partial growth. Preserve it across rollback and later reclaim calls. */
+@@ -802,6 +818,8 @@ static BOOLEAN AdmissionPoolReserveOnce(ADMISSION_CONTEXT *Context,
+     pool->LastReserveFailure = pool->ReserveAttempt;
+     if (pool->LastReserveFailure.Reason == ADMISSION_POOL_REFUSAL_HEADROOM)
+       ++pool->HeadroomRefusals;
++    else if (pool->LastReserveFailure.Reason == ADMISSION_POOL_REFUSAL_SEGMENT)
++      ++pool->SegmentRefusals;
+     else
+       ++pool->RefusalCounts[pool->LastReserveFailure.Reason - 1u];
+     pool->LastReserveFailure.RequestBytes = Bytes;
+@@ -1562,6 +1580,21 @@ static BOOLEAN AdmissionPoolReadDword(HANDLE Key, PCWSTR Name, ULONG *Value) {
+   return TRUE;
+ }
+ 
++/* P38: REG_DWORD Wom1PoolAdmitMarginMiB (device key); absent or unreadable:
++ * ADMISSION_POOL_ADMIT_MARGIN_DEFAULT_MIB, 0: no admission cap. */
++static ULONG AdmissionPoolAdmitMarginMiB(ADMISSION_CONTEXT *Context) {
++  HANDLE key = NULL;
++  ULONG mib = ADMISSION_POOL_ADMIT_MARGIN_DEFAULT_MIB, value = 0u;
++  if (Context->PhysicalDeviceObject == NULL ||
++      !NT_SUCCESS(IoOpenDeviceRegistryKey(Context->PhysicalDeviceObject,
++          PLUGPLAY_REGKEY_DEVICE, KEY_QUERY_VALUE, &key)))
++    return mib;
++  if (AdmissionPoolReadDword(key, L"Wom1PoolAdmitMarginMiB", &value))
++    mib = value;
++  ZwClose(key);
++  return mib;
++}
++
+ /* rc109: the machine policy VidMm sized TotalSystemMemoryAvailableForGraphics
+  * from (render_pool_demand.h; dxgmms2 RVA 0xaa3c8 reads the same values from
+  * the same key, once, when it initializes). VidMm keeps what it read at boot,
+@@ -1723,6 +1756,14 @@ static BOOLEAN AdmissionPoolDemandStart(ADMISSION_CONTEXT *Context,
+   pool->BaseGranules = baseBytes / ADMISSION_POOL_DEMAND_GRANULE;
+   pool->NeutralHeadroomGranules =
+       ADMISSION_POOL_NEUTRAL_HEADROOM / ADMISSION_POOL_DEMAND_GRANULE;
++  {
++    /* P38: the admission cap; the margin never exceeds half the segment. */
++    ULONGLONG margin = (ULONGLONG)AdmissionPoolAdmitMarginMiB(Context) *
++        (0x100000ULL / ADMISSION_POOL_DEMAND_GRANULE);
++    if (margin > count / 2ULL) margin = count / 2ULL;
++    pool->AdmitGranules = margin != 0ULL ? count - margin : 0ULL;
++    pool->SegmentRefusals = 0ULL;
++  }
+   pool->Granules = ExAllocatePool2(POOL_FLAG_NON_PAGED,
+       (SIZE_T)(count * sizeof(*pool->Granules)), ADMISSION_POOL_TAG);
+   pool->Candidates = ExAllocatePool2(POOL_FLAG_NON_PAGED,
+diff --git a/drivers/apple-agx/render-admission/src/receipts.c b/drivers/apple-agx/render-admission/src/receipts.c
+index a1a5f19..cd46fb3 100644
+--- a/drivers/apple-agx/render-admission/src/receipts.c
++++ b/drivers/apple-agx/render-admission/src/receipts.c
+@@ -2073,7 +2073,8 @@ enum {
+   AdmissionPagingReceiptOmittedLeaves = 512u,
+   AdmissionPagingReceiptBrokerFailures = 256u,
+   AdmissionPagingReceiptNativePteRefusal = 2048u,
+-  AdmissionPagingReceiptLiveWait = 4096u
++  AdmissionPagingReceiptLiveWait = 4096u,
++  AdmissionPagingReceiptExecFailure = 8192u /* P38 */
+ };
+ typedef struct _ADMISSION_PAGING_RECEIPTS {
+   KSPIN_LOCK Lock;
+@@ -2092,6 +2093,7 @@ typedef struct _ADMISSION_PAGING_RECEIPTS {
+   ADMISSION_OMITTED_LEAVES Omitted;
+   ADMISSION_NATIVE_PTE_REFUSAL NativePteRefusal;
+   ADMISSION_G3_LIVE_WAIT_RECEIPT LiveWait;
++  ADMISSION_PAGING_EXEC_FAILURE ExecFailure; /* P38 */
+   /* Only the serial worker writes this snapshot. Keep the 3912-byte buffer
+    * off the kernel stack; publishers touch LiveWait under Lock only. */
+   ADMISSION_G3_LIVE_WAIT_RECEIPT LiveWaitSnapshot;
+@@ -2129,6 +2131,9 @@ static void AdmissionPagingReceiptStage(ADMISSION_CONTEXT *Context,
+     else if (Kind == AdmissionPagingReceiptNativePteRefusal)
+       RtlCopyMemory(&receipts->NativePteRefusal, Data,
+                     sizeof(receipts->NativePteRefusal));
++    else if (Kind == AdmissionPagingReceiptExecFailure)
++      RtlCopyMemory(&receipts->ExecFailure, Data,
++                    sizeof(receipts->ExecFailure));
+     else if (Kind == AdmissionPagingReceiptLiveWait) {
+       const ADMISSION_G3_LIVE_WAIT_ENTRY *entry = (const ADMISSION_G3_LIVE_WAIT_ENTRY *)Data;
+       ADMISSION_G3_LIVE_WAIT_RECEIPT *r = &receipts->LiveWait;
+@@ -2185,6 +2190,7 @@ static VOID AdmissionPagingReceiptWorker(_In_ PDEVICE_OBJECT Device,
+     ADMISSION_OMITTED_LEAVES omitted;
+     ADMISSION_NATIVE_PTE_REFUSAL native;
+     ADMISSION_G3_PAGING_WAIT_RECEIPT wait;
++    ADMISSION_PAGING_EXEC_FAILURE exec;
+     ULONG dirty;
+     KIRQL oldIrql;
+     KeAcquireSpinLock(&receipts->Lock, &oldIrql);
+@@ -2203,6 +2209,7 @@ static VOID AdmissionPagingReceiptWorker(_In_ PDEVICE_OBJECT Device,
+     RtlCopyMemory(&broker, &receipts->Broker, sizeof(broker));
+     RtlCopyMemory(&omitted, &receipts->Omitted, sizeof(omitted));
+     RtlCopyMemory(&native, &receipts->NativePteRefusal, sizeof(native));
++    RtlCopyMemory(&exec, &receipts->ExecFailure, sizeof(exec));
+     if (dirty == 0u) {
+       /* Cleared under the lock that Stage sets Dirty under: no lost wakeup. */
+       InterlockedExchange(&receipts->Queued, 0);
+@@ -2216,6 +2223,10 @@ static VOID AdmissionPagingReceiptWorker(_In_ PDEVICE_OBJECT Device,
+           &receipts->LiveWaitSnapshot, sizeof(receipts->LiveWaitSnapshot), FALSE);
+     if (dirty & AdmissionPagingReceiptDdiStatus)
+       AdmissionWriteDdiStatuses(context);
++    if (dirty & AdmissionPagingReceiptExecFailure)
++      /* Flushed: the device removal that follows must keep it. */
++      AdmissionPagingReceiptWrite(context, L"Wom1PagingExecFailure", &exec,
++                                  sizeof(exec), TRUE);
+     if (dirty & AdmissionPagingReceiptOmittedLeaves)
+       AdmissionPagingReceiptWrite(context, L"Wom1G4OmittedLeaves",
+                                   &omitted, sizeof(omitted), TRUE);
+@@ -2694,6 +2705,18 @@ _Use_decl_annotations_ void AdmissionRecordGpuvaG3SystemGroups(
+                               Counts);
+ }
+ 
++_Use_decl_annotations_ void AdmissionRecordPagingExecFailure(
++    ADMISSION_CONTEXT *Context) {
++  ADMISSION_PAGING_EXEC_FAILURE copy;
++  KIRQL oldIrql;
++  if (Context == NULL || KeGetCurrentIrql() > DISPATCH_LEVEL) return;
++  KeAcquireSpinLock(&Context->PagingExecFailureLock, &oldIrql);
++  RtlCopyMemory(&copy, &Context->PagingExecFailure, sizeof(copy));
++  KeReleaseSpinLock(&Context->PagingExecFailureLock, oldIrql);
++  AdmissionPagingReceiptStage(Context, AdmissionPagingReceiptExecFailure,
++                              &copy);
++}
++
+ _Use_decl_annotations_ void AdmissionRecordM2PoolDemand(
+     ADMISSION_CONTEXT *Context, const ADMISSION_POOL_DEMAND_RECEIPT *Receipt) {
+   if (Context == NULL || Receipt == NULL) return;

@@ -5,7 +5,14 @@
 // hardware video decode profiles, and swapchain present (needs the user
 // session). Every result is one ASCII line "NWGP <test> <key=value...>".
 //
-// Usage: nwgpuprobe.exe [all|dxgi|d3d12|d3d11|present|tex|ui|interop|d3d11ui|modeswitch|chromium|fill] [warp] ...
+// Usage: nwgpuprobe.exe [all|dxgi|d3d12|d3d11|present|tex|ui|interop|d3d11ui|modeswitch|chromium|umd|draw11|fill] [warp] ...
+//   umd, draw11 (probe10, P37): which AppleAgx UMD image this process runs on + one D3D11 draw; not in "all".
+//   pool, memladder, fill2, d3d11mem (probe11, S265): GPU memory limit with the pool window; not in "all"
+//   (nwgpuprobe_mem.inc).
+//   memladder2 [ladder=a,b,..], fill3, rcpt (probe12, P38 / 2774): fresh device per size, create/removal timing,
+//   first/last-chunk probe copies, per-heap tag readback, KMD receipts (nwgpuprobe_mem2.inc); not in "all".
+//   probe13 (after 2774 K43c): memladder2 [settle=<ms>] adds a "pre" line per size, the removed reason after each
+//   probe copy, and more KMD receipts in rcpt (nwgpuprobe_mem2.inc header).
 //   all (default) = dxgi d3d12 d3d11 present tex ui interop. "fill" allocates 64 MiB DEFAULT
 //   heaps until failure (capped at 1 GiB) and is never part of "all".
 //
@@ -802,6 +809,9 @@ static void TestPresent12(HWND w) {
 #include "nwgpuprobe_interop.inc"
 #include "nwgpuprobe_d3d11ui.inc"
 #include "nwgpuprobe_chromium.inc"
+#include "nwgpuprobe_x64umd.inc"
+#include "nwgpuprobe_mem.inc"
+#include "nwgpuprobe_mem2.inc"  // probe12 (P38): memladder2, fill3, rcpt
 
 static void TestPresent() {
   DWORD session = 0;
@@ -825,6 +835,18 @@ int main(int argc, char **argv) {
       st.wDay, st.wHour, st.wMinute, st.wSecond);
   bool all = argc < 2;
   for (int i = 1; i < argc; ++i) if (!_stricmp(argv[i], "warp")) g_warp = true;
+  for (int i = 1; i < argc; ++i) if (!_strnicmp(argv[i], "memcap=", 7)) g_memcap = (UINT)strtoul(argv[i] + 7, nullptr, 10);
+  for (int i = 1; i < argc; ++i)
+    if (!_strnicmp(argv[i], "ladder=", 7)) {  // probe12: memladder2 sizes in MiB, comma separated
+      g_ladderCount = 0;
+      for (char *q = argv[i] + 7; *q && g_ladderCount < ARRAYSIZE(g_ladder);) {
+        UINT v = (UINT)strtoul(q, &q, 10);
+        if (v) g_ladder[g_ladderCount++] = v;
+        if (*q == ',') ++q; else break;
+      }
+    }
+  for (int i = 1; i < argc; ++i)  // probe13: memladder2 waits up to <ms> for the previous size's memory
+    if (!_strnicmp(argv[i], "settle=", 7)) g_settleMs = (UINT)strtoul(argv[i] + 7, nullptr, 10);
   for (int i = 1; i < argc; ++i) if (!_stricmp(argv[i], "all")) all = true;
   auto want = [&](const char *n) {
     if (all && _stricmp(n, "fill")) return true;
@@ -842,7 +864,16 @@ int main(int argc, char **argv) {
   if (want("modeswitch") && !all) TestModeSwitch();
   if (want("chromium")) TestChromium();
   if (want("layered")) { Layered(false); Layered(true); }
+  if (want("umd") && !all) TestUmdModules();
+  if (want("draw11") && !all) TestDraw11();
   if (want("fill")) TestFill();
+  if (want("pool") && !all) TestPoolReceipt();
+  if (want("memladder") && !all) TestMemLadder();
+  if (want("fill2") && !all) TestFill2();
+  if (want("d3d11mem") && !all) TestD3d11Mem();
+  if (want("memladder2") && !all) TestMemLadder2();
+  if (want("fill3") && !all) TestFill3();
+  if (want("rcpt") && !all) MemReceipts("rcpt", "now");
   Out("end");
   return 0;
 }

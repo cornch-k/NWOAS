@@ -1,0 +1,44 @@
+File m1n1-standalone-s264A/data/bootlogo_128.png is a unknown type while file m1n1-standalone-s264/data/bootlogo_128.png is a unknown type
+File m1n1-standalone-s264A/data/bootlogo_256.png is a unknown type while file m1n1-standalone-s264/data/bootlogo_256.png is a unknown type
+File m1n1-standalone-s264A/data/bootlogo_48.png is a unknown type while file m1n1-standalone-s264/data/bootlogo_48.png is a unknown type
+diff -ruN --exclude=build m1n1-standalone-s264A/src/nwoas_s264_plan.c m1n1-standalone-s264/src/nwoas_s264_plan.c
+--- m1n1-standalone-s264A/src/nwoas_s264_plan.c	2026-11-19 02:39:13
++++ m1n1-standalone-s264/src/nwoas_s264_plan.c	2026-11-19 08:24:56
+@@ -948,7 +948,12 @@
+         w.set[w.n_set].len = 16;
+         w.n_set++;
+     }
+-    /* pmgr-u8id: adt.py pmgr_init (load_adt) adds this root property; build() keeps it */
++    /* pmgr-u8id: adt.py:813 pmgr_init (called by load_adt) assigns root._properties["pmgr-u8id"]
++     * (ADTNode.__setattr__ adt.py:622-629) and build() keeps it.  Python dict semantics: when the
++     * input ADT already carries the property -- tools/chainload.py:106 u.push_adt() wrote back an
++     * ADT that Python had loaded, which is what the S264 HV reads after a chainload -- the value
++     * is replaced in place (same position, 4-byte Int32ul, flags kept); otherwise it is appended
++     * after the last root property.  s264A always appended -> duplicate on the 08:02 hardware run. */
+     int pmgr = s264_adt_path(adt, alen, "/arm-io/pmgr");
+     u32 dl = 0, psl = 0;
+     const u8 *devs = s264_adt_prop(adt, alen, pmgr, "devices", &dl);
+@@ -957,7 +962,22 @@
+         return pl->err = S264_E_PMGR;
+     bool u8id = devs[3] != devs[PMGR_DEV_SIZE + 3];
+     L->pmgr_u8id = u8id;
+-    w.root_extra_val = u8id ? 1 : 0;
++    {
++        static u8 u8id_val[4];
++        wr32(u8id_val, u8id ? 1 : 0);
++        if (s264_adt_prop(adt, alen, 0, "pmgr-u8id", NULL)) {
++            if (w.n_set >= S264_MAX_SET)
++                return pl->err = S264_E_ADT;
++            w.set[w.n_set].node = 0;
++            w.set[w.n_set].name = "pmgr-u8id";
++            w.set[w.n_set].val = u8id_val;
++            w.set[w.n_set].len = 4;
++            w.n_set++;
++            w.root_extra_val = -1;
++        } else {
++            w.root_extra_val = u8id ? 1 : 0;
++        }
++    }
+ 
+     if (emit_node(&w, 0, 0, -1, -1) < 0)
+         return pl->err = S264_E_ADT;

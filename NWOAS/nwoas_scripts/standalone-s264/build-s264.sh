@@ -2,7 +2,10 @@
 # NWOAS S264: reproducible build of the C guest launcher hypervisor
 #   m1n1-s264A = g262Q (m1n1-gpu-hv2 g260O + hv2-g260O-to-g262P.patch + hv2-g262P-to-g262Q.patch)
 #              + port-j274/gpu/hv/hv2-g262Q-to-s264.patch
-# then the offline equivalence test (host only) and a hash compare with the recorded binary.
+#   m1n1-s264B = s264A + port-j274/gpu/hv/hv2-s264A-to-s264B.patch (root pmgr-u8id replaced in
+#                place when the input ADT already has it = after chainload.py push_adt)
+# then hash compares with the recorded binaries and the offline equivalence test (host only,
+# on the s264B source, both ADT input states).
 # usage: build-s264.sh <new work dir>      (refuses an existing dir; installs nothing, touches no device)
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -26,4 +29,17 @@ if [ -n "$EXPECT_SHA" ]; then
     [ "$(stat -f %z "$BIN")" = "$EXPECT_SIZE" ] && [ "$(shasum -a 256 "$BIN" | awk '{print $1}')" = "$EXPECT_SHA" ] \
         && echo "s264A reproduced: $EXPECT_SHA" || { echo 's264A binary differs from the recorded one'; exit 1; }
 fi
-S264_SRC="$WORK/src-s264/src" "$ROOT/m1n1_windows/.venv-hv/bin/python3" -B "$HERE/s264_offline_test.py" --workdir "$WORK/offline" | tail -12
+B_SHA="${S264B_EXPECT_SHA:-a677658782f48367d32071325f137c8fcae02a9a38f62f2f5b40ac1304d7d927}"
+B_PATCH_SHA="${S264B_PATCH_SHA:-26ceeddb2833d2750073d9141b3cf598dbd62f04331b39c6c3c1445104cf9814}"
+[ -z "$B_PATCH_SHA" ] || [ "$(shasum -a 256 "$HV/hv2-s264A-to-s264B.patch" | awk '{print $1}')" = "$B_PATCH_SHA" ] \
+    || { echo 'hv2-s264A-to-s264B.patch differs from the recorded one'; exit 2; }
+rsync -a "$WORK/src-s264/" "$WORK/src-s264B/"
+( cd "$WORK/src-s264B" && patch -p1 -s --no-backup-if-mismatch < "$HV/hv2-s264A-to-s264B.patch" )
+bash "$HV/tools-hv2/buildvar.sh" "$WORK/src-s264B" "$WORK/build-s264B" s264B NWOAS_AGX=1
+BINB="$WORK/build-s264B/build/m1n1.bin"
+echo "s264B: $(stat -f %z "$BINB") B sha256 $(shasum -a 256 "$BINB" | awk '{print $1}')"
+if [ -n "$B_SHA" ]; then
+    [ "$(shasum -a 256 "$BINB" | awk '{print $1}')" = "$B_SHA" ] \
+        && echo "s264B reproduced: $B_SHA" || { echo 's264B binary differs from the recorded one'; exit 1; }
+fi
+S264_SRC="$WORK/src-s264B/src" "$ROOT/m1n1_windows/.venv-hv/bin/python3" -B "$HERE/s264_offline_test.py" --workdir "$WORK/offline" | grep -a "^\[iboot\]\|^\[chainload\]\|^OFFLINE"

@@ -12,9 +12,10 @@ copy /y %S%\nwgpuprobe_comp.inc %W%\ >nul || exit /b 1
 copy /y %S%\nwgpuprobe_interop.inc %W%\ >nul || exit /b 1
 copy /y %S%\nwgpuprobe_d3d11ui.inc %W%\ >nul || exit /b 1
 copy /y %S%\nwgpuprobe_chromium.inc %W%\ >nul || exit /b 1
+copy /y %S%\nwgpuprobe_x64umd.inc %W%\ >nul || exit /b 1
 cd /d %W%
 call C:\VS2022Community\VC\Auxiliary\Build\vcvarsarm64.bat >nul || exit /b 2
-cl /nologo /EHsc /O2 /W3 /MT /Fe:nwgpuprobe9-arm64.exe nwgpuprobe.cpp /link /SUBSYSTEM:CONSOLE > build-arm64.log 2>&1
+cl /nologo /EHsc /O2 /W3 /MT /Fe:nwgpuprobe10-arm64.exe nwgpuprobe.cpp /link /SUBSYSTEM:CONSOLE > build-arm64.log 2>&1
 set RC1=%ERRORLEVEL%
 type build-arm64.log
 endlocal & set RC1=%RC1%
@@ -22,11 +23,11 @@ setlocal
 set W=C:\agx\gpucov
 cd /d %W%
 call C:\VS2022Community\VC\Auxiliary\Build\vcvarsarm64_amd64.bat >nul || exit /b 3
-cl /nologo /EHsc /O2 /W3 /MT /Fe:nwgpuprobe9-x64.exe nwgpuprobe.cpp /link /SUBSYSTEM:CONSOLE > build-x64.log 2>&1
+cl /nologo /EHsc /O2 /W3 /MT /Fe:nwgpuprobe10-x64.exe nwgpuprobe.cpp /link /SUBSYSTEM:CONSOLE > build-x64.log 2>&1
 set RC2=%ERRORLEVEL%
 type build-x64.log
-copy /y nwgpuprobe9-arm64.exe \\Mac\media\nwoas\gpucov-build\ >nul
-copy /y nwgpuprobe9-x64.exe \\Mac\media\nwoas\gpucov-build\ >nul
+copy /y nwgpuprobe10-arm64.exe \\Mac\media\nwoas\gpucov-build\ >nul
+copy /y nwgpuprobe10-x64.exe \\Mac\media\nwoas\gpucov-build\ >nul
 del /q *.obj 2>nul
 echo BUILD_PROBE arm64=%RC1% x64=%RC2%
 endlocal

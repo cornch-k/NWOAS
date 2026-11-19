@@ -567,3 +567,53 @@ UMD 기록 풀이 (2758, Cinebench 프로세스, 시각 순서) [사실, 소스 
 | AppleAgxRenderAdmissionUmd.dll | `8647b5df6627d2b9b2f795e043ed4a308576fb65d67d45836a4505c48b96b496` |
 | AppleAgxRenderAdmission.arm64only.inf | `bf89c9c42503987842b79a8a30d2daca1c0dabf216e890b44c68f4817638e96d` |
 | appleagxrenderadmission.cat | `15144633a9b74b79c62e79bb9a0a0577fb46c8042b0b86dd209a3d0d35f029d9` |
+
+## P37 (NWOAS-J274, 2026-11-19) — x64 UMD + ARM64X 전달 DLL (Prism으로 도는 x64 앱용)
+
+결론: **판 2773은 2772의 KMD 소스·ARM64 UMD 소스를 그대로 두고, 같은 UMD 프로젝트를 x64로 빌드한 `AppleAgxRenderAdmissionUmdX64.dll`과, 이름이 기존 UMD와 같은 ARM64X 전달 DLL(`AppleAgxRenderAdmissionUmd.dll`)을 더한 패키지입니다** [빌드만]. 실기기에서 x64 앱이 이 UMD로 도는지는 아직 보지 않았습니다(K42로 봄). 자세한 근거·시험 명령은 `RESULT-2773.md`.
+
+| 바뀐 것 | 내용 |
+|---|---|
+| `umd/AppleAgxRenderAdmissionUmd.vcxproj` | `Release\|x64` 구성 한 줄 추가. ARM64 구성은 그대로 |
+| `scripts/build-umd-x64-msbuild.ps1` (새 파일) | build-driver.ps1의 ARM64 UMD 호출과 같은 속성으로 `/p:Platform=x64`만 바꿔 빌드, x64 PE 확인, CRT 단언 검사 |
+| `AppleAgxRenderAdmission.arm64x.inf` (새 파일) | P9 INF + System32에 UmdArm64·UmdX64 두 파일 추가, 장치 이름 끝 "(NWOAS ARM64+x64)". UserModeDriverName 값은 그대로 |
+| `mesa/scripts/compiler-x64.ini`, `configure-x64-nir.ps1` (새 파일) | ARM64판과 같은 Mesa 옵션의 x64 교차 구성(`--target=x86_64-pc-windows-msvc`, -NDebug) |
+| VM 단계 (`agx-build/scripts`) | 05x(x64 NIR + dxil-spirv x64, 한 번만), 08x(x64 컴파일러 증거·네이티브 런타임), 11(x64 UMD + 전달 DLL), 12(패키지·서명·수집) |
+
+- ARM64·x64 UMD 컴파일 정의 비교(빌드 로그): 아키텍처 정의(`ARM64`/`_ARM64_` 대 `AMD64`/`_AMD64_`/`_WIN64`)만 다르고 나머지 18개는 같음.
+- x64 Asahi 셰이더 컴파일러(시험 셰이더 2개)를 VM에서 에뮬레이션으로 실행한 출력이 ARM64 컴파일러 출력과 바이트까지 같음(variant0 `8f5ad95c…`, variant1 `a6a1a83b…`).
+- 실제 2773 DLL로 VM에서 전달 시험: ARM64 프로세스는 UmdArm64, x64 프로세스는 UmdX64가 두 내보내기(OpenAdapter10_2, OpenAdapter12)를 맡음 [사실, VM].
+- InfVerif: ERROR(1322) 3건(UMD 세 파일이 System32, DIRID 13 아님). 2772의 같은 오류 1건이 3건이 된 것이고 pnputil 설치는 2772까지 이 상태로 됐음. signtool verify 오류 1(시험 인증서, VM에 신뢰 루트 없음)은 2772와 같음.
+- 빌드(`build-p37.sh`, 실행 이름 j274g4m): 성공, 판 30.0.2773.0, 소스 커밋 `734dfd79`. 결과물 `out/j274-full-20261119-0458-p37`, 차이 `P37-driver.diff`.
+
+| 파일 | 바이트 | sha256 |
+|---|---|---|
+| AppleAgxRenderAdmission.sys | 651496 | `28cb665ecded4afc07f38f599c80af6d5410b9dc9697ae6b00c95e0006ea667a` |
+| AppleAgxRenderAdmissionUmd.dll (ARM64X 전달) | 14848 | `6f10255356dd2956864f5bfdb8a59c25fe0501d3474459f6f66b04f9db562fbd` |
+| AppleAgxRenderAdmissionUmdArm64.dll | 13522432 | `71e99344179800b6993691643fec1e88ef37de0d06ad8187a11934fad5132a58` |
+| AppleAgxRenderAdmissionUmdX64.dll | 14092288 | `712d067f0db4fc0684a9ff6508b94582286f746547d648b2c4c68ff633b1b064` |
+| AppleAgxRenderAdmission.arm64x.inf | 4290 | `56fd01224e4e60dea1d1a7bbc665c7f293c100886af90eb6b483e8fa10decbd1` |
+| appleagxrenderadmission.cat | 4112 | `6d137825f912ef65d1d5ba2efcd598c9503a9ee369df686faeedc4eaed525653` |
+
+## P38 (NWOAS-J274, 2026-11-19) — 2 GiB 넘는 D3D12 복사, 구역 3 경계 거절, 페이징 실패 영수증
+
+결론: **판 2774는 2773 위에 (1) D3D12 버퍼 복사의 2 GiB 상한 제거, (2) 구역 3 크기 − 256 MiB를 넘는 예약을 깨끗한 메모리 부족으로 거절, (3) 페이징 실행 실패·주소표 갱신 실패 영수증 `Wom1PagingExecFailure`를 더한 것입니다** [빌드만]. S265 K43에서 2048 MiB 버퍼의 장치가 사라진 직접 원인은 아직 확정하지 못했습니다(3번이 그것을 가리기 위한 것). 근거·시험 명령은 `RESULT-2774.md`.
+
+| 바뀐 것 | 내용 |
+|---|---|
+| `mesa/winsys/agx_d3d12_windows.cpp` | `AgxD3d12OwnerCopy`: `Bytes > 0x7fffffff` 거절 → 4 GiB 상한, 1 GiB 조각, 32비트 위치를 2의 보수로 `pipe_box.x`에 |
+| `mesa/winsys/agx_win32_asahi_bo.c` | `agx_bo_create`: GPU 주소 연결 실패가 깨끗이 되돌려졌으면 백엔드 고장 처리 없이 이번 생성만 실패 |
+| `render-admission/src/pool_windows.c`, `include/render_pool_demand.h` | 예약 상한(사유 6 SEGMENT), `Wom1PoolAdmitMarginMiB`(기본 256, 0 = 끔), 영수증 v16(752·760에 두 칸 추가) |
+| `render-admission/src/allocation_windows.c` | 일반 버퍼 최대 4 GiB − 64 KiB(풀이 있을 때만) |
+| `paging_windows.c`, `gpuva_g3_paging_windows.c`, `receipts.c`, `render_paging.h`, `render_admission.h` | `Wom1PagingExecFailure` v1(112 B, 즉시 기록) |
+
+- 빌드(`build-p38.sh`, 실행 이름 j274g4n): 성공, 판 30.0.2774.0, 소스 커밋 `b600a8a6`, 경고 98개(2773과 같음). 결과물 `out/j274-full-20261119-0754-p38`, 차이 `P38-driver.diff`(10개 파일).
+
+| 파일 | 바이트 | sha256 |
+|---|---|---|
+| AppleAgxRenderAdmission.sys | 652520 | `ef926ebf2226d0e63ca8dcd2a0d5f3a7ba43fc19ce471fceff79b95a709bcbe5` |
+| AppleAgxRenderAdmissionUmd.dll (ARM64X 전달) | 14848 | `d8f5b7006c32aca88c97a14c8490f099f80f09913cb7a387b33547c8c2d6b923` |
+| AppleAgxRenderAdmissionUmdArm64.dll | 13522944 | `0e076329fcaf39bf450caf608fdd71e03c5a9d6564d2dc58fc542acf740d6819` |
+| AppleAgxRenderAdmissionUmdX64.dll | 14092288 | `3bd02d9c7da3116bdf14d089c4138da1d21e76869bde16ae98edcf95ff58c43b` |
+| AppleAgxRenderAdmission.arm64x.inf | 4290 | `e884378040af056b28e5bf4341da02169776fa503ba757fdeb3c2db20aa3e9b5` |
+| appleagxrenderadmission.cat | 4112 | `813316feab6a0f1254c986b4c3646d38f02075c877fbd03032e372812a1e81d6` |

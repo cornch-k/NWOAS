@@ -195,7 +195,7 @@ NTSTATUS NwoaEvtPrepareHardware(WDFDEVICE Device, WDFCMRESLIST Raw, WDFCMRESLIST
     NTSTATUS st;
     NwoaReadConfig(Dev);
     NwoaSetStage(Dev, "prepare", STATUS_PENDING);
-    NwoaDiagSz(Dev, L"NwoaDriverBuild", "nwoa4378 1.0.1.4 (wifi-s258m: scan/disconnect/connect/key diagnostics, BSS age info, real link bandwidth, H1/H3 switches)");
+    NwoaDiagSz(Dev, L"NwoaDriverBuild", "nwoa4378 1.0.1.6 (wifi-s258o: firmware scans while connected again, TX flowring watched and re-created after them, stall watchdog kept)");
     st = NwoaMapResources(Dev, Raw, Trans);
     if (!NT_SUCCESS(st)) { NwoaSetStage(Dev, "fail_resources", st); return st; }
     st = NwoaConfigInit(Dev);

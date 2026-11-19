@@ -1,0 +1,12 @@
+@echo off
+echo GPUCOV K43 POOL MEMORY (S265, probe11): KMD pool receipts, DXGI budgets, D3D12 buffers 256..3072 MiB with content check, 256 MiB heaps to failure (cap 5 GiB), D3D11 buffers 64..1024 MiB
+set D=C:\NWOAS\gpucov
+powershell -NoProfile -Command "Get-CimInstance Win32_VideoController | ForEach-Object { 'K43 VC '+$_.Name+' | '+$_.DriverVersion }"
+del /q %D%\probe11-mem.txt 2>nul
+powershell -NoProfile -Command "$o=Get-CimInstance Win32_OperatingSystem; 'K43 OS before total_mib='+[int]($o.TotalVisibleMemorySize/1024)+' free_mib='+[int]($o.FreePhysicalMemory/1024)"
+%D%\nwgpuprobe11-arm64.exe pool dxgi memladder fill2 d3d11mem dxgi > %D%\probe11-mem.txt 2>&1
+powershell -NoProfile -Command "$o=Get-CimInstance Win32_OperatingSystem; 'K43 OS after total_mib='+[int]($o.TotalVisibleMemorySize/1024)+' free_mib='+[int]($o.FreePhysicalMemory/1024)"
+powershell -NoProfile -Command "$l=@(Get-Content C:\NWOAS\gpucov\probe11-mem.txt -ErrorAction SilentlyContinue); 'K43 lines='+$l.Count+' last='+$(if($l.Count){$l[-1]}else{'none'}); $l | Where-Object { $_ -match 'NWGP (pool|dxgi adapter=0|memladder|fill2|d3d11mem|d3d12 device|d3d12 end|begin)' } | Select-Object -First 90 | ForEach-Object { 'K43 '+$_ }; $p=@($l -match 'pool probe present=1 .*window_status=10 ').Count; $m=@($l -match 'memladder summary largest_pass_mib=3072 ').Count; $f=@($l -match 'fill2 heaps_256mib=') | Select-Object -First 1; $fh=0; $ft='0/0'; $fr='none'; if($f -match 'heaps_256mib=(\d+)'){ $fh=[int]$Matches[1] }; if($f -match 'tags_ok=(\d+/\d+)'){ $ft=$Matches[1] }; if($f -match 'removed=(0x[0-9a-f]+)'){ $fr=$Matches[1] }; $tp=$ft.Split('/'); $fok=($fh -ge 12) -and ($tp[0] -eq $tp[1]) -and ($fr -eq '0x00000000'); $d=@($l -match 'd3d11mem size_mib=.*(mismatches=[1-9]|removed=0x[1-9a-f]|stage=map)').Count; 'K43 VERDICT pool_demand='+$p+' ladder3072='+$m+' fill2_heaps='+$fh+' fill2_tags='+$ft+' fill2_removed='+$fr+' d3d11_bad='+$d+' => '+$(if($p -and $m -and $fok -and ($d -eq 0)){'PASS'}else{'FAIL'})"
+powershell -NoProfile -Command "Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=(Get-Date).AddMinutes(-15)} -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match 'Display|dxgkrnl|DxgKrnl|Resource-Exhaustion' -or $_.Id -in 4101,2004 } | Select-Object -First 8 | ForEach-Object { 'K43 SYSEVT '+$_.TimeCreated.ToString('HH:mm:ss')+' '+$_.ProviderName+' '+$_.Id }"
+echo GPUCOV K43 DONE
+exit /b 0
