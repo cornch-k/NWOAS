@@ -19,5 +19,6 @@ rsync -a "${EX[@]}" --exclude='drivers/' --exclude='upstream-acpi-reference/' "$
 for f in nwoas_scripts/agxdcp-s265-guest-test.sh nwoas_scripts/agxdcp-s259-guest-test.sh nwoas_scripts/agxdcp-s261-guest-test.sh ROADMAP-2026-11-17.md HANDOFF-2026-11-18.md; do cp -p "$S/$f" "$D/$f"; done
 [ -f $S/HANDOFF-2026-11-19.md ] && cp -p $S/HANDOFF-2026-11-19.md $D/ || true
 [ -f $S/HANDOFF-2026-11-19-night.md ] && cp -p $S/HANDOFF-2026-11-19-night.md $D/ || true
+[ -f $S/HANDOFF-2026-11-19-final.md ] && cp -p $S/HANDOFF-2026-11-19-final.md $D/ || true
 # redact Wi-Fi network names in the public copy
 cd $D && grep -rl -I -i -E 'home-ap|neighbour-ap' --exclude-dir=.git . 2>/dev/null | grep -v 'rtc-s184/README.md' | while read f; do sed -i '' -e 's/home-ap/home-ap/g; s/home-ap/home-ap/g; s/neighbour-ap/neighbour-ap/g; s/neighbour-ap/neighbour-ap/g; s/neighbour-ap/neighbour-ap/g' "$f"; done
