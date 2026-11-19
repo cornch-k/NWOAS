@@ -180,6 +180,20 @@ void NwoaDiagSz(PNWOA_DEVICE Dev, PCWSTR Name, PCSTR Value)
     ExFreePoolWithTag(w, NWOA_TAG);
 }
 
+// s277: remove a switch value so that it acts once (TRUE = it is gone or was never there)
+BOOLEAN NwoaDiagRemove(PNWOA_DEVICE Dev, PCWSTR Name)
+{
+    WDFKEY key;
+    UNICODE_STRING name;
+    NTSTATUS st;
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL || !Dev->Device || !NT_SUCCESS(OpenHwKey(Dev, KEY_SET_VALUE, &key)))
+        return FALSE;
+    RtlInitUnicodeString(&name, Name);
+    st = WdfRegistryRemoveValue(key, &name);
+    WdfRegistryClose(key);
+    return NT_SUCCESS(st) || st == STATUS_OBJECT_NAME_NOT_FOUND;
+}
+
 void NwoaDiagBin(PNWOA_DEVICE Dev, PCWSTR Name, const UCHAR* Data, ULONG Len)
 {
     Assign(Dev, Name, REG_BINARY, Len, (PVOID)Data);

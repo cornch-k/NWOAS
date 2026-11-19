@@ -49,12 +49,14 @@ static void TestUmdModules() {
   ModuleLine("forwarder", L"AppleAgxRenderAdmissionUmd.dll");
   ModuleLine("arm64", L"AppleAgxRenderAdmissionUmdArm64.dll");
   ModuleLine("x64", L"AppleAgxRenderAdmissionUmdX64.dll");
+  ModuleLine("x86", L"AppleAgxRenderAdmissionUmd32.dll");  // probe15: the WOW64 UMD (P42)
   ModuleLine("warp", L"d3d10warp.dll");
   HMODULE agx = GetModuleHandleW(L"AppleAgxRenderAdmissionUmdX64.dll");
+  if (!agx) agx = GetModuleHandleW(L"AppleAgxRenderAdmissionUmd32.dll");  // probe15
   if (!agx) agx = GetModuleHandleW(L"AppleAgxRenderAdmissionUmdArm64.dll");
   if (!agx) agx = GetModuleHandleW(L"AppleAgxRenderAdmissionUmd.dll");
   HMODULE warp = GetModuleHandleW(L"d3d10warp.dll");
-  const char *expected = !strcmp(Arch(), "x64") ? "x64" : "arm64";
+  const char *expected = !strcmp(Arch(), "x64") ? "x64" : !strcmp(Arch(), "x86") ? "x86" : "arm64";  // probe15: x86
   bool own = agx && !strcmp(ImageMachine(agx), expected);
   Out("umd summary arch=%s agx_umd=%s warp=%u result=%s", Arch(), agx ? ImageMachine(agx) : "none", warp ? 1u : 0u,
       (SUCCEEDED(hr) && own && strstr(name, "Apple AGX")) ? "PASS" : "FAIL");
@@ -81,8 +83,9 @@ static void TestUmdModules() {
   ID3D12Device *d12 = nullptr;
   if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&f)))) a = PickHardwareAdapter(f);
   hr = a ? D3D12CreateDevice(a, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&d12)) : E_FAIL;
-  Out("umd d3d12 arch=%s hr=0x%08lx x64_umd_loaded=%u", Arch(), (unsigned long)hr,
-      GetModuleHandleW(L"AppleAgxRenderAdmissionUmdX64.dll") ? 1u : 0u);
+  Out("umd d3d12 arch=%s hr=0x%08lx x64_umd_loaded=%u x86_umd_loaded=%u", Arch(), (unsigned long)hr,
+      GetModuleHandleW(L"AppleAgxRenderAdmissionUmdX64.dll") ? 1u : 0u,
+      GetModuleHandleW(L"AppleAgxRenderAdmissionUmd32.dll") ? 1u : 0u);
   Rel(d12); Rel(a); Rel(f);
 }
 
@@ -137,8 +140,9 @@ static void TestDraw11() {
           const BYTE *c = (const BYTE *)m.pData + y * m.RowPitch + x * 4;
           if (c[0] != 255 || abs(c[1] - 128) > 1 || abs(c[2] - 64) > 1 || c[3] != 255) ++bad;
         }
-      Out("draw11 result=%s arch=%s first=%02x%02x%02x%02x bad_pixels=%u of=%u x64_umd_loaded=%u", bad ? "FAIL" : "PASS",
-          Arch(), c0[0], c0[1], c0[2], c0[3], bad, W * H, GetModuleHandleW(L"AppleAgxRenderAdmissionUmdX64.dll") ? 1u : 0u);
+      Out("draw11 result=%s arch=%s first=%02x%02x%02x%02x bad_pixels=%u of=%u x64_umd_loaded=%u x86_umd_loaded=%u", bad ? "FAIL" : "PASS",
+          Arch(), c0[0], c0[1], c0[2], c0[3], bad, W * H, GetModuleHandleW(L"AppleAgxRenderAdmissionUmdX64.dll") ? 1u : 0u,
+          GetModuleHandleW(L"AppleAgxRenderAdmissionUmd32.dll") ? 1u : 0u);
       ctx->Unmap(st, 0);
     } else Out("draw11 result=FAIL stage=map hr=0x%08lx arch=%s", (unsigned long)hr, Arch());
   } else Out("draw11 result=FAIL stage=create hr=0x%08lx arch=%s", (unsigned long)hr, Arch());

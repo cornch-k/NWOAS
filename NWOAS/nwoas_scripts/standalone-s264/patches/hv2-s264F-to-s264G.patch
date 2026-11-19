@@ -1,0 +1,400 @@
+diff -ruN a/Makefile b/Makefile
+--- a/Makefile	2026-11-20 04:07:26
++++ b/Makefile	2026-11-20 04:07:26
+@@ -66,6 +66,9 @@
+ 
+ # Required for no_std + alloc for now
+ export RUSTC_BOOTSTRAP=1
++# NWOAS S264G: the build tree path must not end up in the binary (vendored fatfs panic locations are
++# linked in since the C launcher calls rust_load_file_into), so builds in different work dirs match.
++export RUSTFLAGS += --remap-path-prefix=$(abspath .)=/m1n1
+ RUST_LIB := librust.a
+ ifeq ($(CHAINLOADING),1)
+ CFG += CHAINLOADING
+@@ -135,7 +138,7 @@
+ 	heapblock.o \
+ 	nwoas_frontend/model.o nwoas_frontend/admin_payload.o nwoas_frontend/admin_state.o nwoas_frontend/admin_ring.o nwoas_frontend/frontend.o \
+ 	hv.o hv_vm.o hv_exc.o hv_vuart.o hv_wdt.o hv_asm.o hv_aic.o hv_virtio.o hv_psci.o hv_vgic.o \
+-	nwoas_pwr.o nwoas_s264.o nwoas_s264_plan.o nwoas_s264_audio.o nwoas_s264_wifi.o nwoas_s264_pwr.o \
++	nwoas_pwr.o nwoas_s264.o nwoas_s264_plan.o nwoas_s264_audio.o nwoas_s264_wifi.o nwoas_s264_pwr.o nwoas_s264_auto.o \
+ 	i2c.o \
+ 	iodev.o \
+ 	iova.o \
+diff -ruN a/rust/src/chainload.rs b/rust/src/chainload.rs
+--- a/rust/src/chainload.rs	2026-09-10 11:00:38
++++ b/rust/src/chainload.rs	2026-11-20 03:57:36
+@@ -76,6 +76,80 @@
+     Ok(buf)
+ }
+ 
++/// NWOAS S264G: read `spec` ("<partition uuid>;<path>") into a caller-owned buffer (the Python heap
++/// range of the C launcher), without a heap copy.  Returns the file size in Ok; Err(TooBig) leaves
++/// the buffer untouched.
++pub enum LoadInto {
++    Done(usize),
++    TooBig(usize),
++}
++
++fn load_into(spec: &str, dst: &mut [u8]) -> Result<LoadInto, Error> {
++    println!("ESP read {}", spec);
++    let mut args = spec.split(';');
++    let uuid = Uuid::parse_str(args.next().ok_or(Error::BadArgs)?).or(Err(Error::BadArgs))?;
++    let path = args.next().ok_or(Error::BadArgs)?;
++    let part = {
++        let storage = nvme::NVMEStorage::new(1, 0);
++        let mut pt = gpt::GPT::new(storage)?;
++        pt.find_by_partuuid(uuid)?.ok_or(Error::PartitionNotFound)?
++    };
++    let storage = nvme::NVMEStorage::new(1, part.get_starting_lba());
++    let opts = FsOptions::new().update_accessed_date(false);
++    let fs = FileSystem::new(storage, opts)?;
++    let mut file = fs.root_dir().open_file(path)?;
++    let size = file.seek(SeekFrom::End(0))? as usize;
++    file.seek(SeekFrom::Start(0))?;
++    if size > dst.len() {
++        println!("ESP read: {} bytes do not fit in {}", size, dst.len());
++        return Ok(LoadInto::TooBig(size));
++    }
++    let mut slice = &mut dst[..size];
++    while !slice.is_empty() {
++        let read = file.read(slice)?;
++        if read == 0 {
++            return Err(Error::Unknown);
++        }
++        slice = &mut slice[read..];
++    }
++    println!("ESP read: {} bytes", size);
++    Ok(LoadInto::Done(size))
++}
++
++/// 0 = read (*size = bytes), 1 = larger than `cap` (*size = file size, nothing written),
++/// -1 = not found / not readable.  `cap` 0 = only ask whether the file exists.
++#[no_mangle]
++pub unsafe extern "C" fn rust_load_file_into(
++    raw_spec: *const c_char,
++    dst: *mut c_void,
++    cap: c_size_t,
++    size: *mut c_size_t,
++) -> c_int {
++    let spec = match unsafe { CStr::from_ptr(raw_spec) }.to_str() {
++        Ok(s) => s,
++        Err(_) => return -1,
++    };
++    let buf: &mut [u8] = if cap == 0 || dst.is_null() {
++        &mut []
++    } else {
++        unsafe { core::slice::from_raw_parts_mut(dst as *mut u8, cap) }
++    };
++    match load_into(spec, buf) {
++        Ok(LoadInto::Done(n)) => {
++            unsafe { *size = n };
++            0
++        }
++        Ok(LoadInto::TooBig(n)) => {
++            unsafe { *size = n };
++            1
++        }
++        Err(err) => {
++            println!("ESP read failed: {:?}", err);
++            -1
++        }
++    }
++}
++
+ #[no_mangle]
+ pub unsafe extern "C" fn rust_load_image(
+     raw_spec: *const c_char,
+diff -ruN a/src/main.c b/src/main.c
+--- a/src/main.c	2026-11-20 04:07:26
++++ b/src/main.c	2026-11-20 04:07:26
+@@ -1,5 +1,6 @@
+ /* SPDX-License-Identifier: MIT */
+ 
++#include "nwoas_s264.h" /* S264G */
+ #include "../build/build_cfg.h"
+ #include "../build/build_tag.h"
+ 
+@@ -132,6 +133,15 @@
+         usb_iodev_init();
+     }
+ #endif
++
++    if (nwoas_autostart_s) { /* NWOAS S264G (4-2): only with the ESP image variable */
++        extern u64 uartproxy_autostart_deadline;
++        extern void (*uartproxy_autostart_hook)(void);
++        u32 s = nwoas_autostart_s > 600 ? 600 : nwoas_autostart_s;
++        uartproxy_autostart_hook = nwoas_s264_autostart;
++        uartproxy_autostart_deadline = timeout_calculate(s * 1000000);
++        printf("NWOAS-S264G: waiting %u s for a MacBook proxy client, then auto-start\n", s);
++    }
+ 
+     printf("Running proxy...\n");
+ 
+diff -ruN a/src/nwoas_s264.c b/src/nwoas_s264.c
+--- a/src/nwoas_s264.c	2026-11-20 04:07:26
++++ b/src/nwoas_s264.c	2026-11-20 04:07:26
+@@ -34,6 +34,7 @@
+ #include "nwoas_s264_audio.h" /* s264D */
+ #include "nwoas_s264_wifi.h"  /* s264D */
+ #include "nwoas_s264_pwr.h"   /* s264F */
++#include "nwoas_s264_auto.h"  /* s264G */
+ #include "nwoas_pwr.h"
+ #include "smc.h"
+ #include "pmgr.h"
+@@ -1174,6 +1175,75 @@
+     if (!out_ptr || out_size < S264_RESULT_HDR || out_size > 0x1000000)
+         return 0;
+     return s264_result_write(&s264_in, &s264_cfg, &s264_pl, mode, (u8 *)out_ptr, (u32)out_size);
++}
++
++/* ------------------------------------------------------------------ s264G auto-start (4-2) */
++u32 nwoas_autostart_s;
++extern int rust_load_file_into(const char *spec, void *dst, size_t cap, size_t *size);
++
++static int s264_esp_read(const char *path, void *dst, size_t cap, size_t *size)
++{
++    char spec[128];
++    snprintf(spec, sizeof(spec), "%s;%s", S264_AUTO_ESP_UUID, path);
++    *size = 0;
++    return rust_load_file_into(spec, dst, cap, size);
++}
++
++void nwoas_s264_autostart(void)
++{
++    static const char *const why[] = {"launch", "m1n1/nowin present: waiting for the MacBook",
++                                      "no m1n1/nwoas-payload.bin", "payload too large",
++                                      "m1n1/nwoas-s264.cfg has a wrong size/magic/version",
++                                      "payload is empty"};
++    static struct s264_config cfg, tmp;
++    static u8 cfgbuf[sizeof(struct s264_config)];
++    printf("HVLOG: S264G no MacBook proxy client within %u s: auto-start from the ESP\n",
++           nwoas_autostart_s);
++    if (s264_launched)
++        return;
++    if (!nvme_init()) {
++        printf("HVLOG: S264G nvme_init failed: staying in the proxy\n");
++        return;
++    }
++    struct s264_auto_files f;
++    memset(&f, 0, sizeof(f));
++    size_t sz = 0;
++    f.nowin_rc = s264_esp_read(S264_AUTO_NOWIN, NULL, 0, &sz);
++    f.cfg_rc = -1;
++    f.payload_rc = -1;
++    if (f.nowin_rc < 0) {
++        f.cfg_rc = s264_esp_read(S264_AUTO_CFG, cfgbuf, sizeof(cfgbuf), &sz);
++        f.cfg_size = sz;
++        f.cfg_bytes = cfgbuf;
++        /* payload goes where run_guest.py's ProxyUtils heap starts (above the m1n1 heap reserve) */
++        if (f.cfg_rc == 0 && sz == sizeof(tmp))
++            memcpy(&tmp, cfgbuf, sizeof(tmp));
++        else
++            s264_default_config(&tmp);
++        u64 dst = ((u64)heapblock_alloc(0) + tmp.m1n1_heap_reserve + 0x3fff) & ~0x3fffULL;
++        f.payload_ptr = dst;
++        f.payload_rc =
++            s264_esp_read(S264_AUTO_PAYLOAD, (void *)dst, (size_t)s264_auto_payload_cap(&tmp), &sz);
++        f.payload_size = sz;
++    }
++    nvme_shutdown();
++    int rc = s264_auto_compose(&f, &cfg);
++    printf("HVLOG: S264G auto-start: nowin %d cfg %d (%lu B) payload %d (%lu B at 0x%lx) -> %s\n",
++           f.nowin_rc, f.cfg_rc, (unsigned long)f.cfg_size, f.payload_rc, (unsigned long)f.payload_size,
++           (unsigned long)f.payload_ptr, rc >= 0 && rc <= 5 ? why[rc] : "?");
++    if (rc != S264_AUTO_LAUNCH)
++        return;
++    uartproxy_iodev = IODEV_USB0; /* the port the MacBook would use (s264 tests: iodev 3) */
++    int r = s264_prepare((u64)&cfg, sizeof(cfg));
++    if (r < 0) {
++        printf("HVLOG: S264G plan error %d (err %u arg 0x%x): staying in the proxy\n", r, s264_pl.err,
++               s264_pl.err_arg);
++        return;
++    }
++    printf("HVLOG: S264G C launcher: %u ops, phys_base=0x%lx entry=0x%lx flags=0x%x\n", s264_pl.n_ops,
++           s264_pl.L.phys_base, s264_pl.L.entry, cfg.flags);
++    r = s264_execute();
++    printf("HVLOG: S264G launcher returned %d: staying in the proxy\n", r);
+ }
+ 
+ u64 nwoas_s264_proxy(u64 op, u64 a0, u64 a1, u64 a2, u64 a3)
+diff -ruN a/src/nwoas_s264.h b/src/nwoas_s264.h
+--- a/src/nwoas_s264.h	2026-11-20 04:07:26
++++ b/src/nwoas_s264.h	2026-11-20 04:07:26
+@@ -15,6 +15,11 @@
+ 
+ u64 nwoas_s264_proxy(u64 op, u64 a0, u64 a1, u64 a2, u64 a3);
+ 
++/* s264G (4-2): "nwoas_autostart=<s>" image variable (payload.c); 0 = off (MacBook chainload). */
++extern u32 nwoas_autostart_s;
++/* uartproxy.c start-up loop calls this once when no byte arrived before the deadline */
++void nwoas_s264_autostart(void);
++
+ /* Armed only by a S264 launch (S264_STEP_ARM_TRAPS); off = byte-identical behaviour. */
+ extern bool nwoas_s264_traps_armed;
+ /* hv_exc.c: CPU-config sysregs the guest m1n1 prefix touches (Python handle_msr "Pass"/"Skip") */
+diff -ruN a/src/nwoas_s264_auto.c b/src/nwoas_s264_auto.c
+--- a/src/nwoas_s264_auto.c	1970-01-01 09:00:00
++++ b/src/nwoas_s264_auto.c	2026-11-20 04:07:26
+@@ -0,0 +1,50 @@
++/* SPDX-License-Identifier: MIT */
++/* NWOAS S264G: auto-start decision (pure; see nwoas_s264_auto.h).  HARDWARE-UNVERIFIED. */
++#include "nwoas_s264_auto.h"
++
++#ifndef S264_HOST
++#include "string.h"
++#endif
++
++bool s264_auto_should_fire(u32 autostart_s, u64 elapsed_us, bool host_seen)
++{
++    if (!autostart_s || host_seen)
++        return false;
++    if (autostart_s > S264_AUTO_MAX_S)
++        autostart_s = S264_AUTO_MAX_S;
++    return elapsed_us >= (u64)autostart_s * 1000000ULL;
++}
++
++u64 s264_auto_payload_cap(const struct s264_config *cfg)
++{
++    /* layout (nwoas_s264_plan.c): adt_scratch = phys_base - 8 MiB, nvme_buf = phys_base - 2 MiB,
++     * audio_buf = phys_base - 1 MiB; py heap = [phys_base - py_heap_size, phys_base) */
++    if (cfg->py_heap_size <= 0x800000)
++        return 0;
++    return cfg->py_heap_size - 0x800000;
++}
++
++int s264_auto_compose(const struct s264_auto_files *f, struct s264_config *out)
++{
++    if (f->nowin_rc >= 0)
++        return S264_AUTO_NOWIN_WAIT;
++    if (f->cfg_rc >= 0) {
++        if (f->cfg_rc != 0 || f->cfg_size != sizeof(*out) || !f->cfg_bytes)
++            return S264_AUTO_BAD_CFG;
++        memcpy(out, f->cfg_bytes, sizeof(*out));
++        if (out->magic != S264_MAGIC || out->version != S264_VERSION || out->size != sizeof(*out))
++            return S264_AUTO_BAD_CFG;
++    } else {
++        s264_default_config(out);
++    }
++    if (f->payload_rc == 1)
++        return S264_AUTO_TOO_BIG;
++    if (f->payload_rc != 0)
++        return S264_AUTO_NO_PAYLOAD;
++    if (!f->payload_size)
++        return S264_AUTO_EMPTY;
++    out->payload_ptr = f->payload_ptr;
++    out->payload_size = f->payload_size;
++    out->flags |= S264_CFG_F_EXC_FATAL;
++    return S264_AUTO_LAUNCH;
++}
+diff -ruN a/src/nwoas_s264_auto.h b/src/nwoas_s264_auto.h
+--- a/src/nwoas_s264_auto.h	1970-01-01 09:00:00
++++ b/src/nwoas_s264_auto.h	2026-11-20 04:07:26
+@@ -0,0 +1,53 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * NWOAS S264G (roadmap 4-2): start the C launcher from the ESP when no MacBook proxy client attaches.
++ *   - Only armed by the m1n1 variable "nwoas_autostart=<seconds>" appended to the image (the ESP
++ *     \m1n1\boot.bin of PLAN-4-1); an image chainloaded by the MacBook (chainload.py -r) has no such
++ *     variable and behaves exactly as before.
++ *   - If any byte arrives on a proxy iodev before the deadline: today's behaviour (proxy).
++ *   - Deadline passed: ESP m1n1/nowin present -> keep waiting for the MacBook (proxy, forever);
++ *     else read m1n1/nwoas-s264.cfg (optional, exactly sizeof(struct s264_config)) and
++ *     m1n1/nwoas-payload.bin into the Python heap range, and LAUNCH.
++ * The composition below is pure (host-tested: nwoas_scripts/standalone-s264/s264g_auto_test.py).
++ * HARDWARE-UNVERIFIED.
++ */
++#ifndef NWOAS_S264_AUTO_H
++#define NWOAS_S264_AUTO_H
++
++#include "nwoas_s264_plan.h"
++
++#define S264_AUTO_ESP_UUID "a3e73003-c14a-487b-9f2e-8854fe119192" /* GPT slot 4 = Windows ESP */
++#define S264_AUTO_NOWIN    "m1n1/nowin"
++#define S264_AUTO_CFG      "m1n1/nwoas-s264.cfg"
++#define S264_AUTO_PAYLOAD  "m1n1/nwoas-payload.bin"
++#define S264_AUTO_MAX_S    600
++
++/* results of s264_auto_compose */
++#define S264_AUTO_LAUNCH     0
++#define S264_AUTO_NOWIN_WAIT 1 /* m1n1/nowin present: stay in the proxy */
++#define S264_AUTO_NO_PAYLOAD 2
++#define S264_AUTO_TOO_BIG    3 /* payload larger than the room below the launcher scratch */
++#define S264_AUTO_BAD_CFG    4 /* cfg file present but wrong size / magic / version: do not guess */
++#define S264_AUTO_EMPTY      5 /* payload of 0 bytes */
++
++/* rc values as returned by rust_load_file_into: 0 read, 1 too big, -1 missing/unreadable */
++struct s264_auto_files {
++    int nowin_rc;
++    int cfg_rc;
++    u64 cfg_size;
++    const u8 *cfg_bytes; /* cfg_size bytes when cfg_rc == 0 */
++    int payload_rc;
++    u64 payload_size;
++    u64 payload_ptr;
++};
++
++/* Deadline helper: true when the launcher should be started now. */
++bool s264_auto_should_fire(u32 autostart_s, u64 elapsed_us, bool host_seen);
++/* Room for the payload at py_heap_base: everything below the launcher scratch (top 8 MiB) and the
++ * audio / NVMe buffers (phys_base - 2 MiB) of the default config. */
++u64 s264_auto_payload_cap(const struct s264_config *cfg);
++/* Builds the launch config: default (or the file) + payload pointer/size + exception policy FATAL
++ * (nothing may wait for a MacBook that is not there). */
++int s264_auto_compose(const struct s264_auto_files *f, struct s264_config *out);
++
++#endif
+diff -ruN a/src/payload.c b/src/payload.c
+--- a/src/payload.c	2026-11-20 04:07:26
++++ b/src/payload.c	2026-11-20 04:07:26
+@@ -7,6 +7,7 @@
+ #include "adt.h"
+ #include "assert.h"
+ #include "chainload.h"
++#include "nwoas_s264.h" /* S264G */
+ #include "cpufreq.h"
+ #include "display.h"
+ #include "heapblock.h"
+@@ -205,6 +206,11 @@
+         mitigations_configure(val);
+     } else if (IS_VAR("tso=")) {
+         enable_tso = val[0] == '1';
++    } else if (IS_VAR("nwoas_autostart=")) { /* NWOAS S264G (4-2): seconds, 0 = off */
++        u32 s = 0;
++        for (const char *c = val; *c >= '0' && *c <= '9' && s < 100000; c++)
++            s = s * 10 + (u32)(*c - '0');
++        nwoas_autostart_s = s;
+     } else {
+         printf("Unknown variable %s\n", *p);
+     }
+diff -ruN a/src/uartproxy.c b/src/uartproxy.c
+--- a/src/uartproxy.c	2026-11-20 04:07:26
++++ b/src/uartproxy.c	2026-11-20 04:07:26
+@@ -121,6 +121,9 @@
+ }
+ 
+ iodev_id_t uartproxy_iodev;
++/* NWOAS S264G (4-2): start-up deadline; 0 = off.  Any byte from a host clears it. */
++u64 uartproxy_autostart_deadline;
++void (*uartproxy_autostart_hook)(void);
+ 
+ int uartproxy_run(struct uartproxy_msg_start *start)
+ {
+@@ -151,9 +154,18 @@
+             // Look for commands from any iodev on startup
+             for (iodev = 0; iodev < IODEV_MAX;) {
+                 u8 b;
++                if (uartproxy_autostart_deadline && timeout_expired(uartproxy_autostart_deadline)) {
++                    uartproxy_autostart_deadline = 0;
++                    if (uartproxy_autostart_hook)
++                        uartproxy_autostart_hook(); /* returns only if it did not launch */
++                }
+                 if ((iodev_get_usage(iodev) & USAGE_UARTPROXY)) {
+                     iodev_handle_events(iodev);
+                     if (iodev_can_read(iodev) && iodev_read(iodev, &b, 1) == 1) {
++                        if (uartproxy_autostart_deadline) {
++                            uartproxy_autostart_deadline = 0; /* a host is talking: today's path */
++                            printf("Proxy: host seen, auto-start off\n");
++                        }
+                         iodev_proxy_buffer[iodev] >>= 8;
+                         iodev_proxy_buffer[iodev] |= b << 24;
+                         if ((iodev_proxy_buffer[iodev] & 0xffffff) == 0xAA55FF)

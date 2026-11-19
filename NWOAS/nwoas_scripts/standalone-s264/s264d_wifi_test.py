@@ -88,12 +88,13 @@ SS = ct.CFUNCTYPE(ct.c_int)
 SK = ct.CFUNCTYPE(ct.c_int, ct.c_uint32, ct.POINTER(ct.c_uint32), ct.POINTER(ct.c_uint32))
 SW = ct.CFUNCTYPE(ct.c_int, ct.c_uint32, ct.c_uint32)
 LG = ct.CFUNCTYPE(None, ct.c_char_p)
+FN = ct.CFUNCTYPE(None, ct.c_int)        # s264E bar_fence (never called without the S261 fence)
 
 
 class Io(ct.Structure):
     _fields_ = [("rd32", RD), ("wr32", WR), ("exc_count", EC), ("set_guard", SG), ("sleep_us", SL),
                 ("now_us", NW), ("nop", NP), ("smc_start", SS), ("smc_key_info", SK), ("smc_write32", SW),
-                ("smc_stop", SS), ("log", LG), ("pace_us", SG)]
+                ("smc_stop", SS), ("log", LG), ("pace_us", SG), ("bar_fence", FN), ("pt_update", NP)]
 
 
 def build_lib(src, work):
@@ -349,7 +350,8 @@ def run_c(L, sc, ops):
              SL(lambda us: (trace.append(("sleep", us)), clock.sleep(us / 1e6))), NW(lambda: clock.us), NP(rec.nop),
              SS(smc_start), SK(key_info), SW(lambda k, v: guarded_call(lambda: smc["cur"].write32("gP0d", v))),
              SS(lambda: guarded_call(smc["cur"].stop)), LG(lambda m: logs.append(m.decode())),
-             SG(lambda us: None))                 # pacing: deliberate deviation, not in the trace
+             SG(lambda us: None),                 # pacing: deliberate deviation, not in the trace
+             FN(lambda on: trace.append(("fence", on))), NP(lambda: trace.append(("pt",))))
     f = tp.good_facts()
     cf = Facts(ecam=f["ecam"], rc=f["rc"], port0=f["port0"], port0_phy=f["port0_phy"], port1=f["port1"],
                gpio=f["gpio"], smc=f["smc"], gpio_phandle=f["gpio_phandle"], perst_phandle=f["perst_phandle"],

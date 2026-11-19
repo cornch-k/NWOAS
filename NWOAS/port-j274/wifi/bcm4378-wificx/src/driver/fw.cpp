@@ -284,20 +284,6 @@ NTSTATUS NwoaFirmwareBoot(PNWOA_DEVICE Dev)
         for (ULONG i = 0; i < NB_SH_WORDS; i++)
             w[i] = NwoaTcmRead32(Dev, Dev->SharedAddr + 4 * i);
         NwoaDiagDword(Dev, L"NwoaSharedFlags", w[0]);
-        if (Dev->Cfg.RomDump && KeGetCurrentIrql() == PASSIVE_LEVEL && !(L->rambase & 15) &&
-            L->rambase <= 0x400000 && L->rambase <= Dev->Bar2Len) {       // s276
-            ULONG part = L->rambase / 4;
-            PULONG rb = (PULONG)ExAllocatePool2(POOL_FLAG_PAGED, part, NWOA_TAG);
-            for (ULONG q = 0; rb && q < 4; q++) {
-                WCHAR nm[16];
-                for (ULONG i2 = 0; i2 < part / 4; i2++)
-                    rb[i2] = READ_REGISTER_ULONG((volatile ULONG*)(Dev->Bar2 + q * part + 4 * i2));
-                RtlStringCchPrintfW(nm, ARRAYSIZE(nm), L"NwoaRom%lu", q);
-                NwoaDiagBin(Dev, nm, (const UCHAR*)rb, part);
-            }
-            if (rb)
-                ExFreePoolWithTag(rb, NWOA_TAG);
-        }
         ULONG ria = w[NB_SH_RING_INFO / 4];
         if (ria < L->rambase || ria + sizeof(ri) > L->top) { st = STATUS_DEVICE_DATA_ERROR; goto out; }
         for (ULONG i = 0; i < NB_RI_WORDS; i++)
@@ -638,4 +624,37 @@ void NwoaSnapReport(PNWOA_DEVICE Dev, ULONG Have, ULONG Verdict)
     Dev->SnapN = k + 1;
     if (Dev->SnapN >= NWOA_SNAP_SCANS)
         NwoaSnapFree(Dev);
+}
+
+// ------------------------------------------------------------ s277 RomDump
+// The chip ROM, TCM offsets 0 .. NWOA_ROM_END, to NwoaRom0..1 (private analysis, the job that reads them removes them).
+// s276 did this in the device start path up to rambase: the read at 0x170000 never came back (the data abort is
+// re-executed below Windows), the device start hung and, with the switch still in the registry, would hang again
+// at every start.  So now: (1) work item only (2 s diag tick), never the start path; (2) the switch is removed
+// from the registry BEFORE the first read and nothing is read if that fails; (3) only 0 .. 0x170000, the range
+// s276 read without a fault; (4) NwoaRomAt = offset of the 64 KiB block being read, so a hang shows where.
+#define NWOA_ROM_END 0x170000u
+void NwoaRomDumpOnce(PNWOA_DEVICE Dev)
+{
+    const ULONG part = NWOA_ROM_END / 2;
+    if (!Dev->Cfg.RomDump || !Dev->FwUp || KeGetCurrentIrql() != PASSIVE_LEVEL)
+        return;
+    Dev->Cfg.RomDump = 0;                                             // once per device start at most
+    if (Dev->Bar2Len < NWOA_ROM_END || Dev->Ram.rambase < NWOA_ROM_END || !NwoaDiagRemove(Dev, L"RomDump"))
+        return;
+    PULONG rb = (PULONG)ExAllocatePool2(POOL_FLAG_PAGED, part, NWOA_TAG);
+    if (!rb)
+        return;
+    for (ULONG q = 0; q < 2; q++) {
+        WCHAR nm[16];
+        for (ULONG i = 0; i < part / 4; i++) {
+            if (!((q * part + 4 * i) & 0xFFFF))
+                NwoaDiagDword(Dev, L"NwoaRomAt", q * part + 4 * i);
+            rb[i] = READ_REGISTER_ULONG((volatile ULONG*)(Dev->Bar2 + q * part + 4 * i));
+        }
+        RtlStringCchPrintfW(nm, ARRAYSIZE(nm), L"NwoaRom%lu", q);
+        NwoaDiagBin(Dev, nm, (const UCHAR*)rb, part);
+    }
+    NwoaDiagDword(Dev, L"NwoaRomAt", 0xFFFFFFFFu);                    // finished
+    ExFreePoolWithTag(rb, NWOA_TAG);
 }

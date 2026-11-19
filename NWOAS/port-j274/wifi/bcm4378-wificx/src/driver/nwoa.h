@@ -346,8 +346,8 @@ typedef struct _NWOA_CONFIG {
                                 //     legacy PCIe2 H2D_MAILBOX_0/1 (0x140/0x144), not the DAR 0xA20/0xA24 that s258r
                                 //     uses on PCIe2 rev >= 64.  1 = H2D ring doorbell, 2 = hostready (DB1)
     // ---- s272 (0 = s271 behaviour)
-    ULONG  RomDump;             // s276, 1 = once per device start copy the chip ROM (TCM offsets 0 .. rambase) to the
-                                //     registry values NwoaRom0..3 (private analysis only, removed by the job that reads them)
+    ULONG  RomDump;             // s276, 1 = once per device start copy the chip ROM (TCM offsets 0 .. 0x170000) to NwoaRom0..1; the driver
+                                //     removes the switch from the registry before reading (acts once; s276 hung, see fw.cpp)
     ULONG  FwSnap;              // s273, 1 = for the first NWOA_SNAP_SCANS scans made while connected copy the firmware
                                 //     RAM (TCM) before the escan, at the stuck / alive verdict (before any fix) and
                                 //     0.3 s after the flowring re-create; the words that differ go to NwoaSnap<k>*
@@ -746,6 +746,8 @@ void     NwoaSnapTake(PNWOA_DEVICE Dev, ULONG Which);                  // s273 (
 void     NwoaSnapReport(PNWOA_DEVICE Dev, ULONG Have, ULONG Verdict);  // Have 2 = snapshots 0 1, 3 = 0 1 2
 void     NwoaSnapFree(PNWOA_DEVICE Dev);
 void     NwoaDiagBin(PNWOA_DEVICE Dev, PCWSTR Name, const UCHAR* Data, ULONG Len);
+BOOLEAN  NwoaDiagRemove(PNWOA_DEVICE Dev, PCWSTR Name);
+void     NwoaRomDumpOnce(PNWOA_DEVICE Dev);                             // s277 (work item)
 void     NwoaConsoleLiveTick(PNWOA_DEVICE Dev);                        // s258n
 
 // ---- msgbuf.cpp

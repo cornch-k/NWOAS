@@ -2137,6 +2137,7 @@ void NwoaEvtWork(WDFWORKITEM Work)
             LinkQualityTick(Dev);
             NwoaMbPollTick(Dev);                               // s258n
             NwoaConsoleLiveTick(Dev);
+            NwoaRomDumpOnce(Dev);                                 // s277: only with the RomDump switch
             StallTick(Dev);
             SfArmTick(Dev);                                    // s258o
             CandService(Dev);                                  // s258p

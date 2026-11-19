@@ -1,0 +1,270 @@
+--- a/drivers/apple-agx/render-admission/umd/AppleAgxRenderAdmissionUmd.vcxproj
++++ b/drivers/apple-agx/render-admission/umd/AppleAgxRenderAdmissionUmd.vcxproj
+@@ -7,6 +7,10 @@
+          processes load it through the ARM64X forwarder,
+          scripts/build-umd-x64-msbuild.ps1). ARM64 configurations unchanged. -->
+     <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
++    <!-- NWOAS-J274 PATCH P42: the same project built for x86 (WOW64 processes load
++         AppleAgxRenderAdmissionUmd32.dll from SysWOW64, UserModeDriverNameWow;
++         scripts/build-umd-x86-msbuild.ps1). Other configurations unchanged. -->
++    <ProjectConfiguration Include="Release|Win32"><Configuration>Release</Configuration><Platform>Win32</Platform></ProjectConfiguration>
+   </ItemGroup>
+   <PropertyGroup Label="Globals">
+     <ProjectGuid>{B1D91C72-481B-4E6E-9161-172499A03758}</ProjectGuid>
+@@ -161,6 +165,12 @@
+     <ResourceCompile Include="..\package-version.rc" />
+     <None Include="AppleAgxRenderAdmissionUmd.def" />
+   </ItemGroup>
++  <!-- NWOAS-J274 PATCH P42: the WindowsUserModeDriver10.0 toolset defaults Win32 to __stdcall (/Gz); the
++       native runtime archive and Mesa libraries are __cdecl (clang-cl default), so the x86 link found
++       no _AgxWin32Asahi*@N symbols. DDI entry points stay __stdcall through their APIENTRY declarations. -->
++  <ItemDefinitionGroup Condition="'$(Platform)'=='Win32'">
++    <ClCompile><CallingConvention>Cdecl</CallingConvention></ClCompile>
++  </ItemDefinitionGroup>
+   <Import Project="$(NativeRuntimeProps)" Condition="'$(EnableNativeFrontend)' == 'true'" />
+   <Import Project="$(PreparedNirOwnerProps)" Condition="'$(EnablePreparedNirOwner)' == 'true' and Exists('$(PreparedNirOwnerProps)')" />
+   <Target Name="ValidatePreparedNirOwner" BeforeTargets="PrepareForBuild" Condition="'$(EnablePreparedNirOwner)' == 'true'">
+--- a/drivers/apple-agx/mesa/dxil/patches/c49-build-dxspv.ps1
++++ b/drivers/apple-agx/mesa/dxil/patches/c49-build-dxspv.ps1
+@@ -1,4 +1,4 @@
+-param([ValidateSet('x64','arm64')][string]$Architecture='x64')
++param([ValidateSet('x64','arm64','x86')][string]$Architecture='x64')  # NWOAS-J274 P42: x86 for the WOW64 UMD
+ $builderRoot = if ($env:APPLE_AGX_BUILDER_ROOT) { $env:APPLE_AGX_BUILDER_ROOT } else { 'C:\Users\pauls\APB12E~1\active' }  # builder root: APPLE AGX\active (8.3 alias, no space)
+ # C44: dxil-spirv-c-static for the UMD (same configuration as EXP1388: /MD, no CLI, no native LLVM)
+ $ErrorActionPreference='Stop'
+@@ -13,7 +13,7 @@
+ $b="$builderRoot\c49-dxspv-$Architecture"
+ if(Test-Path $b){throw 'exists'}
+ New-Item -ItemType Directory $b | Out-Null
+-$proc = if($Architecture -eq 'x64'){'AMD64'}else{'ARM64'}
++$proc = if($Architecture -eq 'x64'){'AMD64'}elseif($Architecture -eq 'x86'){'X86'}else{'ARM64'}
+ & $cmake -S $src -B "$b\build" -G 'NMake Makefiles' '-DCMAKE_BUILD_TYPE=Release' '-DCMAKE_SYSTEM_NAME=Windows' "-DCMAKE_SYSTEM_PROCESSOR=$proc" `
+  "-DCMAKE_C_COMPILER=$bin\cl.exe" "-DCMAKE_CXX_COMPILER=$bin\cl.exe" '-DCMAKE_POLICY_DEFAULT_CMP0091=NEW' '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL' `
+  '-DDXIL_SPIRV_CLI=OFF' '-DDXIL_SPIRV_NATIVE_LLVM=OFF' '-DDXIL_SPV_MISC_CLI=OFF' '-DSPIRV_HEADERS_ENABLE_TESTS=OFF' '-DSPIRV_HEADERS_ENABLE_INSTALL=OFF' *> "$b\configure.log"
+--- a/drivers/apple-agx/mesa/scripts/configure-x86-nir.ps1
++++ b/drivers/apple-agx/mesa/scripts/configure-x86-nir.ps1
+@@ -6,7 +6,9 @@
+ # release-assert build (b_ndebug=true, still /O2 with debug info): the
+ # default debugoptimized build keeps every Mesa/Asahi assert and runs NIR
+ # validation after each compiler pass.
+-param([string]$Name='nir-x86',[switch]$NDebug)
++# NWOAS-J274 P42: -CrossFile (a copy with the builder's agx path, as 05x does for x64) and
++# -Platforms '[]' (the x64 NIR closure options: no WGL/opengl32 ICD) for the WOW64 D3D UMD.
++param([string]$Name='nir-x86',[switch]$NDebug,[string]$CrossFile='',[string]$Platforms='windows')
+ $builderRoot = if ($env:APPLE_AGX_BUILDER_ROOT) { $env:APPLE_AGX_BUILDER_ROOT } else { 'C:\Users\pauls\APB12E~1\active' }  # builder root: APPLE AGX\active (8.3 alias, no space)
+ $ErrorActionPreference='Stop'
+ $root="$builderRoot\AD04-fullcompiler-001"
+@@ -21,8 +23,8 @@
+ $out=Join-Path $root ('x86-config-'+[guid]::NewGuid().ToString('N'))
+ New-Item -ItemType Directory $out | Out-Null
+ $args=@('setup',"$root\$Name","$builderRoot\AD04-d3d10-frontend-build\mesa",
+- '--cross-file',"$here\compiler-x86.ini",'--buildtype=debugoptimized','--wrap-mode=nofallback',
+- '-Dplatforms=windows','-Dgallium-drivers=softpipe','-Dvulkan-drivers=[]','-Dopengl=true',
++ '--cross-file',$(if($CrossFile){$CrossFile}else{"$here\compiler-x86.ini"}),'--buildtype=debugoptimized','--wrap-mode=nofallback',
++ "-Dplatforms=$Platforms",'-Dgallium-drivers=softpipe','-Dvulkan-drivers=[]','-Dopengl=true',
+  '-Dgles1=disabled','-Dgles2=disabled','-Dglx=disabled','-Degl=disabled',
+  '-Dgbm=disabled','-Dllvm=disabled','-Dshared-glapi=disabled','-Dxmlconfig=disabled',
+  '-Dexpat=disabled','-Dzlib=disabled','-Dzstd=disabled','-Dbuild-tests=false',
+--- a/drivers/apple-agx/render-admission/umd/src/umd_draw_composer.c
++++ b/drivers/apple-agx/render-admission/umd/src/umd_draw_composer.c
+@@ -375,7 +375,7 @@
+   {
+     UINT_PTR context=(UINT_PTR)render.hContext;
+     UINT values[5]={render.RenderCBSequence,(UINT)context,
+-        (UINT)(context>>32),render.NumAllocations,render.CommandLength};
++        (UINT)((unsigned long long)context>>32) /* P42: x86-safe */,render.NumAllocations,render.CommandLength};
+     AdmissionUmdDiagnostic("native-render-callback",result,values,5u);
+   }
+   AcquireSRWLockExclusive(&d->ScreenBufferLock);
+--- a/drivers/apple-agx/render-admission/umd/src/umd_gpuva_windows.c
++++ b/drivers/apple-agx/render-admission/umd/src/umd_gpuva_windows.c
+@@ -1378,7 +1378,8 @@
+ 
+ /* T13: GetWriteWatch does not specify address ordering. Compare integer
+  * addresses, not pointers to unrelated C objects. */
+-static int heap_staging_page_compare(const void *a, const void *b) {
++/* P42: __cdecl, the qsort contract (the x86 build defaults to another convention). */
++static int __cdecl heap_staging_page_compare(const void *a, const void *b) {
+   const ULONG_PTR x = (ULONG_PTR)*(PVOID const *)a;
+   const ULONG_PTR y = (ULONG_PTR)*(PVOID const *)b;
+   return x < y ? -1 : x != y;
+--- /dev/null
++++ b/drivers/apple-agx/render-admission/scripts/build-umd-x86-msbuild.ps1
+@@ -0,0 +1,61 @@
++# NWOAS-J274 PATCH P42: build the D3D user-mode driver for x86 (WOW64) with the SAME project,
++# toolset, definitions and properties as build-umd-x64-msbuild.ps1 (P37), only /p:Platform=Win32, the x86
++# native runtime closure (build-asahi-runtime-closure.py --architecture x86) and x86 library paths differ.
++# The x86 DLL is packaged as AppleAgxRenderAdmissionUmd32.dll, copied to %systemroot%\SysWOW64 and named
++# by UserModeDriverNameWow (WDDM 64-bit issues; upstream EXP1222/EXP1874B). No forwarder: WOW64 processes
++# load the Wow value from SysWOW64 directly.
++# Prints X86_UMD_PASS <sha256> <path>.
++param(
++    [Parameter(Mandatory = $true)][string]$NativeRuntimeProps,
++    [Parameter(Mandatory = $true)][int]$PackageBuild,
++    [string]$MesaSourceRoot = '',
++    [string]$MesaGeneratedRoot = '',
++    [string]$NativeProvenancePython = '',
++    [ValidateSet('J313','J274')][string]$Board = 'J274'
++)
++$builderRoot = if ($env:APPLE_AGX_BUILDER_ROOT) { $env:APPLE_AGX_BUILDER_ROOT } else { 'C:\Users\pauls\APB12E~1\active' }
++if (!$MesaSourceRoot) { $MesaSourceRoot = "$builderRoot\AD04-d3d10-frontend-build\mesa" }
++if (!$MesaGeneratedRoot) { $MesaGeneratedRoot = "$builderRoot\AD04-asahi-windows-compiler\b5\generated" }
++$ErrorActionPreference = 'Stop'
++[xml]$props = Get-Content -LiteralPath $NativeRuntimeProps -Raw
++$arch = $props.SelectSingleNode("//*[local-name()='NativeRuntimeArchitecture']").InnerText
++$gpuva = $props.SelectSingleNode("//*[local-name()='NativeRuntimeGpuva']").InnerText
++if ($arch -ne 'x86' -or $gpuva -ne 'true') { throw "NativeRuntimeProps is not an x86 GPUVA closure ($arch/$gpuva)" }
++$root = Split-Path -Parent $PSScriptRoot
++$umdProject = Join-Path $root 'umd\AppleAgxRenderAdmissionUmd.vcxproj'
++$msbuild = (Get-Command msbuild -ErrorAction Stop).Source
++$toolchain = 'C:/VS2022Community/VC/Tools/MSVC/14.44.35207'
++$kit = 'C:/Program Files (x86)/Windows Kits/10'
++# build-driver.ps1 G4 UMD properties with x86 library paths.
++$includePath = "$toolchain/include%3B$kit/Include/10.0.26100.0/ucrt%3B$kit/Include/10.0.26100.0/shared%3B$kit/Include/10.0.26100.0/um%3B$kit/Include/10.0.26100.0/km"
++$libraryPath = "$toolchain/lib/x86%3B$kit/Lib/10.0.26100.0/ucrt/x86%3B$kit/Lib/10.0.26100.0/um/x86"
++$env:PATH = "$kit/bin/10.0.26100.0/x64;" + $env:PATH
++$env:VSCMD_SKIP_SENDTELEMETRY = '1'
++$properties = @(
++    '/p:WindowsTargetPlatformVersion=10.0.26100.0', '/p:SignMode=Off',
++    "/p:IncludePath=$includePath", "/p:LibraryPath=$libraryPath",
++    '/p:OverrideDefaultRuntimeLibrary=true')
++$outDir = Join-Path $root 'umd\Win32\Release\'
++$intDir = Join-Path $root 'umd\Win32\obj\'
++& $msbuild $umdProject /m /t:Clean,Build /p:Configuration=Release /p:Platform=Win32 "/p:OutDir=$outDir" "/p:IntDir=$intDir" `
++    /p:RunCodeAnalysis=false "/p:AppleAgxVersionBuild=$PackageBuild" `
++    /p:AppleAgxUmdAdmissionTrace=true /p:EnableNativeFrontend=true /p:EnableGpuvaWinsys=true `
++    "/p:NativeRuntimeProps=$NativeRuntimeProps" `
++    "/p:MesaSourceRoot=$MesaSourceRoot" "/p:MesaGeneratedRoot=$MesaGeneratedRoot" `
++    "/p:AppleAgxBoard=$Board" @properties
++if ($LASTEXITCODE -ne 0) { throw "x86 UMD build failed with exit code $LASTEXITCODE" }
++$dll = Join-Path $outDir 'AppleAgxRenderAdmissionUmd.dll'
++if (-not (Test-Path -LiteralPath $dll)) { throw "x86 UMD output was not found: $dll" }
++$bytes = [IO.File]::ReadAllBytes($dll)
++$pe = [BitConverter]::ToInt32($bytes, 0x3c)
++if ([BitConverter]::ToUInt32($bytes, $pe) -ne 0x4550 -or [BitConverter]::ToUInt16($bytes, $pe + 4) -ne 0x014c) {
++    throw "x86 UMD is not an x86 PE image: $dll"
++}
++# The ARM64 package's CRT assertion gate (check_no_crt_asserts.py), same rule.
++if ($NativeProvenancePython) {
++    $gate = & $NativeProvenancePython (Join-Path $PSScriptRoot 'check_no_crt_asserts.py') $dll
++    $gateExit = $LASTEXITCODE
++    $gate | ForEach-Object { 'ASSERT_GATE ' + $_ }
++    if ($gateExit -ne 0) { throw "x86 UMD assertion gate failed with exit code $gateExit" }
++}
++'X86_UMD_PASS ' + (Get-FileHash $dll).Hash.ToLowerInvariant() + ' ' + $dll
+--- /dev/null
++++ b/drivers/apple-agx/render-admission/AppleAgxRenderAdmission.arm64xwow.inf
+@@ -0,0 +1,113 @@
++; NWOAS-J274 PATCH P42: ARM64 + x64 + x86 (WOW64) variant of the P37 INF. Same as P37 plus the
++; WOW64 D3D UMD AppleAgxRenderAdmissionUmd32.dll (scripts/build-umd-x86-msbuild.ps1) copied to
++; %systemroot%\SysWOW64 and named by UserModeDriverNameWow, as the upstream INF (EXP1222/EXP1223:
++; the 32-bit runtime did not load a driver-store path). The KMD then reports SupportsOnly64Bit=0
++; (lifecycle.c EXP1225 reads UserModeDriverNameWow). Still no OpenGL ICD.
++; P37 header follows.
++; NWOAS-J274 PATCH P37: ARM64 + x64 variant of the P9 ARM64-only INF (2773).
++; Same device, KMD, registry values and UserModeDriverName as P9; the file the
++; name points at, System32\AppleAgxRenderAdmissionUmd.dll, is now the ARM64X
++; pure forwarder (umd/forwarder, upstream EXP1820). ARM64 processes load
++; AppleAgxRenderAdmissionUmdArm64.dll (the P9 ARM64 UMD, renamed) through it,
++; x64 (Prism-emulated) processes AppleAgxRenderAdmissionUmdX64.dll.
++; x64 processes on Windows on Arm read the same UserModeDriverName and load from
++; System32 ("both x64 applications and Arm64 applications can load binaries ...
++; in System32", Microsoft Learn "Arm64X PE files"; measured upstream EXP1800).
++; Still no WOW64 (x86) UMD or ICD.
++[Version]
++Signature="$WINDOWS NT$"
++Class=Display
++ClassGuid={4d36e968-e325-11ce-bfc1-08002be10318}
++Provider=%ProviderName%
++DriverVer=08/29/2026,0.1.214.0
++CatalogFile=AppleAgxRenderAdmission.cat
++PnpLockdown=1
++
++[DestinationDirs]
++; 13 = the driver store. A Universal INF that uses DIRID 13 must run its
++; service binary from there too (InfVerif 2600, driver package isolation).
++Admission.KmdCopyFiles=13
++Admission.UmdCopyFiles=11
++; P42: WOW64 UMD (EXP1223: SysWOW64 and a file name)
++Admission.WowUmdCopyFiles=10,SysWOW64
++
++[Manufacturer]
++%ManufacturerName%=Models,NTarm64.10.0...22000
++
++[Models.NTarm64.10.0...22000]
++%DeviceName%=Admission_Install,ACPI\APPL0002
++
++[Admission_Install]
++CopyFiles=Admission.KmdCopyFiles,Admission.UmdCopyFiles,Admission.WowUmdCopyFiles
++AddReg=Admission.SoftwareSettings
++FeatureScore=F9
++
++[Admission_Install.Services]
++AddService=AppleAgxAdmission,0x00000002,Admission_Service
++
++[Admission_Service]
++DisplayName=%ServiceName%
++ServiceType=1
++StartType=3
++ErrorControl=1
++ServiceBinary=%13%\AppleAgxRenderAdmission.sys
++
++[Admission.KmdCopyFiles]
++AppleAgxRenderAdmission.sys
++
++[Admission.UmdCopyFiles]
++AppleAgxRenderAdmissionUmd.dll,,,0x4000
++AppleAgxRenderAdmissionUmdArm64.dll,,,0x4000
++AppleAgxRenderAdmissionUmdX64.dll,,,0x4000
++
++[Admission.WowUmdCopyFiles]
++AppleAgxRenderAdmissionUmd32.dll,,,0x4000
++
++[Admission.SoftwareSettings]
++; The four names are the D3D9, D3D10, D3D11 and D3D12 UMDs. The UMD has no
++; D3D9 DDI (no OpenAdapter export), and d3d9.dll then failed every device
++; with D3DERR_NOTAVAILABLE (EXP1889 D3D9_DEFAULT). With "<>", the "no D3D9
++; driver" marker, in the D3D9 slot, the DX9 UMD-name query fails and d3d9.dll
++; runs D3D9 devices through D3D9On12 on this D3D12 UMD (validated by D3D9_ON12).
++HKR,,UserModeDriverName,%REG_MULTI_SZ%,"<>",AppleAgxRenderAdmissionUmd.dll,AppleAgxRenderAdmissionUmd.dll,AppleAgxRenderAdmissionUmd.dll
++; P42: the 32-bit D3D9 slot stays "<>" (D3D9On12 on the D3D12 entry, as the native names)
++HKR,,UserModeDriverNameWow,%REG_MULTI_SZ%,"<>",AppleAgxRenderAdmissionUmd32.dll,AppleAgxRenderAdmissionUmd32.dll,AppleAgxRenderAdmissionUmd32.dll
++; OpenGLFlags bit 0 is set for compatibility. EXP1194: bit 1 is set -- the
++; runtime then does not call the ICD's finish before its swap-buffers
++; ("Loading an OpenGL Installable Client Driver"). The ICD's swap flushes
++; the frame and presents through a GPU copy whose completion its present
++; ring waits for (EXP1191 winsys framebuffer), so the runtime's glFinish only
++; serialized CPU and GPU every frame (EXP1192/1193).
++; EXP1160: dxgkrnl reads OpenGLVersion/Flags and their Wow values only when
++; the native OpenGLDriverName exists, and opengl32.dll declines an ICD
++; reported as version 0. No ARM64 ICD is built yet: native callers fail to
++; load the named file and keep Microsoft's GDI Generic implementation.
++HKR,,OpenGLDriverName,%REG_SZ%,%13%\AppleAgxOpenGL64.dll
++HKR,,OpenGLVersion,%REG_DWORD%,1
++HKR,,OpenGLFlags,%REG_DWORD%,3
++; M2: VidMm (dxgmms2) gives an allocation 64 KB system-memory pages only when
++; the adapter opts in through MemoryManager\Supports64KBPages and the KMD
++; reports DXGK_GPUMMUCAPS.SysMem64KBPageSupported; AGX maps 16 KiB pages, so
++; GPU-accessed system memory needs those 64 KiB contiguous chunks
++; (investigation/analysis/M2-vidmm-64k-decision.md).
++HKR,MemoryManager,Supports64KBPages,%REG_DWORD%,1
++
++[SourceDisksNames]
++1=%DiskName%,,,
++
++[SourceDisksFiles]
++AppleAgxRenderAdmission.sys=1
++AppleAgxRenderAdmissionUmd.dll=1
++AppleAgxRenderAdmissionUmdArm64.dll=1
++AppleAgxRenderAdmissionUmdX64.dll=1
++AppleAgxRenderAdmissionUmd32.dll=1
++
++[Strings]
++ProviderName="Windows on Apple Silicon Project"
++ManufacturerName="Windows on Apple Silicon Project"
++DeviceName="Apple AGX clean WDDM render-admission experiment (NWOAS ARM64+x64+x86)"
++ServiceName="Apple AGX clean render-admission KMD"
++DiskName="Apple AGX clean render-admission package"
++REG_MULTI_SZ=0x00010000
++REG_SZ=0x00000000
++REG_DWORD=0x00010001

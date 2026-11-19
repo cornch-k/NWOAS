@@ -661,3 +661,26 @@ UMD 기록 풀이 (2758, Cinebench 프로세스, 시각 순서) [사실, 소스 
 | AppleAgxRenderAdmissionUmdX64.dll | 14093312 | `d0bf3c00a2358699f3d15040971ae2c5471778a00c915852cfaca097450fad74` |
 | AppleAgxRenderAdmission.arm64x.inf | 4290 | `6f9d076ce411978aada5f7853db52b04bfe05a20071f3bccfc0432be5e823fb0` |
 | appleagxrenderadmission.cat | 4112 | `e747c36ab8797f213da0ed11fa23aeed0f6af1a3b9fd049501b24c8d33863023` |
+
+## P42 (NWOAS-J274, 2026-11-20) — x86(WOW64) D3D UMD (판 2777)
+
+결론: **판 2777 = 2776(P40, 스위치 모두 꺼짐) + x86 UMD `AppleAgxRenderAdmissionUmd32.dll`(SysWOW64, `UserModeDriverNameWow`), INF `AppleAgxRenderAdmission.arm64xwow.inf`** [빌드만]. TopDown 기본값은 넣지 않았습니다(아침 시험 뒤 결정).
+
+| 바뀐 것 | 내용 |
+|---|---|
+| `umd/AppleAgxRenderAdmissionUmd.vcxproj` | `Release|Win32` 구성, Win32는 기본 호출 규약 Cdecl(WDK 도구 세트의 /Gz 기본값 때문에 런타임 라이브러리 이름이 맞지 않던 링크 오류) |
+| `umd/src/umd_draw_composer.c`, `umd_gpuva_windows.c` | 32비트에서 `UINT_PTR >> 32` 미정의 동작 → 64비트로 넓혀서, qsort 비교 함수 `__cdecl` (64비트 동작은 같음) |
+| `scripts/build-umd-x86-msbuild.ps1`(새), `AppleAgxRenderAdmission.arm64xwow.inf`(새) | x86 UMD 빌드, 설치 정의 |
+| `mesa/dxil/patches/c49-build-dxspv.ps1`, `mesa/scripts/configure-x86-nir.ps1` | x86 dxil-spirv, 교차 설정 파일·플랫폼 인자 |
+
+- 빌드(`build-p42.sh`, 실행 이름 j274g4t): 성공, 판 30.0.2777.0. 처음 두 번(j274g4r·g4s)은 위 x86 컴파일·링크 오류로 멈췄고 고친 뒤 통과, 실패한 중간물은 VM에서 지움. 결과물 `out/j274-full-20261120-0454-p42`, 차이 `P42-driver.diff`. InfVerif ERROR(1322) 4건(System32 3 + SysWOW64 1, 2772부터 있던 종류).
+
+| 파일 | 바이트 | sha256 |
+|---|---|---|
+| AppleAgxRenderAdmission.sys | 654096 | `f256dbc4249f5665ffae7d1bfe2c34aa0b6da201f5d3c69878c17de91c60f8cf` |
+| AppleAgxRenderAdmissionUmd.dll (ARM64X 전달) | 14848 | `6e7a375b2a738f1acbbca00edd7ee0a9b5156b189d01a38a71bc932bc90b404f` |
+| AppleAgxRenderAdmissionUmdArm64.dll | 13523456 | `c3e2a3d851da501703d32fa0b2e20d741c1acb2a4c1e1e74d14aa0d12c6130ac` |
+| AppleAgxRenderAdmissionUmdX64.dll | 14093312 | `fc1475acddb21827280b0025657225eba624653bec755db55cebe6e448977178` |
+| AppleAgxRenderAdmissionUmd32.dll (x86) | 13739520 | `5601111d01fdf721a3165668eb155667d4af9e1919e758641c273e53556b2a9a` |
+| AppleAgxRenderAdmission.arm64xwow.inf | 5248 | `2ea86858e37a3d6a86c129604e324a8d129e042cd6f161927e252ed27a74d193` |
+| appleagxrenderadmission.cat | 4637 | `bce86a72e4c9179c6d346d56d04cbba37f2807f7bcf892882c4360292fe844cf` |

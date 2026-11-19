@@ -1,0 +1,41 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "boot.bin",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/stage1/esp-4-1/boot.bin",
+   "bytes": 2097152,
+   "sha256": "80a13ca257fcf1d04676e08355b78ffec57cf82fbbbf3b3395f3524daa187e48"
+  },
+  {
+   "name": "cleanbp-local.sh",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/stage1/esp-4-1/cleanbp-local.sh",
+   "bytes": 1651,
+   "sha256": "d8756b7b00fe4aa7b2e4fd922a6727c87a1df1cdb32acab56b374d9043883327"
+  },
+  {
+   "name": "go1.sh",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/stage1/esp-4-1/go1.sh",
+   "bytes": 5148,
+   "sha256": "0adddcf3151fc5fc29e887b41fe0ed23c582303841f33373f8e6cd9810276909"
+  },
+  {
+   "name": "nwoas-payload.bin",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/stage1/esp-4-1/nwoas-payload.bin",
+   "bytes": 33669120,
+   "sha256": "26428b579ba117ae3b26c8d914461cc125b07140de1c1bf3393ff1a62fd0ab92"
+  },
+  {
+   "name": "nwoas-s264g.bin",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/stage1/esp-4-1/nwoas-s264g.bin",
+   "bytes": 2605078,
+   "sha256": "0191520648dfd5c18d7099b7bc7c2ad95c3aa6d0c21218dd1fb11843b35b6272"
+  },
+  {
+   "name": "stage1.bin",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/stage1/esp-4-1/stage1.bin",
+   "bytes": 2097152,
+   "sha256": "8879def896f3577da90ec3d87caef3a549d2b4a0d9b7d6d3ee87b88ee4914778"
+  }
+ ]
+}

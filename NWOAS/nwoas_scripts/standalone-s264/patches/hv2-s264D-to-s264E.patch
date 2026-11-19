@@ -1,0 +1,1461 @@
+diff -ruN a/src/afk.c b/src/afk.c
+--- a/src/afk.c	2026-11-20 03:38:56
++++ b/src/afk.c	2026-11-20 03:38:56
+@@ -13,6 +13,9 @@
+ 
+ #include "dcp/parser.h"
+ 
++/* NWOAS S264E: upper bound of every blocking wait for the coprocessor */
++#define AFK_WAIT_US (10 * USEC_PER_SEC)
++
+ struct afk_rb_hdr {
+     u32 bufsz;
+     u32 unk;
+@@ -202,9 +205,15 @@
+     int ret;
+     struct rtkit_message msg;
+ 
+-    while ((ret = rtkit_recv(afk->rtk, &msg)) == 0)
++    u64 to = block ? timeout_calculate(AFK_WAIT_US) : 0; /* NWOAS S264E: blocking wait bounded */
++    while ((ret = rtkit_recv(afk->rtk, &msg)) == 0) {
+         if (!block)
+             break;
++        if (timeout_expired(to)) {
++            printf("EPIC: timeout waiting for a message (endpoint 0x%02x)\n", endpoint);
++            return -1;
++        }
++    }
+ 
+     if (ret < 0) {
+         printf("EPIC: rtkit_recv failed!\n");
+@@ -846,13 +855,20 @@
+     struct afk_qe *rmsg;
+     struct epic_cmd *rcmd;
+ 
++    u64 cmd_to = timeout_calculate(AFK_WAIT_US); /* NWOAS S264E: bounded */
+     while (true) {
+         ret = afk_epic_work(epic->afk, epic->ep);
+         if (ret < 0) {
+             sync_ret = ret;
+             goto out_release;
+-        } else if (ret != EPIC_DATA_READY)
++        } else if (ret != EPIC_DATA_READY) {
++            if (timeout_expired(cmd_to)) {
++                printf("EPIC: timeout waiting for the command reply\n");
++                sync_ret = -1;
++                goto out_release;
++            }
+             continue;
++        }
+         // will not block
+         ret = afk_epic_rx(epic, &rmsg);
+         if (ret < 0) {
+@@ -1048,12 +1064,17 @@
+ 
+     /* consume messages for other endpoints, syslog or ioreport might be noisy
+      * at startup */
++    u64 ann_to = timeout_calculate(AFK_WAIT_US); /* NWOAS S264E: bounded */
+     while (1) {
+         int ret = afk_epic_work(epic->afk, epic->ep);
+         if (ret < 0)
+             return ret;
+         if (ret == EPIC_DATA_READY)
+             break;
++        if (timeout_expired(ann_to)) {
++            printf("EPIC: timeout waiting for the service announce\n");
++            return -1;
++        }
+     }
+ 
+     u64 timeout = timeout_calculate(500000);
+diff -ruN a/src/nwoas_s264.c b/src/nwoas_s264.c
+--- a/src/nwoas_s264.c	2026-11-20 03:38:56
++++ b/src/nwoas_s264.c	2026-11-20 03:38:56
+@@ -61,8 +61,9 @@
+ static struct s264_inputs s264_in;
+ static u64 s264_carve[2 * 64];
+ static struct s264_wifi_page s264_wifi;
+-static struct s264w s264w_drv; /* s264D: NWOAS_WIFI=1 driver */
++static struct s264w s264w_drv; /* s264D: NWOAS_WIFI=1 driver (s264E: every mode) */
+ static bool s264w_on;
++static struct s264_bt_page s264_bt; /* s264E: bt-s261 control page data */
+ static bool s264_launched;
+ 
+ /* --------------------------------------------------------------- C hooks */
+@@ -410,6 +411,48 @@
+     return true;
+ }
+ 
++/* s264E: bt-s261 control page (nwoas_bt_s261.py bt_hook_read / bt_hook_write) */
++static bool s264_hook_bt(struct exc_info *ctx, u64 addr, u64 *val, bool write, int width)
++{
++    UNUSED(ctx);
++    u32 off = (u32)(addr - 0x348004000ULL);
++    if (write) {
++        nwoas_s264_cnt.wifi_writes++;
++        /* CMD (ensure may power the whole chip) and RESET (FLR, 110 ms): as under the proxy, the
++         * other CPUs are rendezvoused and the time is hidden (see s264_hook_wifi) */
++        bool longw = off == 0x10 || off == 0x40;
++        u64 t0 = 0;
++        if (longw) {
++            hv_rendezvous();
++            t0 = mrs(CNTPCT_EL0);
++        }
++        hv_wdt_suspend();
++        s264w_bt_hook_write(&s264w_drv, off, val[0], width);
++        hv_wdt_resume();
++        if (longw)
++            hv_add_time(-(s64)(mrs(CNTPCT_EL0) - t0));
++    } else {
++        nwoas_s264_cnt.wifi_reads++;
++        val[0] = s264w_bt_hook_read(&s264w_drv, off, width);
++    }
++    return true;
++}
++
++/* s264E: bt-s261-bar-fence (all-ones / dropped while the chip may not decode the fn1 BARs) */
++static bool s264_hook_bt_fence(struct exc_info *ctx, u64 addr, u64 *val, bool write, int width)
++{
++    UNUSED(ctx);
++    if (write) {
++        s264w_fence_write(&s264w_drv, addr, width);
++    } else {
++        u64 v = s264w_fence_read(&s264w_drv, addr, width);
++        int n = width > 3 ? (1 << width) / 8 : 1;
++        for (int k = 0; k < n; k++)
++            val[k] = v;
++    }
++    return true;
++}
++
+ static hv_hook_t *s264_hook_fn(u32 id)
+ {
+     switch (id) {
+@@ -425,6 +468,10 @@
+             return s264_hook_nvme;
+         case S264_HOOK_WIFI_CTL:
+             return s264_hook_wifi;
++        case S264_HOOK_BT_CTL:
++            return s264_hook_bt;
++        case S264_HOOK_BT_FENCE:
++            return s264_hook_bt_fence;
+     }
+     return NULL;
+ }
+@@ -670,7 +717,7 @@
+ static void s264w_nop(void)
+ {
+ }
+-/* SMC: Python alarm 20 s -> smc_set_deadline_us (smc_work only; RTKit boot/quiesce: unbounded) */
++/* SMC: Python alarm 20 s -> smc_set_deadline_us (smc_work); RTKit boot/quiesce 10 s (rtkit.c) */
+ static int s264w_smc_start(void)
+ {
+     smc_set_deadline_us(20000000);
+@@ -717,11 +764,32 @@
+ {
+     udelay(us);
+ }
++static bool s264_hook_bt_fence(struct exc_info *ctx, u64 addr, u64 *val, bool write, int width);
++static void s264_tlbi(void);
++/* s264E: hv.add_tracer / del_tracer(bt-s261-bar-fence) over both fn1 BARs; underneath is the
++ * BYPASS (software) map of the plan (op_map_sw) */
++static void s264w_bar_fence(int on)
++{
++    /* stage-2 tables change: as under the proxy (every hook rendezvoused), no other vCPU walks
++     * them meanwhile (no-op when no CPU is in the guest, e.g. at launch or after a CMD write) */
++    hv_rendezvous();
++    if (on) {
++        hv_map_hook(0x6e0900000ULL, s264_hook_bt_fence, 0x8000);
++        hv_map_hook(0x6e0c00000ULL, s264_hook_bt_fence, 0x400000);
++    } else {
++        hv_map(0x6e0900000ULL, 0x6e0900000ULL, 0x8000, 1);
++        hv_map(0x6e0c00000ULL, 0x6e0c00000ULL, 0x400000, 1);
++    }
++}
++static void s264w_pt_update(void)
++{
++    s264_tlbi(); /* hv.pt_update(): the new mapping is visible before the trapped access returns */
++}
+ static const struct s264w_io s264w_hw = {s264w_rd32,      s264w_wr32,         s264w_exc_count,
+                                          s264w_set_guard, s264w_sleep,        s264w_now,
+                                          s264w_nop,       s264w_smc_start,    s264w_smc_key_info,
+                                          s264w_smc_write32, s264w_smc_stop,   s264w_log,
+-                                         s264w_pace};
++                                         s264w_pace,      s264w_bar_fence,    s264w_pt_update};
+ 
+ static void do_msr(u32 id, u64 v)
+ {
+@@ -909,9 +977,11 @@
+                             step_result(o->id, S264_ST_FAIL, 0);
+                             return -(1000 + (int)i);
+                         }
+-                        if (o->d) {
+-                            /* s264D: wifi_module.py NWOAS_WIFI=1 (facts again on the live ADT, then
+-                             * boot_force_off; a failure stops the launch like --strict-init) */
++                        {
++                            /* s264D/E: wifi_module.py (d bit0 = NWOAS_WIFI=1) or bt_module.py (bit1,
++                             * bit2 = NWOAS_BT=1, bit3 = no fence on the Wi-Fi chip reset).  Facts
++                             * again on the live ADT; a failure stops the launch like --strict-init.
++                             * The driver serves the pages in every mode (disabled = no hardware). */
+                             static struct s264w_facts wf;
+                             u32 wr = (u32)s264w_facts_from_adt((const u8 *)s264_in.adt,
+                                                                s264_in.adt_size, &wf);
+@@ -921,18 +991,32 @@
+                                 step_result(o->id, S264_ST_FAIL, wr);
+                                 return -(1000 + (int)i);
+                             }
+-                            s264w_init(&s264w_drv, &s264w_hw, &wf, &s264_wifi, true);
+-                            int br = s264w_boot_force_off(&s264w_drv);
+-                            v = (u64)br;
+-                            if (br) {
+-                                step_result(o->id, S264_ST_FAIL, 0x100 | (u64)br);
+-                                return -(1000 + (int)i);
++                            bool won = o->d & 1, s261 = o->d & 2, bton = o->d & 4;
++                            s264w_init(&s264w_drv, &s264w_hw, &wf, &s264_wifi, won);
++                            if (s261) {
++                                int br = s264_bt_page_init((const u8 *)s264_in.adt, s264_in.adt_size,
++                                                           &s264_wifi, &s264_bt, bton);
++                                if (br) {
++                                    step_result(o->id, S264_ST_FAIL, 0x200 | (u64)br);
++                                    return -(1000 + (int)i);
++                                }
++                                s264w_bt_init(&s264w_drv, &s264_bt, bton);
+                             }
++                            if (won) {
++                                int fr = s264w_boot_force_off(&s264w_drv);
++                                v = (u64)fr;
++                                if (fr) {
++                                    step_result(o->id, S264_ST_FAIL, 0x100 | (u64)fr);
++                                    return -(1000 + (int)i);
++                                }
++                            }
++                            if (s261)
++                                s264w_fence_install(&s264w_drv, !(o->d & 8));
+                             s264w_on = true;
+-                            printf("[s259] BOOT NWOAS_WIFI=1 (S264D C): control page HOOK armed\n");
+-                            break;
++                            printf("[s259] BOOT NWOAS_WIFI=%d%s (S264E C): control page%s HOOK armed\n",
++                                   won ? 1 : 0, s261 ? (bton ? " NWOAS_BT=1" : " NWOAS_BT=0") : "",
++                                   s261 ? "s + fn1 BAR fence (closed)" : "");
+                         }
+-                        printf("[s259] BOOT NWOAS_WIFI=0 (S264 C): control page DISABLED\n");
+                         break;
+                     case S264_STEP_WRITE_ADT:
+                         memcpy((void *)o->a, pl->adt, pl->adt_len);
+diff -ruN a/src/nwoas_s264_plan.c b/src/nwoas_s264_plan.c
+--- a/src/nwoas_s264_plan.c	2026-11-20 03:38:56
++++ b/src/nwoas_s264_plan.c	2026-11-20 03:38:56
+@@ -558,7 +558,7 @@
+     c->version = S264_VERSION;
+     c->size = sizeof(*c);
+     c->flags = S264_CFG_F_DEFAULT;
+-    c->payload_size = 33669120; /* fw-wifi-s259 payload, agxdcp-s259-guest-test.sh:116 */
++    c->payload_size = 33669120; /* fw-wifi-s259 / fw-bt-s261 payload (same size), agxdcp-s268:128 */
+     c->entry_offset = 0x800;
+     c->py_heap_size = 768ULL << 20;
+     c->m1n1_heap_reserve = 128ULL << 20;
+@@ -576,8 +576,8 @@
+     c->agx_dcp_latch_us = 0;
+     c->link_lbas = 0;               /* NS1 only */
+     c->nvme_qd = 32ULL | (1ULL << 32); /* s264C: S268 default NWOAS_NVME_QD=32, QD_IRQ=1 */
+-    c->audio_prot = S264_AUDIO_PROT_SENSE; /* s264D: audio_module.py default (env unset); the
+-                                            * delivery wrappers pass NWOAS_AUDIO_PROT=moderate */
++    c->audio_prot = S264_AUDIO_PROT_MODERATE; /* s264E: NWOAS_AUDIO_PROT=moderate (user decision,
++                                               * = what every delivery wrapper passes) */
+ }
+ 
+ /* ------------------------------------------------------------------ s264C lower */
+@@ -697,6 +697,49 @@
+     return 0;
+ }
+ 
++int s264_bt_page_init(const u8 *adt, u32 len, const struct s264_wifi_page *wlan, struct s264_bt_page *b,
++                      bool bt_on)
++{
++    /* nwoas_bt_s261.py:140-148 bt_info, 180-196 _bt_regs; bt_module.py:103-107 checks */
++    memset(b, 0, sizeof(*b));
++    memcpy(b->board, wlan->board, sizeof(b->board));
++    int n = s264_adt_path(adt, len, "/arm-io/bluetooth");
++    if (n < 0)
++        return 40; /* adt['/arm-io/bluetooth'] raises (also with NWOAS_BT=0) */
++    u32 al = 0, cl = 0, fl = 0;
++    const u8 *a = s264_adt_prop(adt, len, n, "local-mac-address", &al);
++    const u8 *c = s264_adt_prop(adt, len, n, "bluetooth-taurus-calibration", &cl);
++    const u8 *f = s264_adt_prop(adt, len, n, "bluetooth-taurus-calibration-bf", &fl);
++    if (!c)
++        cl = 0;
++    if (!f)
++        fl = 0;
++    b->bd_ok = a && al == 6;
++    if (b->bd_ok) {
++        b->bdaddr_lo = rd32(a);
++        b->bdaddr_hi = (u32)a[4] | ((u32)a[5] << 8);
++    }
++    b->raw_cal_len = cl;
++    b->raw_calbf_len = fl;
++    if (cl <= 0x1800) {
++        b->cal_len = cl;
++        memcpy(b->cal, c, cl);
++    }
++    if (fl <= 0x1800) {
++        b->calbf_len = fl;
++        memcpy(b->calbf, f, fl);
++    }
++    if (!bt_on)
++        return 0;
++    if (!b->bd_ok)
++        return 41;
++    if (!(0 < fl && fl <= 0x1800))
++        return 43;
++    if (!(0 < cl && cl <= 0x1800))
++        return 42;
++    return 0;
++}
++
+ u32 s264_wifi_reg_read(struct s264_wifi_page *w, u32 off)
+ {
+     if (off == W_R_CFG_DATA || off == W_R_BAR0WIN) {
+@@ -1237,11 +1280,16 @@
+ 
+     /* ---- fixed guest windows must not overlap (audio_module.py:120-170, wifi_module.py:35-77) */
+     {
+-        const u64 win[3][2] = {{0x340000000ULL, 0x40000}, {0x348000000ULL, 0x4000},
+-                               {0x6e0000000ULL, 0x900000}};
++        /* s264E: + bt-s261/bt_module.py:41-92 (BT page, fn1 BARs) with the S261 payload */
++        const u64 win[6][2] = {{0x340000000ULL, 0x40000}, {0x348000000ULL, 0x4000},
++                               {0x6e0000000ULL, 0x900000}, {0x348004000ULL, 0x4000},
++                               {0x6e0900000ULL, 0x8000},   {0x6e0c00000ULL, 0x400000}};
++        bool s261 = (cfg->flags & S264_CFG_F_S261) && (cfg->flags & S264_CFG_F_WIFI0);
+         u32 rl = 0;
+         const u8 *r = s264_adt_prop(adt, alen, w.arm_io, "ranges", &rl);
+-        for (int i = 0; i < 2; i++) {
++        for (int i = 0; i < 4; i++) {
++            if (i == 2 || (i == 3 && !s261))
++                continue;
+             if (overlap(win[i][0], win[i][1], 0, 0x100000000ULL) ||
+                 overlap(win[i][0], win[i][1], L->ram_base, L->ba_mem_size_actual) ||
+                 overlap(win[i][0], win[i][1], 0x300000000ULL, 0x1000) ||
+@@ -1257,12 +1305,18 @@
+         }
+         if (overlap(win[0][0], win[0][1], win[1][0], win[1][1]))
+             return pl->err = S264_E_OVERLAP;
+-        bool bar_ok = false; /* wifi_module.py:70-74 */
+-        for (u32 o = 0; r && o + 24 <= rl; o += 24)
+-            bar_ok |= rd64(r + o + 8) <= win[2][0] &&
+-                      win[2][0] + win[2][1] <= rd64(r + o + 8) + rd64(r + o + 16);
+-        if (!bar_ok)
+-            return pl->err = S264_E_OVERLAP, pl->err_arg = 20, pl->err;
++        if (s261 && overlap(win[1][0], win[1][1], win[3][0], win[3][1]))
++            return pl->err = S264_E_OVERLAP, pl->err_arg = 23, pl->err;
++        for (int i = 2; i < (s261 ? 6 : 3); i++) {
++            if (i == 3)
++                continue;
++            bool bar_ok = false; /* wifi_module.py:70-74, bt_module.py:83-87 */
++            for (u32 o = 0; r && o + 24 <= rl; o += 24)
++                bar_ok |= rd64(r + o + 8) <= win[i][0] &&
++                          win[i][0] + win[i][1] <= rd64(r + o + 8) + rd64(r + o + 16);
++            if (!bar_ok)
++                return pl->err = S264_E_OVERLAP, pl->err_arg = 20 + (u32)(i == 2 ? 0 : i), pl->err;
++        }
+         for (u32 i = 0; i < in->n_carveouts; i++)
+             if (overlap(L->audio_buf, 0x48000, in->carveouts[2 * i], in->carveouts[2 * i + 1]) ||
+                 overlap(L->nvme_buf, 0x4000, in->carveouts[2 * i], in->carveouts[2 * i + 1]))
+@@ -1286,6 +1340,12 @@
+             wr = s264w_validate(&wf);
+         if (wr)
+             return pl->err = S264_E_WLAN, pl->err_arg = wr, pl->err;
++        if (cfg->flags & S264_CFG_F_S261) { /* bt_module.py:103-107 (only with NWOAS_BT=1) */
++            static struct s264_bt_page bp;
++            int br = s264_bt_page_init(adt, alen, &wp, &bp, cfg->flags & S264_CFG_F_BT_ON); /* env NWOAS_BT */
++            if (br)
++                return pl->err = S264_E_WLAN, pl->err_arg = (u32)br, pl->err;
++        }
+     }
+ 
+     /* ---- PMU (proxyclient m1n1/hw/pmu.py find_primary_pmu + reset_panic_counter) */
+@@ -1515,9 +1575,22 @@
+         op_step(pl, S264_STEP_AUDIO_B, L->audio_buf, L->audio_buf + 0x40000, cfg->audio_prot, b0_bad);
+     }
+     if (cfg->flags & S264_CFG_F_WIFI0) {
+-        op_step(pl, S264_STEP_WIFI, 0x348000000ULL, 0, 0x4000, (cfg->flags & S264_CFG_F_WIFI_ON) ? 1 : 0);
++        /* d: bit0 NWOAS_WIFI=1 (s264D), bit1 S261 (bt_module.py), bit2 NWOAS_BT=1,
++         * bit3 NWOAS_BT_FENCE_WIFI_RESET=0 (s264E) */
++        u64 wd = ((cfg->flags & S264_CFG_F_WIFI_ON) ? 1 : 0);
++        if (cfg->flags & S264_CFG_F_S261)
++            wd |= 2 | ((cfg->flags & S264_CFG_F_BT_ON) ? 4 : 0) | ((cfg->flags & S264_CFG_F_BT_NOFENCE_WR) ? 8 : 0);
++        op_step(pl, S264_STEP_WIFI, 0x348000000ULL, 0, 0x4000, wd);
+         op(pl, S264_OP_HOOK, S264_HOOK_WIFI_CTL, 0x348000000ULL, 0, 0x4000, S264_HOOK_RW);
++        if (cfg->flags & S264_CFG_F_S261)
++            op(pl, S264_OP_HOOK, S264_HOOK_BT_CTL, 0x348004000ULL, 0, 0x4000, S264_HOOK_RW);
+         op_map_sw(pl, 0x6e0000000ULL, 0x6e0000000ULL, 0x900000);
++        if (cfg->flags & S264_CFG_F_S261) { /* bt_module.py:118-130: fn1 BARs BYPASS, then the fence */
++            op_map_sw(pl, 0x6e0900000ULL, 0x6e0900000ULL, 0x8000);
++            op_map_sw(pl, 0x6e0c00000ULL, 0x6e0c00000ULL, 0x400000);
++            op(pl, S264_OP_HOOK, S264_HOOK_BT_FENCE, 0x6e0900000ULL, 0, 0x8000, S264_HOOK_RW);
++            op(pl, S264_OP_HOOK, S264_HOOK_BT_FENCE, 0x6e0c00000ULL, 0, 0x400000, S264_HOOK_RW);
++        }
+     }
+     /* s264C: nvmeqd-s262/nvmeqd_module.py (run LAST of the launcher modules, before hv.start):
+      * p.nwoas_nvme_fastpath(24, depth, flags).  S268 default: NWOAS_NVME_QD=32, QD_IRQ=1 (F_IRQ),
+diff -ruN a/src/nwoas_s264_plan.h b/src/nwoas_s264_plan.h
+--- a/src/nwoas_s264_plan.h	2026-11-20 03:38:56
++++ b/src/nwoas_s264_plan.h	2026-11-20 03:38:56
+@@ -77,6 +77,8 @@
+     S264_HOOK_CPUSTATE,  /* R,  cpu_state_rh (runtime only)  hv/__init__.py:2043-2054 */
+     S264_HOOK_NVME,      /* RW, s93-nvme-ecam/bar after S230 fast path owns them */
+     S264_HOOK_WIFI_CTL,  /* RW, wifi-s259-ctl control page, NWOAS_WIFI=0 contents */
++    S264_HOOK_BT_CTL,    /* RW, s264E: bt-s261-ctl control page (bt-s261/bt_module.py) */
++    S264_HOOK_BT_FENCE,  /* RW, s264E: bt-s261-bar-fence over the fn1 BARs (all-ones / dropped) */
+ };
+ #define S264_HOOK_R  1
+ #define S264_HOOK_W  2
+@@ -150,10 +152,14 @@
+ #define S264_CFG_F_AUDIO_B   (1u << 10) /* s264D: sound stage B/S (needs AUDIO_A), stage in audio_prot */
+ #define S264_CFG_F_WIFI_ON   (1u << 11) /* s264D: NWOAS_WIFI=1 (needs WIFI0 = the control page): boot
+                                          * force-off + power up/down inside the control page hook */
++#define S264_CFG_F_S261      (1u << 12) /* s264E: S261 payload: bt_module.py instead of wifi_module.py
++                                         * (BT control page, fn1 BAR emulation + fence, BT checks) */
++#define S264_CFG_F_BT_ON     (1u << 13) /* s264E: NWOAS_BT=1 (with S261 and WIFI_ON) */
++#define S264_CFG_F_BT_NOFENCE_WR (1u << 14) /* s264E: NWOAS_BT_FENCE_WIFI_RESET=0 */
+ #define S264_CFG_F_DEFAULT                                                                         \
+     (S264_CFG_F_AGX | S264_CFG_F_NVME | S264_CFG_F_AUDIO_A | S264_CFG_F_WIFI0 | S264_CFG_F_PMU |   \
+      S264_CFG_F_FB | S264_CFG_F_SPLIT | S264_CFG_F_EXC_LOCAL | S264_CFG_F_NVME_QD |                \
+-     S264_CFG_F_AUDIO_B | S264_CFG_F_WIFI_ON)
++     S264_CFG_F_AUDIO_B | S264_CFG_F_WIFI_ON | S264_CFG_F_S261 | S264_CFG_F_BT_ON)
+ 
+ struct s264_config {
+     u32 magic;   /* S264_MAGIC */
+@@ -287,6 +293,16 @@
+     u32 cal[0x1000 / 4];
+ };
+ int s264_wifi_page_init(const u8 *adt, u32 len, struct s264_wifi_page *w);
++/* s264E: bt-s261/nwoas_bt_s261.py bt_info + WifiBtS261._bt_regs (BD address never logged) */
++struct s264_bt_page {
++    u32 bdaddr_lo, bdaddr_hi, cal_len, calbf_len;
++    u32 board[4];
++    u32 cal[0x1800 / 4], calbf[0x1800 / 4];
++    u32 bd_ok, raw_cal_len, raw_calbf_len;
++};
++/* 0, or the refusal of bt_module.py when NWOAS_BT=1: 41 no BD address, 42 cal, 43 cal-bf, 40 node */
++int s264_bt_page_init(const u8 *adt, u32 len, const struct s264_wifi_page *wlan, struct s264_bt_page *b,
++                      bool bt_on);
+ u32 s264_wifi_reg_read(struct s264_wifi_page *w, u32 off);
+ void s264_wifi_reg_write(struct s264_wifi_page *w, u32 off, u32 val);
+ 
+diff -ruN a/src/nwoas_s264_wifi.c b/src/nwoas_s264_wifi.c
+--- a/src/nwoas_s264_wifi.c	2026-11-20 03:38:56
++++ b/src/nwoas_s264_wifi.c	2026-11-20 03:38:56
+@@ -245,7 +245,8 @@
+ {
+     struct s264w_up *up = &w->up;
+     const struct s264w_facts *f = &w->f;
+-    bool cmd = a == ecam_addr(f->ecam, 1, 0, 0, 0x04) || a == ecam_addr(f->ecam, 0, 0, 0, 0x04);
++    bool cmd = a == ecam_addr(f->ecam, 1, 0, 0, 0x04) || a == ecam_addr(f->ecam, 0, 0, 0, 0x04) ||
++               (up->fn1_cmd_guard && a == ecam_addr(f->ecam, 1, 0, 1, 0x04));
+     if (cmd && (v & CMD_BME) && !up->bme_ok)
+         return X_REF;
+     if (in_allowlist(w, a)) {
+@@ -535,12 +536,20 @@
+             r32(w, a); /* 'restored' */
+             i += 1;
+         }
+-        if (fn == 0 && n < 6)
+-            up->bars[n++] = bar;
++        if (n < 6) {
++            if (fn == 0)
++                up->bars[n] = bar;
++            else
++                up->bars1[n] = bar;
++            n++;
++        }
+     }
+     if (fn == 0) {
+         up->n_bars = n;
+         up->bars_ok = 1;
++    } else {
++        up->n_bars1 = n;
++        up->bars1_ok = 1;
+     }
+     return X_OK;
+ }
+@@ -788,7 +797,7 @@
+ }
+ 
+ /* ---- W:390-492 _bring_up */
+-static int bring_up(struct s264w *w)
++static int bring_up_s259(struct s264w *w)
+ {
+     struct s264w_up *up = &w->up;
+     const struct s264w_facts *f = &w->f;
+@@ -907,13 +916,34 @@
+     return X_OK;
+ }
+ 
++static void fence(struct s264w *w, bool on, const char *why, bool now);
++static void bt_setup_guarded(struct s264w *w);
++
++/* s264E: nwoas_bt_s261.py:281-287 WifiBtS261._bring_up */
++static int bring_up(struct s264w *w)
++{
++    fence(w, true, "chip power up", true);
++    if (w->bt_enabled)
++        w->bt_state = 0; /* BT_OFF */
++    int r = bring_up_s259(w);
++    if (r)
++        return r;
++    w->epoch++;
++    if (w->bt_enabled)
++        bt_setup_guarded(w);
++    return X_OK;
++}
++
+ static void fail_cleanup(struct s264w *w)
+ {
++    fence(w, true, "bring-up failed", true); /* s264E: nwoas_bt_s261.py:430-434 */
+     w->state = ST_FAILED;
+     WLOGF("FAIL error %u", w->error);
+     bool down;
+     power_off(w, "bring-up failed", true, &down);
+     w->have_up = false;
++    if (w->bt_enabled)
++        w->bt_state = 0;
+ }
+ 
+ static void power_up(struct s264w *w)
+@@ -959,8 +989,20 @@
+               (unsigned long)(dt / 1000 % 1000));
+ }
+ 
++static void power_down_s259(struct s264w *w);
+ static void power_down(struct s264w *w)
+ {
++    /* s264E: nwoas_bt_s261.py:423-428 */
++    fence(w, true, "chip power down (CMD_POWER_DOWN)", true);
++    power_down_s259(w);
++    if (w->bt_enabled && w->state != ST_UP) {
++        w->bt_state = 0;
++        wlog(w, "OFF fn1 (chip power down: CMD_POWER_DOWN)");
++    }
++}
++
++static void power_down_s259(struct s264w *w)
++{
+     /* W:538-550 */
+     if (w->state != ST_UP || !w->have_up) {
+         WLOGF("power down (CMD_POWER_DOWN): state %u, nothing powered", w->state);
+@@ -1026,6 +1068,9 @@
+ /* returns false when Python would raise out of reg_write (hook_write -> STATE_FAILED / ERROR) */
+ static bool cfg_write(struct s264w *w, u32 off, u32 val)
+ {
++    /* s264E: nwoas_bt_s261.py:275-279 (Wi-Fi driver LinkCtl write = chip reset bracket) */
++    if (w->fence_on_wifi_reset && off == EP_LINKCTL_CFG && w->bt_enabled)
++        fence(w, true, "Wi-Fi chip reset bracket (fn0 0xBC write)", true);
+     w->cfg_writes++;
+     if (w->state != ST_UP || !w->have_up) {
+         w->cfg_err = CFG_NOT_UP;
+@@ -1206,6 +1251,732 @@
+     }
+ }
+ 
++/* ================================================================== s264E: WifiBtS261
++ * B = bt-s261/nwoas_bt_s261.py */
++#define BT_OFF 0
++#define BT_UP 1
++#define BT_QUIET 2
++#define BT_FAILED 3
++#define BT_CMD_ENSURE 1
++#define BT_CMD_QUIET 2
++enum {
++    BE_NONE = 0, BE_DISABLED, BE_CHIP_DOWN, BE_NO_FN1, BE_FN1_BARS, BE_FN1_LAYOUT, BE_WINDOW, BE_DEVCTL,
++    BE_CMD, BE_PORT1_CHANGED, BE_ERROR, BE_WIFI_DISABLED, BE_FN1_ASSIGNED
++};
++#define RESET_NONE 0
++#define RESET_OK 1
++#define RESET_NO_FLR 2
++#define RESET_MISMATCH 3
++#define RESET_NOT_UP 4
++#define RESET_EXCEPTION 5
++#define ARM_NONE 0
++#define ARM_OK 1
++#define ARM_STALE 2
++#define ARM_NOT_UP 3
++#define ARM_BARS 4
++#define BT_MAGIC 0x5442574eu
++#define B_R_BAR0 0x2c
++#define B_R_BAR2 0x30
++#define B_R_CHIP_STATE 0x34
++#define B_R_DEVCTL 0x38
++#define B_R_EPCMD 0x3c
++#define B_R_RESET 0x40
++#define B_R_RESET_COUNT 0x44
++#define B_R_EPOCH 0x48
++#define B_R_RID2SID 0x4c
++#define B_R_CMD_COUNT 0x50
++#define B_R_WINDOW 0x54
++#define B_R_DEVCAP 0x58
++#define B_R_MSICAP 0x5c
++#define B_R_GEN 0x80
++#define B_R_ARM 0x84
++#define B_R_BDADDR_LO 0x60
++#define B_R_BDADDR_HI 0x64
++#define B_R_CAL_LEN 0x68
++#define B_R_CALBF_LEN 0x6c
++#define B_R_BOARD 0x70
++#define B_CAL_OFF 0x1000
++#define B_CALBF_OFF 0x2800
++#define FN1_BAR0_BUS 0xe0900000u
++#define FN1_BAR0_SIZE 0x8000u
++#define FN1_BAR2_BUS 0xe0c00000u
++#define FN1_BAR2_SIZE 0x400000u
++#define RP_WIN_S259 0xe080e000u
++#define RP_WIN_S261 0xe0f0e000u
++#define FN1_SUBSYS_CTRL 0x88
++#define SUBSYS_BITS ((1u << 16) | (1u << 19))
++#define DEVCTL_FLR (1u << 15)
++#define DEVCAP_FLR (1u << 28)
++#define MSI_ENABLE (1u << 16)
++#define MSI_MME (0x7u << 20)
++#define MSI_64BIT (1u << 23)
++#define MSI_ADDR_MIN 0x00100000u
++#define MSI_ADDR_MAX 0xbff00000u
++#define FN1_CMD_QUIET (CMD_MEM | CMD_INTX_DIS)
++#define PORT_RID2SID 0x828
++#define RID2SID_VALID (1u << 31)
++
++static const u32 fn1_window_regs[5] = {0x70, 0x74, 0x78, 0x80, 0x84};
++
++static u64 ecfg1(struct s264w *w, u32 off)
++{
++    return ecam_addr(w->f.ecam, 1, 0, 1, off);
++}
++static void allow(struct s264w *w, u64 a)
++{
++    if (w->up.n_late < sizeof(w->up.late) / sizeof(w->up.late[0]))
++        w->up.late[w->up.n_late++] = a;
++}
++
++/* B:210-230 _fence */
++static void fence(struct s264w *w, bool on, const char *why, bool now)
++{
++    if (!w->fence_installed)
++        return; /* self.hv is None */
++    if (on && !w->bt_fenced) {
++        IO->bar_fence(1);
++        w->bt_fenced = true;
++    } else if (!on && w->bt_fenced) {
++        IO->bar_fence(0);
++        w->bt_fenced = false;
++    }
++    if (on) {
++        w->bt_gen++;
++        w->bt_arm_result = ARM_NONE;
++    }
++    if (now)
++        IO->pt_update();
++    WLOGF("fence %s (%s) gen=%u", on ? "ON" : "OFF", why, w->bt_gen);
++}
++
++void s264w_fence_install(struct s264w *w, bool fence_on_wifi_reset)
++{
++    /* B:205-208 */
++    w->fence_installed = true;
++    w->fence_on_wifi_reset = fence_on_wifi_reset;
++    fence(w, true, "boot", false);
++}
++
++u64 s264w_fence_read(struct s264w *w, u64 addr, int width)
++{
++    w->fence_reads++;
++    if (w->fence_reads <= 8 || w->fence_reads % 1000 == 0)
++        WLOGF("fence read 0x%lx/%d -> all-ones (count %u, gen %u)", (unsigned long)addr, 8 << width,
++              w->fence_reads, w->bt_gen);
++    return width >= 3 ? ~0ULL : (1ULL << (8 << width)) - 1;
++}
++
++void s264w_fence_write(struct s264w *w, u64 addr, int width)
++{
++    w->fence_writes++;
++    if (w->fence_writes <= 8 || w->fence_writes % 1000 == 0)
++        WLOGF("fence write 0x%lx/%d dropped (count %u, gen %u)", (unsigned long)addr, 8 << width,
++              w->fence_writes, w->bt_gen);
++}
++
++/* B:310-320 _walk_caps (fn1) */
++static void walk_caps(struct s264w *w, u32 *pcie, u32 *msi, u32 *msi64)
++{
++    *pcie = *msi = *msi64 = 0;
++    u32 p = r32(w, ecfg1(w, 0x34)) & 0xfc, guard = 0;
++    while (0x40 <= p && p < 0x100 && guard < 48) {
++        u32 h = r32(w, ecfg1(w, p));
++        u32 cid = h & 0xff;
++        if (cid == 0x10 && !*pcie) {
++            *pcie = p;
++        } else if (cid == 0x05 && !*msi) {
++            *msi = p;
++            *msi64 = (h & MSI_64BIT) ? 1 : 0;
++        }
++        p = (h >> 8) & 0xfc;
++        guard++;
++    }
++}
++
++static bool port1_same(struct s264w *w)
++{
++    struct s264w_snap after;
++    port1_snapshot(w, &after);
++    return w->up.have_p1before ? snap_eq(&after, &w->up.p1before) : false;
++}
++
++/* B:322-403 _bt_setup */
++static int bt_setup(struct s264w *w)
++{
++    struct s264w_up *up = &w->up;
++    int r;
++    w->bt_ids = up->fn1_id;
++    if (up->fn1_id != BT_ID)
++        FAIL(BE_NO_FN1);
++    u64 s0 = 0, s2 = 0;
++    u32 t0 = 0, t2 = 0;
++    bool h0 = false, h2 = false;
++    for (u32 i = 0; up->bars1_ok && i < up->n_bars1; i++) {
++        if (up->bars1[i].bar == 0)
++            s0 = up->bars1[i].size, t0 = up->bars1[i].type, h0 = true;
++        if (up->bars1[i].bar == 2)
++            s2 = up->bars1[i].size, t2 = up->bars1[i].type, h2 = true;
++    }
++    if (!h0 || !h2)
++        FAIL(BE_FN1_LAYOUT);
++    if (s0 != FN1_BAR0_SIZE || s2 != FN1_BAR2_SIZE || t0 != 3 || t2 != 3)
++        FAIL(BE_FN1_LAYOUT);
++    allow(w, ecfg1(w, 0x04));
++    allow(w, ecfg1(w, FN1_SUBSYS_CTRL));
++    for (u32 i = 0; i < 5; i++)
++        allow(w, ecfg1(w, fn1_window_regs[i]));
++    up->fn1_cmd_guard = true;
++    static const u32 so[5] = {0x04, 0x10, 0x14, 0x18, 0x1c};
++    u32 sv[5];
++    u32 b = g_begin(w);
++    for (u32 i = 0; i < 5; i++)
++        sv[i] = r32(w, ecfg1(w, so[i]));
++    u32 pcie, msi, msi64;
++    walk_caps(w, &pcie, &msi, &msi64);
++    if (g_end(w, b))
++        return X_RT;
++    if ((sv[0] & 0x7) || (sv[1] & ~0xfu) || sv[2] || (sv[3] & ~0xfu) || sv[4])
++        FAIL(BE_FN1_ASSIGNED);
++    if (!(0x40 <= pcie && pcie <= 0xf0))
++        FAIL(BE_DEVCTL);
++    w->cap_pcie = pcie;
++    w->cap_msi = msi;
++    w->cap_msi64 = msi64;
++    w->have_caps = 1;
++    allow(w, ecfg1(w, pcie + 8));
++    allow(w, ecfg1(w, pcie + 0x10));
++    if (msi)
++        for (u32 o = msi; o < msi + 0x10; o += 4)
++            allow(w, ecfg1(w, o));
++    up->bt_touched = true;
++    /* fn1 BARs */
++    b = g_begin(w);
++    if ((r = w32(w, ecfg1(w, 0x10), FN1_BAR0_BUS)) || (r = w32(w, ecfg1(w, 0x14), 0)) ||
++        (r = w32(w, ecfg1(w, 0x18), FN1_BAR2_BUS)) || (r = w32(w, ecfg1(w, 0x1c), 0))) {
++        g_abort(w);
++        return r;
++    }
++    u32 rb[4];
++    for (u32 i = 0; i < 4; i++)
++        rb[i] = r32(w, ecfg1(w, 0x10 + 4 * i));
++    if (g_end(w, b))
++        return X_RT;
++    if ((rb[0] & ~0xfu) != FN1_BAR0_BUS || rb[1] || (rb[2] & ~0xfu) != FN1_BAR2_BUS || rb[3])
++        FAIL(BE_FN1_BARS);
++    /* root port window */
++    b = g_begin(w);
++    if ((r = w32(w, rcfg(w, 0x20), RP_WIN_S261))) {
++        g_abort(w);
++        return r;
++    }
++    w->bt_window = r32(w, rcfg(w, 0x20));
++    if (g_end(w, b))
++        return X_RT;
++    if (w->bt_window != RP_WIN_S261)
++        FAIL(BE_WINDOW);
++    /* fn1 DevCtl */
++    b = g_begin(w);
++    u64 dc = ecfg1(w, pcie + 8);
++    u32 old = r32(w, dc) & 0xffff;
++    if ((r = w32(w, dc, old & ~DEVCTL_NS_RO & ~DEVCTL_FLR))) {
++        g_abort(w);
++        return r;
++    }
++    u32 nw = r32(w, dc) & 0xffff;
++    w->bt_devcap = r32(w, ecfg1(w, pcie + 4));
++    if (g_end(w, b))
++        return X_RT;
++    w->bt_devctl = nw;
++    if (nw & DEVCTL_NS_RO)
++        FAIL(BE_DEVCTL);
++    /* fn1 command */
++    b = g_begin(w);
++    if ((r = w32(w, ecfg1(w, 0x04), FN1_CMD_QUIET))) {
++        g_abort(w);
++        return r;
++    }
++    u32 cmd = r32(w, ecfg1(w, 0x04)) & 0xffff;
++    if (g_end(w, b))
++        return X_RT;
++    w->bt_epcmd = cmd;
++    if ((cmd & 0x407) != FN1_CMD_QUIET)
++        FAIL(BE_CMD);
++    /* RID2SID (read only) */
++    b = g_begin(w);
++    u32 r2s = 0;
++    for (u32 i = 0; i < 16; i++)
++        if (r32(w, w->f.port0 + PORT_RID2SID + 4 * i) & RID2SID_VALID)
++            r2s |= 1u << i;
++    g_end(w, b);
++    w->bt_rid2sid = r2s;
++    if (!port1_same(w))
++        FAIL(BE_PORT1_CHANGED);
++    return X_OK;
++}
++
++/* B:405-421 _bt_undo */
++static void bt_undo(struct s264w *w)
++{
++    if (!w->up.bt_touched)
++        return;
++    const u64 a[4] = {ecfg1(w, 0x04), ecfg1(w, 0x10), ecfg1(w, 0x18), rcfg(w, 0x20)};
++    const u32 v[4] = {0, 0, 0, RP_WIN_S259};
++    for (u32 i = 0; i < 4; i++) {
++        u32 b = g_begin(w);
++        if (w32(w, a[i], v[i]))
++            g_abort(w);
++        else
++            g_end(w, b);
++    }
++    w->bt_window = RP_WIN_S259;
++    wlog(w, "fn1 undo");
++}
++
++/* B:289-308 */
++static void bt_setup_guarded(struct s264w *w)
++{
++    int r = bt_setup(w);
++    if (r == X_OK) {
++        w->bt_state = BT_UP;
++        w->bt_error = 0;
++        w->bt_avail = 1;
++        WLOGF("READY fn1 ids=0x%x window=0x%x epcmd=0x%x devctl=0x%x flr_cap=%d msi_cap=0x%x "
++              "rid2sid_valid=0x%x epoch=%u",
++              w->bt_ids, w->bt_window, w->bt_epcmd, w->bt_devctl, (w->bt_devcap & DEVCAP_FLR) ? 1 : 0,
++              w->cap_msi, w->bt_rid2sid, w->epoch);
++    } else {
++        w->bt_state = BT_FAILED;
++        w->bt_error = r == X_FAIL ? w_fail : BE_ERROR;
++        WLOGF("FAIL fn1 error %u", w->bt_error);
++        bt_undo(w);
++    }
++}
++
++/* B:437-456 */
++static void bt_ensure(struct s264w *w)
++{
++    if (!w->bt_enabled)
++        return;
++    if (w->state == ST_OFF || w->state == ST_OFF_REQ) {
++        WLOGF("ensure: chip state %u -> S259 power up", w->state);
++        power_up(w);
++        if (w->state != ST_UP) {
++            w->bt_state = BT_FAILED;
++            w->bt_error = BE_CHIP_DOWN;
++        }
++        return;
++    }
++    if (w->state != ST_UP || !w->have_up) {
++        w->bt_state = BT_FAILED;
++        w->bt_error = BE_CHIP_DOWN;
++        WLOGF("ensure: chip failed (Wi-Fi state %u, error %u)", w->state, w->error);
++        return;
++    }
++    if (w->bt_state == BT_UP) {
++        wlog(w, "ensure: fn1 already up (no change)");
++    } else if (w->bt_state == BT_QUIET) {
++        w->bt_state = BT_UP;
++        wlog(w, "ensure: fn1 quiet -> up (bus master stays off until the driver sets it)");
++    } else {
++        bt_setup_guarded(w);
++    }
++}
++
++/* B:458-475 */
++static void bt_quiet(struct s264w *w)
++{
++    fence(w, true, "fn1 quiet (_PS3)", true);
++    if (w->bt_state != BT_UP || !w->have_up) {
++        WLOGF("quiet: fn1 state %u, nothing to do", w->bt_state);
++        return;
++    }
++    u32 b = g_begin(w);
++    int r = X_OK;
++    if (w->cap_msi) {
++        u64 a = ecfg1(w, w->cap_msi);
++        r = w32(w, a, r32(w, a) & ~(MSI_ENABLE | MSI_MME));
++    }
++    if (!r)
++        r = w32(w, ecfg1(w, 0x04), FN1_CMD_QUIET);
++    if (r) {
++        g_abort(w);
++        w->bt_state = BT_FAILED;
++        w->bt_error = BE_ERROR;
++        wlog(w, "FAIL fn1 quiet");
++        return;
++    }
++    w->bt_epcmd = r32(w, ecfg1(w, 0x04)) & 0xffff;
++    u32 exc = g_end(w, b);
++    w->bt_state = BT_QUIET;
++    WLOGF("OFF fn1 quiet (bus master off) epcmd=0x%x exc=%u", w->bt_epcmd, exc);
++}
++
++/* B:477-512 */
++static void bt_reset(struct s264w *w)
++{
++    w->bt_reset_count++;
++    if (w->bt_state != BT_UP || !w->have_up) {
++        w->bt_reset_result = RESET_NOT_UP;
++        return;
++    }
++    if (!(w->bt_devcap & DEVCAP_FLR)) {
++        w->bt_reset_result = RESET_NO_FLR;
++        WLOGF("reset: fn1 DevCap 0x%x has no FLR", w->bt_devcap);
++        return;
++    }
++    u32 b = g_begin(w);
++    int r;
++    u64 dc = ecfg1(w, w->cap_pcie + 8);
++    u32 cur = 0, rb[4] = {0, 0, 0, 0};
++    if ((r = w32(w, ecfg1(w, 0x04), FN1_CMD_QUIET)))
++        goto ex;
++    IO->sleep_us(10000);
++    cur = r32(w, dc) & 0xffff;
++    if ((r = w32(w, dc, (cur & ~DEVCTL_NS_RO) | DEVCTL_FLR)))
++        goto ex;
++    IO->sleep_us(100000); /* FLR_WAIT_S */
++    if ((r = w32(w, ecfg1(w, 0x10), FN1_BAR0_BUS)) || (r = w32(w, ecfg1(w, 0x14), 0)) ||
++        (r = w32(w, ecfg1(w, 0x18), FN1_BAR2_BUS)) || (r = w32(w, ecfg1(w, 0x1c), 0)) ||
++        (r = w32(w, dc, cur & ~DEVCTL_NS_RO & ~DEVCTL_FLR)) || (r = w32(w, ecfg1(w, 0x04), FN1_CMD_QUIET)))
++        goto ex;
++    rb[0] = r32(w, ecfg1(w, 0x10)) & ~0xfu;
++    rb[1] = r32(w, ecfg1(w, 0x18)) & ~0xfu;
++    rb[2] = r32(w, ecfg1(w, 0x04)) & 0x407;
++    rb[3] = r32(w, dc) & 0xffff;
++    if (g_end(w, b)) {
++        w->bt_reset_result = RESET_EXCEPTION; /* checked(): RuntimeError */
++        wlog(w, "reset: FLR exception");
++        return;
++    }
++    w->bt_epcmd = rb[2];
++    w->bt_devctl = rb[3];
++    bool ok = rb[0] == FN1_BAR0_BUS && rb[1] == FN1_BAR2_BUS && rb[2] == FN1_CMD_QUIET &&
++              !(rb[3] & (DEVCTL_NS_RO | DEVCTL_FLR));
++    w->bt_reset_result = ok ? RESET_OK : RESET_MISMATCH;
++    WLOGF("reset: FLR done ok=%d bar0=0x%x bar2=0x%x cmd=0x%x devctl=0x%x", ok, rb[0], rb[1], rb[2], rb[3]);
++    return;
++ex:
++    g_abort(w);
++    w->bt_reset_result = RESET_EXCEPTION;
++    wlog(w, "reset: FLR exception");
++}
++
++/* B:243-273 */
++static void bt_arm(struct s264w *w, u32 val)
++{
++    if (w->bt_state != BT_UP || !w->have_up) {
++        w->bt_arm_result = ARM_NOT_UP;
++    } else if (val != w->bt_gen) {
++        w->bt_arm_result = ARM_STALE;
++    } else {
++        bool ok = false;
++        u32 b = g_begin(w);
++        u32 a0 = r32(w, ecfg1(w, 0x10)) & ~0xfu, a2 = r32(w, ecfg1(w, 0x18)) & ~0xfu,
++            ac = r32(w, ecfg1(w, 0x04)) & 0x2;
++        int r = X_OK;
++        if (!(a0 == FN1_BAR0_BUS && a2 == FN1_BAR2_BUS && ac == 0x2)) {
++            if ((r = w32(w, ecfg1(w, 0x10), FN1_BAR0_BUS)) || (r = w32(w, ecfg1(w, 0x14), 0)) ||
++                (r = w32(w, ecfg1(w, 0x18), FN1_BAR2_BUS)) || (r = w32(w, ecfg1(w, 0x1c), 0)) ||
++                (r = w32(w, ecfg1(w, 0x04), FN1_CMD_QUIET))) {
++            } else {
++                w->bt_epcmd = FN1_CMD_QUIET;
++            }
++        }
++        if (r) {
++            g_abort(w);
++            wlog(w, "arm raised");
++        } else {
++            u32 c0 = r32(w, ecfg1(w, 0x10)) & ~0xfu, c2 = r32(w, ecfg1(w, 0x18)) & ~0xfu,
++                cc = r32(w, ecfg1(w, 0x04)) & 0x2;
++            u32 exc = g_end(w, b);
++            ok = c0 == FN1_BAR0_BUS && c2 == FN1_BAR2_BUS && cc == 0x2 && !exc;
++            WLOGF("arm gen=%u ok=%d", val, ok);
++        }
++        if (ok) {
++            fence(w, false, "arm", true);
++            w->bt_arm_result = ARM_OK;
++        } else {
++            w->bt_arm_result = ARM_BARS;
++        }
++    }
++    WLOGF("ARM %u -> %u (fn1 state %u, gen %u)", val, w->bt_arm_result, w->bt_state, w->bt_gen);
++}
++
++/* B:113-137 bt_cfg_write_policy */
++static bool bt_policy(struct s264w *w, u32 off, u32 val, u32 cur, u32 *out)
++{
++    u32 pcie = w->cap_pcie, msi = w->cap_msi;
++    for (u32 i = 0; i < 5; i++)
++        if (off == fn1_window_regs[i]) {
++            if ((val & 0xfff) == 0 && 0x18000000u <= val && val <= 0x1ffff000u) {
++                *out = val;
++                return true;
++            }
++            return false;
++        }
++    if (off == FN1_SUBSYS_CTRL) {
++        *out = (cur & ~SUBSYS_BITS) | (val & SUBSYS_BITS);
++        return true;
++    }
++    if (off == 0x04) {
++        *out = (val & (CMD_BME | CMD_INTX_DIS)) | CMD_MEM;
++        return true;
++    }
++    if (pcie && off == pcie + 8) {
++        *out = val & 0xffff & ~DEVCTL_NS_RO & ~DEVCTL_FLR;
++        return true;
++    }
++    if (pcie && off == pcie + 0x10) {
++        *out = (cur & 0xffff & ~ASPM_MASK) | (val & ASPM_MASK);
++        return true;
++    }
++    if (msi) {
++        u32 data_off = msi + (w->cap_msi64 ? 0xc : 0x8);
++        if (off == msi) {
++            *out = (cur & ~(MSI_ENABLE | MSI_MME)) | (val & MSI_ENABLE);
++            return true;
++        }
++        if (off == msi + 4) {
++            if ((val & 3) == 0 && MSI_ADDR_MIN <= val && val < MSI_ADDR_MAX) {
++                *out = val;
++                return true;
++            }
++            return false;
++        }
++        if (w->cap_msi64 && off == msi + 8) {
++            if (val == 0) {
++                *out = 0;
++                return true;
++            }
++            return false;
++        }
++        if (off == data_off) {
++            *out = val & 0xffff;
++            return true;
++        }
++    }
++    return false;
++}
++
++static u32 bt_cfg_read(struct s264w *w, u32 off)
++{
++    w->bt_cfg_reads++;
++    if ((w->bt_state != BT_UP && w->bt_state != BT_QUIET) || !w->have_up) {
++        w->bt_cfg_err = CFG_NOT_UP;
++        return 0xffffffffu;
++    }
++    if ((off & 3) || off >= 0x1000) {
++        w->bt_cfg_err = CFG_BAD_OFFSET;
++        return 0xffffffffu;
++    }
++    u32 b = g_begin(w);
++    u32 v = r32(w, ecfg1(w, off));
++    u32 exc = g_end(w, b);
++    w->bt_cfg_err = exc ? CFG_EXCEPTION : CFG_OK;
++    return exc ? 0xffffffffu : v;
++}
++
++/* false = Python raised out of bt_reg_write */
++static bool bt_cfg_write(struct s264w *w, u32 off, u32 val)
++{
++    w->bt_cfg_writes++;
++    if (w->bt_state != BT_UP || !w->have_up) {
++        w->bt_cfg_err = CFG_NOT_UP;
++        return true;
++    }
++    if ((off & 3) || off >= 0x1000) {
++        w->bt_cfg_err = CFG_BAD_OFFSET;
++        return true;
++    }
++    u32 cur = 0;
++    bool rd = off == FN1_SUBSYS_CTRL || (w->have_caps && w->cap_pcie && off == w->cap_pcie + 0x10) ||
++              (!w->cap_pcie && off == 0xf) || (w->cap_msi && off == w->cap_msi);
++    if (rd) {
++        u32 b = g_begin(w);
++        cur = r32(w, ecfg1(w, off));
++        g_end(w, b);
++    }
++    u32 v = 0;
++    bool okp = bt_policy(w, off, val, cur, &v);
++    if (okp && w->cap_msi && off == w->cap_msi && (v & MSI_ENABLE)) {
++        u32 b = g_begin(w);
++        u32 lo = r32(w, ecfg1(w, w->cap_msi + 4));
++        u32 hi = w->cap_msi64 ? r32(w, ecfg1(w, w->cap_msi + 8)) : 0;
++        g_end(w, b);
++        if (hi || (lo & 3) || !(MSI_ADDR_MIN <= lo && lo < MSI_ADDR_MAX))
++            okp = false;
++    }
++    if (!okp) {
++        w->bt_cfg_refused++;
++        w->bt_cfg_err = CFG_NOT_ALLOWED;
++        if (w->bt_cfg_refused <= 16)
++            WLOGF("fn1 config write refused off=0x%x val=0x%x", off, val);
++        return true;
++    }
++    u32 b = g_begin(w);
++    if (w32(w, ecfg1(w, off), v)) {
++        g_abort(w);
++        return false;
++    }
++    u32 exc = g_end(w, b);
++    if (off == 0x04)
++        w->bt_epcmd = v & 0xffff;
++    if (w->cap_pcie && off == w->cap_pcie + 8)
++        w->bt_devctl = v & 0xffff;
++    w->bt_cfg_err = exc ? CFG_EXCEPTION : CFG_OK;
++    if (w->bt_cfg_writes <= 64)
++        WLOGF("fn1 config write off=0x%x val=0x%x -> 0x%x err=%u", off, val, v, w->bt_cfg_err);
++    return true;
++}
++
++u32 s264w_bt_reg_read(struct s264w *w, u32 off)
++{
++    const struct s264_bt_page *bp = w->bp;
++    if (off == R_CFG_DATA)
++        return bt_cfg_read(w, w->bt_cfg_off);
++    if (off == B_R_BDADDR_LO)
++        return bp->bdaddr_lo;
++    if (off == B_R_BDADDR_HI)
++        return bp->bdaddr_hi;
++    if (off >= B_R_BOARD && off < B_R_BOARD + 16 && !(off & 3))
++        return bp->board[(off - B_R_BOARD) / 4];
++    if (off == B_R_CAL_LEN)
++        return bp->cal_len;
++    if (off == B_R_CALBF_LEN)
++        return bp->calbf_len;
++    if (off >= B_CAL_OFF && off < B_CAL_OFF + ((bp->cal_len + 3) & ~3u) && !(off & 3))
++        return bp->cal[(off - B_CAL_OFF) / 4];
++    if (off >= B_CALBF_OFF && off < B_CALBF_OFF + ((bp->calbf_len + 3) & ~3u) && !(off & 3))
++        return bp->calbf[(off - B_CALBF_OFF) / 4];
++    bool up = w->bt_state == BT_UP || w->bt_state == BT_QUIET;
++    switch (off) {
++        case R_MAGIC:
++            return BT_MAGIC;
++        case R_VERSION:
++            return 1;
++        case R_STATE:
++            return w->bt_state;
++        case R_ERROR:
++            return w->bt_error;
++        case R_CMD:
++            return w->bt_last_cmd;
++        case R_SEQ:
++            return w->bt_seq;
++        case R_AVAIL:
++            return w->bt_avail;
++        case R_IDS:
++            return w->bt_ids;
++        case R_CFG_OFF:
++            return w->bt_cfg_off;
++        case R_CFG_ERR:
++            return w->bt_cfg_err;
++        case B_R_BAR0:
++            return up ? FN1_BAR0_BUS : 0;
++        case B_R_BAR2:
++            return up ? FN1_BAR2_BUS : 0;
++        case B_R_CHIP_STATE:
++            return w->state;
++        case B_R_DEVCTL:
++            return w->bt_devctl;
++        case B_R_EPCMD:
++            return w->bt_epcmd;
++        case B_R_RESET:
++            return w->bt_reset_result;
++        case B_R_RESET_COUNT:
++            return w->bt_reset_count;
++        case B_R_EPOCH:
++            return w->epoch;
++        case B_R_RID2SID:
++            return w->bt_rid2sid;
++        case B_R_CMD_COUNT:
++            return w->bt_cmd_count;
++        case B_R_WINDOW:
++            return w->bt_window;
++        case B_R_DEVCAP:
++            return w->bt_devcap;
++        case B_R_MSICAP:
++            return w->cap_msi;
++        case B_R_GEN:
++            return w->bt_gen;
++        case B_R_ARM:
++            return w->bt_arm_result;
++        default:
++            return 0;
++    }
++}
++
++static bool bt_reg_write(struct s264w *w, u32 off, u32 val)
++{
++    if (off == R_CMD) {
++        w->bt_last_cmd = val;
++        w->bt_cmd_count++;
++        WLOGF("CMD 0x%x (fn1 state %u, chip state %u)", val, w->bt_state, w->state);
++        if (val == BT_CMD_ENSURE)
++            bt_ensure(w);
++        else if (val == BT_CMD_QUIET)
++            bt_quiet(w);
++        else
++            WLOGF("CMD 0x%x ignored (unknown)", val);
++        w->bt_seq++;
++    } else if (off == R_CFG_OFF) {
++        w->bt_cfg_off = val & 0xfff;
++        w->bt_cfg_err = (val == w->bt_cfg_off && !(val & 3)) ? CFG_OK : CFG_BAD_OFFSET;
++    } else if (off == R_CFG_DATA) {
++        return bt_cfg_write(w, w->bt_cfg_off, val);
++    } else if (off == B_R_RESET) {
++        if (val == 1)
++            bt_reset(w);
++    } else if (off == B_R_ARM) {
++        bt_arm(w, val);
++    } else {
++        WLOGF("write 0x%x = 0x%x ignored (read-only)", off, val);
++    }
++    return true;
++}
++
++void s264w_bt_reg_write(struct s264w *w, u32 off, u32 val)
++{
++    if (!bt_reg_write(w, off, val)) {
++        w->bt_state = BT_FAILED; /* B:627-629 */
++        w->bt_error = BE_ERROR;
++    }
++}
++
++u64 s264w_bt_hook_read(struct s264w *w, u32 off, int width)
++{
++    u32 base = off & ~3u;
++    if (width == 3)
++        return (u64)s264w_bt_reg_read(w, base) | ((u64)s264w_bt_reg_read(w, base + 4) << 32);
++    u64 v = s264w_bt_reg_read(w, base) >> (8 * (off & 3));
++    return v & ((1ULL << (8 << width)) - 1);
++}
++
++void s264w_bt_hook_write(struct s264w *w, u32 off, u64 val, int width)
++{
++    if (width == 2 && !(off & 3))
++        s264w_bt_reg_write(w, off, (u32)val);
++    else
++        WLOGF("write 0x%x/%d ignored (32-bit aligned only)", off, 8 << width);
++}
++
++void s264w_bt_init(struct s264w *w, struct s264_bt_page *bp, bool bt_enabled)
++{
++    /* B:152-178 */
++    w->bp = bp;
++    w->bt_enabled = bt_enabled && w->enabled;
++    w->bt_state = BT_OFF;
++    w->bt_gen = 1;
++    w->bt_arm_result = ARM_NONE;
++    w->fence_on_wifi_reset = true;
++    if (!w->enabled) {
++        w->bt_state = BT_FAILED;
++        w->bt_error = BE_WIFI_DISABLED;
++    } else if (!bt_enabled) {
++        w->bt_state = BT_FAILED;
++        w->bt_error = BE_DISABLED;
++    }
++}
++
+ #ifdef S264_HOST
+ unsigned long s264w_sizeof(void)
+ {
+@@ -1214,5 +1985,9 @@
+ unsigned long s264w_page_sizeof(void)
+ {
+     return sizeof(struct s264_wifi_page);
++}
++unsigned long s264w_bt_page_sizeof(void)
++{
++    return sizeof(struct s264_bt_page);
+ }
+ #endif
+diff -ruN a/src/nwoas_s264_wifi.h b/src/nwoas_s264_wifi.h
+--- a/src/nwoas_s264_wifi.h	2026-11-20 03:38:56
++++ b/src/nwoas_s264_wifi.h	2026-11-20 03:38:56
+@@ -61,6 +61,10 @@
+     /* not in the Python trace (deliberate): pause per retry of the count-bounded DART invalidate
+      * poll (wifi_scan.Dart.invalidate, 1000 reads = ~100 ms under the proxy) -> 1000 x 100 us */
+     void (*pace_us)(u32 us);
++    /* s264E S261 fence (bt_module.py / nwoas_bt_s261.py _fence): hv.add_tracer / del_tracer of the
++     * HOOK over both fn1 BARs, and hv.pt_update() (map + TLB invalidate before the access returns) */
++    void (*bar_fence)(int on);
++    void (*pt_update)(void);
+ };
+ 
+ /* ---- WifiUp state for one bring-up (wu.WifiUp + RangeMmio) */
+@@ -76,7 +80,7 @@
+     bool smc_obj, smc_on_attempted, port0_touched, bme_ok;
+     bool have_p1before;
+     struct s264w_snap p1before;
+-    u64 late[4];
++    u64 late[24];
+     u32 n_late;
+     u64 r_base[2], r_size[2];
+     u32 n_ranges;
+@@ -86,6 +90,9 @@
+     bool cur_page_valid;
+     u32 fn0_id, fn0_cap, fn1_id, n_bars, bars_ok;
+     struct s264w_bar bars[6];
++    u32 n_bars1, bars1_ok;      /* s264E: fn1 BAR sizing (S240 _read_function(1)) */
++    struct s264w_bar bars1[6];
++    bool bt_touched, fn1_cmd_guard; /* s264E: up.bt_touched; c1(0x04) added to cmd_regs */
+ };
+ 
+ /* ---- WifiS259 */
+@@ -100,6 +107,14 @@
+     u32 devctl_off;
+     u32 lines;
+     struct s264w_up up;
++    /* s264E: WifiBtS261 (bt-s261/nwoas_bt_s261.py) */
++    struct s264_bt_page *bp;
++    bool bt_enabled, fence_installed, bt_fenced, fence_on_wifi_reset;
++    u32 bt_state, bt_error, bt_avail, bt_seq, bt_ids, bt_devctl, bt_epcmd, bt_devcap, bt_window;
++    u32 bt_rid2sid, cap_pcie, cap_msi, cap_msi64, have_caps;
++    u32 bt_cfg_off, bt_cfg_err, bt_cfg_reads, bt_cfg_writes, bt_cfg_refused;
++    u32 bt_reset_result, bt_reset_count, bt_cmd_count, bt_last_cmd, epoch;
++    u32 bt_gen, bt_arm_result, fence_reads, fence_writes;
+     char msg[192];
+ };
+ 
+@@ -114,9 +129,20 @@
+ u64 s264w_hook_read(struct s264w *w, u32 off, int width);
+ void s264w_hook_write(struct s264w *w, u32 off, u64 val, int width);
+ 
++/* s264E: WifiBtS261 on top (bt_enabled = NWOAS_BT and enabled).  Call after s264w_init. */
++void s264w_bt_init(struct s264w *w, struct s264_bt_page *bp, bool bt_enabled);
++void s264w_fence_install(struct s264w *w, bool fence_on_wifi_reset); /* closed at boot (gen 2) */
++u32 s264w_bt_reg_read(struct s264w *w, u32 off);
++void s264w_bt_reg_write(struct s264w *w, u32 off, u32 val);
++u64 s264w_bt_hook_read(struct s264w *w, u32 off, int width);
++void s264w_bt_hook_write(struct s264w *w, u32 off, u64 val, int width);
++u64 s264w_fence_read(struct s264w *w, u64 addr, int width);
++void s264w_fence_write(struct s264w *w, u64 addr, int width);
++
+ #ifdef S264_HOST
+ unsigned long s264w_sizeof(void);
+ unsigned long s264w_page_sizeof(void);
++unsigned long s264w_bt_page_sizeof(void);
+ #endif
+ 
+ #endif
+diff -ruN a/src/rtkit.c b/src/rtkit.c
+--- a/src/rtkit.c	2026-11-20 03:38:56
++++ b/src/rtkit.c	2026-11-20 03:38:56
+@@ -13,6 +13,9 @@
+ #include "types.h"
+ #include "utils.h"
+ 
++/* NWOAS S264E: upper bound of every wait for an RTKit coprocessor message */
++#define RTKIT_WAIT_US (10 * USEC_PER_SEC)
++
+ #define rtkit_printf(...)                                                                          \
+     do {                                                                                           \
+         debug_printf("rtkit(%s): ", rtk->name);                                                    \
+@@ -643,9 +646,17 @@
+     if (has_oslog && !rtkit_start_ep(rtk, RTKIT_EP_OSLOG))
+         return false;
+ 
++    /* NWOAS S264E: every wait for the coprocessor is bounded (RTKIT_WAIT_US): a coprocessor that
++     * does not answer makes the caller fail instead of spinning forever (in the hypervisor that
++     * spin would hold every rendezvoused CPU). */
++    u64 boot_to = timeout_calculate(RTKIT_WAIT_US);
+     while (rtk->iop_power != RTKIT_POWER_ON) {
+         struct rtkit_message rtk_msg;
+         int ret = rtkit_recv(rtk, &rtk_msg);
++        if (ret == 0 && timeout_expired(boot_to)) {
++            rtkit_printf("timeout waiting for IOP power on (state 0x%x)\n", rtk->iop_power);
++            return false;
++        }
+         if (ret == 1)
+             rtkit_printf("unexpected message to non-system endpoint 0x%02x during boot: %lx\n",
+                          rtk_msg.ep, rtk_msg.msg);
+@@ -681,10 +692,15 @@
+         return false;
+     }
+ 
++    u64 ap_to = timeout_calculate(RTKIT_WAIT_US); /* NWOAS S264E: bounded */
+     while (rtk->ap_power != RTKIT_POWER_QUIESCED) {
+         struct rtkit_message rtk_msg;
+         int ret = rtkit_recv(rtk, &rtk_msg);
+ 
++        if (ret == 0 && timeout_expired(ap_to)) {
++            rtkit_printf("timeout waiting for AP power state (0x%x)\n", rtk->ap_power);
++            return false;
++        }
+         if (ret > 0) {
+             rtkit_printf("unexpected message to non-system endpoint 0x%02x during shutdown: %lx\n",
+                          rtk_msg.ep, rtk_msg.msg);
+@@ -701,10 +717,15 @@
+         return false;
+     }
+ 
++    u64 iop_to = timeout_calculate(RTKIT_WAIT_US); /* NWOAS S264E: bounded */
+     while (rtk->iop_power != target) {
+         struct rtkit_message rtk_msg;
+         int ret = rtkit_recv(rtk, &rtk_msg);
+ 
++        if (ret == 0 && timeout_expired(iop_to)) {
++            rtkit_printf("timeout waiting for IOP power state 0x%x (now 0x%x)\n", target, rtk->iop_power);
++            return false;
++        }
+         if (ret > 0) {
+             rtkit_printf("unexpected message to non-system endpoint 0x%02x during shutdown: %lx\n",
+                          rtk_msg.ep, rtk_msg.msg);
+diff -ruN a/src/smc.c b/src/smc.c
+--- a/src/smc.c	2026-11-20 03:38:56
++++ b/src/smc.c	2026-11-20 03:38:56
+@@ -68,13 +68,17 @@
+ 
+ #define SMC_ERR_TIMEOUT (-110)
+ 
++/* NWOAS S264E: without a caller deadline every wait is still bounded (was unbounded) */
++#define SMC_WAIT_US (10 * USEC_PER_SEC)
++
+ static int smc_work(smc_dev_t *smc)
+ {
+     int ret;
+     struct rtkit_message msg;
++    u64 dl = smc_deadline ? smc_deadline : timeout_calculate(SMC_WAIT_US);
+ 
+     while ((ret = rtkit_recv(smc->rtkit, &msg)) == 0)
+-        if (smc_deadline && timeout_expired(smc_deadline))
++        if (timeout_expired(dl))
+             return SMC_ERR_TIMEOUT;
+ 
+     if (ret < 0) {
+@@ -112,7 +116,7 @@
+ 
+     smc_send(smc, message);
+     while (smc->outstanding[id])
+-        if (smc_work(smc) == SMC_ERR_TIMEOUT) { /* NWOAS S260: only with a deadline set */
++        if (smc_work(smc) == SMC_ERR_TIMEOUT) { /* NWOAS S260 deadline / S264E default bound */
+             printf("SMC: smc_cmd[0x%x] timed out\n", id);
+             smc->outstanding[id] = false;
+             return SMC_ERR_TIMEOUT;

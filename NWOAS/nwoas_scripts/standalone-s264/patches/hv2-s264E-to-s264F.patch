@@ -1,0 +1,249 @@
+diff -ruN a/Makefile b/Makefile
+--- a/Makefile	2026-11-20 03:47:24
++++ b/Makefile	2026-11-20 03:47:24
+@@ -135,7 +135,7 @@
+ 	heapblock.o \
+ 	nwoas_frontend/model.o nwoas_frontend/admin_payload.o nwoas_frontend/admin_state.o nwoas_frontend/admin_ring.o nwoas_frontend/frontend.o \
+ 	hv.o hv_vm.o hv_exc.o hv_vuart.o hv_wdt.o hv_asm.o hv_aic.o hv_virtio.o hv_psci.o hv_vgic.o \
+-	nwoas_pwr.o nwoas_s264.o nwoas_s264_plan.o nwoas_s264_audio.o nwoas_s264_wifi.o \
++	nwoas_pwr.o nwoas_s264.o nwoas_s264_plan.o nwoas_s264_audio.o nwoas_s264_wifi.o nwoas_s264_pwr.o \
+ 	i2c.o \
+ 	iodev.o \
+ 	iova.o \
+diff -ruN a/src/nwoas_s264.c b/src/nwoas_s264.c
+--- a/src/nwoas_s264.c	2026-11-20 03:47:24
++++ b/src/nwoas_s264.c	2026-11-20 03:47:24
+@@ -33,6 +33,8 @@
+ #include "nvme.h"
+ #include "nwoas_s264_audio.h" /* s264D */
+ #include "nwoas_s264_wifi.h"  /* s264D */
++#include "nwoas_s264_pwr.h"   /* s264F */
++#include "nwoas_pwr.h"
+ #include "smc.h"
+ #include "pmgr.h"
+ #include "pcie.h"
+@@ -791,6 +793,18 @@
+                                          s264w_smc_write32, s264w_smc_stop,   s264w_log,
+                                          s264w_pace,      s264w_bar_fence,    s264w_pt_update};
+ 
++/* s264F: power_module.py requests go straight to the S260 handler (what proxy.c does for 0xc3a) */
++static u64 s264p_pwr(u64 op, u64 a0, u64 a1, u64 a2, u64 a3)
++{
++    return nwoas_pwr_proxy(op, a0, a1, a2, a3);
++}
++static void s264p_log(const char *m)
++{
++    printf("HVLOG: %s\n", m);
++}
++static const struct s264_pwr_io s264_pwr_hw = {s264p_pwr, s264a_mw, s264a_mr, s264p_log};
++static u8 s264_pwr_buf[S264_PWR_SNAP_SIZE + 256] __attribute__((aligned(64)));
++
+ static void do_msr(u32 id, u64 v)
+ {
+     switch (id) {
+@@ -1072,6 +1086,16 @@
+                                    "irq=%lu (ADT /arm-io/ans interrupts cell %lu of %lu) (S264C)\n",
+                                    (r >> 8) & 0xff, r & 0xff, o->b, (r >> 32) & 0x7fffffff,
+                                    (r >> 24) & 0x7f, (r >> 16) & 0xff);
++                        }
++                        break;
++                    }
++                    case S264_STEP_PWR: {
++                        int r = s264_pwr_run(&s264_pwr_hw, (u64)s264_pwr_buf, (u32)o->a, (u32)o->b,
++                                             (u32)o->c, (u32)o->d, (o->d >> 32) & 1);
++                        v = (u64)r;
++                        if (r) { /* Python asserts: --strict-init stops before the guest */
++                            step_result(o->id, S264_ST_FAIL, v);
++                            return -(1000 + (int)i);
+                         }
+                         break;
+                     }
+diff -ruN a/src/nwoas_s264_plan.c b/src/nwoas_s264_plan.c
+--- a/src/nwoas_s264_plan.c	2026-11-20 03:47:24
++++ b/src/nwoas_s264_plan.c	2026-11-20 03:47:24
+@@ -1595,6 +1595,20 @@
+     /* s264C: nvmeqd-s262/nvmeqd_module.py (run LAST of the launcher modules, before hv.start):
+      * p.nwoas_nvme_fastpath(24, depth, flags).  S268 default: NWOAS_NVME_QD=32, QD_IRQ=1 (F_IRQ),
+      * KICK on, STRICT off, POLL off -> flags 0x1.  Needs the NVMe fast path (S264_CFG_F_NVME). */
++    /* s264F: power-s260/power_module.py (after bt_module.py, before nvmeqd_module.py = LAST).  The
++     * Python asserts (lines 46-48) are plan errors here. */
++    if (cfg->flags & S264_CFG_F_PWR) {
++        u32 pf = (u32)(cfg->pwr & 0xff), hz = (u32)((cfg->pwr >> 8) & 0xffff);
++        u32 gap = (u32)((cfg->pwr >> 24) & 0xfffff), prs = (u32)((cfg->pwr >> 44) & 0xfff);
++        u32 slc = (u32)((cfg->pwr >> 56) & 1);
++        bool bad = (pf & ~0x7fu) || (cfg->pwr >> 57) || hz > 5000 || (hz && hz < 10) || gap > 62500 ||
++                   prs > 3600 || (!!(pf & 2) != !!hz) || (!!(pf & 0x40) != !!prs) || (gap && !(pf & 4));
++        if (bad) {
++            pl->err_arg = 0xb0;
++            return pl->err = S264_E_CFG;
++        }
++        op_step(pl, S264_STEP_PWR, pf, hz, gap, (u64)prs | ((u64)slc << 32));
++    }
+     if ((cfg->flags & S264_CFG_F_NVME_QD) && (cfg->flags & S264_CFG_F_NVME)) {
+         u64 depth = cfg->nvme_qd & 0xffffffffULL, qflags = cfg->nvme_qd >> 32;
+         if (depth > 61 || (qflags & ~0xfULL)) {
+diff -ruN a/src/nwoas_s264_plan.h b/src/nwoas_s264_plan.h
+--- a/src/nwoas_s264_plan.h	2026-11-20 03:47:24
++++ b/src/nwoas_s264_plan.h	2026-11-20 03:47:24
+@@ -115,6 +115,8 @@
+     S264_STEP_NVME_QD,        /* s264C: a=depth b=flags, nvmeqd-s262/nvmeqd_module.py:69-105 */
+     S264_STEP_AUDIO_B,        /* s264D: a=buffer pa b=DART page-table pa (2 x 16 KiB) c=prot stage
+                                * sound-s256/audio_module.py stage B + stage S + final header */
++    S264_STEP_PWR,            /* s264F: a=flags b=sec_tick_hz c=timer_gap_us d=print_s | slc << 32
++                               * power-s260/power_module.py:118-130 */
+ };
+ 
+ /* s264C exception policy (cfg flags -> S264_STEP_ARM_TRAPS a).  Off = s264B behaviour:
+@@ -156,10 +158,11 @@
+                                          * (BT control page, fn1 BAR emulation + fence, BT checks) */
+ #define S264_CFG_F_BT_ON     (1u << 13) /* s264E: NWOAS_BT=1 (with S261 and WIFI_ON) */
+ #define S264_CFG_F_BT_NOFENCE_WR (1u << 14) /* s264E: NWOAS_BT_FENCE_WIFI_RESET=0 */
++#define S264_CFG_F_PWR       (1u << 15) /* s264F: power-s260/power_module.py (S268 with the S262 default) */
+ #define S264_CFG_F_DEFAULT                                                                         \
+     (S264_CFG_F_AGX | S264_CFG_F_NVME | S264_CFG_F_AUDIO_A | S264_CFG_F_WIFI0 | S264_CFG_F_PMU |   \
+      S264_CFG_F_FB | S264_CFG_F_SPLIT | S264_CFG_F_EXC_LOCAL | S264_CFG_F_NVME_QD |                \
+-     S264_CFG_F_AUDIO_B | S264_CFG_F_WIFI_ON | S264_CFG_F_S261 | S264_CFG_F_BT_ON)
++     S264_CFG_F_AUDIO_B | S264_CFG_F_WIFI_ON | S264_CFG_F_S261 | S264_CFG_F_BT_ON | S264_CFG_F_PWR)
+ 
+ struct s264_config {
+     u32 magic;   /* S264_MAGIC */
+@@ -181,7 +184,9 @@
+     u32 link_lbas;      /* must be 0: NS1-only (no NS2 transport) */
+     u64 nvme_qd;        /* s264C (was reserved[0]): depth | flags << 32 (S268 default 32 | 1 << 32) */
+     u64 audio_prot;     /* s264D (was reserved[1]): NWOAS_AUDIO_PROT 0 sense, 1 moderate, 2 full */
+-    u64 reserved[6];
++    u64 pwr;            /* s264F (was reserved[2]): power_module.py env: flags 7:0 (NWOAS_PWR_F_*),
++                         * sec_tick_hz 23:8, timer_gap_us 43:24, print_s 55:44, SLC bit 56; 0 = all off */
++    u64 reserved[5];
+ } __attribute__((packed));
+ 
+ /* Everything the planner needs from the running system. */
+diff -ruN a/src/nwoas_s264_pwr.c b/src/nwoas_s264_pwr.c
+--- a/src/nwoas_s264_pwr.c	1970-01-01 09:00:00
++++ b/src/nwoas_s264_pwr.c	2026-11-20 03:47:24
+@@ -0,0 +1,90 @@
++/* SPDX-License-Identifier: MIT */
++/* NWOAS S264F: power-s260/power_module.py in C (see nwoas_s264_pwr.h).  P = power_module.py. */
++#include "nwoas_s264_pwr.h"
++
++#ifdef S264_HOST
++#include <stdio.h>
++typedef int64_t s64;
++#else
++#include "string.h"
++#include "utils.h"
++#endif
++
++#define OP_QUERY 0
++#define OP_CONFIG 1
++#define OP_SNAPSHOT 2
++#define OP_SMC_READ 3
++#define OP_SLC 4
++#define OP_MCC_STAT 5
++#define F_SMC_SENSE (1u << 5)
++#define PWR_MAGIC 0x5057524eULL
++
++/* P:68-76 _pwr_mcc */
++static void mcc(const struct s264_pwr_io *io, u64 buf, char *out, unsigned long n)
++{
++    u64 r = io->pwr(OP_MCC_STAT, buf, 16, 0, 0);
++    if (r >> 63 || r == 0) {
++        snprintf(out, n, "None");
++        return;
++    }
++    u32 w[16];
++    if (r > 16)
++        r = 16;
++    io->mem_read(buf, w, (u32)(4 * r));
++    unsigned long k = 0;
++    out[0] = 0;
++    for (u64 i = 0; i + 1 < r && k + 40 < n; i += 2)
++        k += (unsigned long)snprintf(out + k, n - k, "%s{enable 0x%x status 0x%x}", i ? "," : "", w[i], w[i + 1]);
++}
++
++int s264_pwr_run(const struct s264_pwr_io *io, u64 buf, u32 flags, u32 sec_hz, u32 gap_us, u32 print_s,
++                 bool slc)
++{
++    char m[256], a[128], b2[128];
++    /* P:50-51 */
++    if (io->pwr(OP_QUERY, 0, 0, 0, 0) != ((PWR_MAGIC << 32) | 1)) {
++        io->log("NWOAS-PWR STOP: HV has no S260 power interface (S264F C)");
++        return 1;
++    }
++    /* P:54-57 _pwr_config */
++    if (io->pwr(OP_CONFIG, flags, sec_hz, gap_us, print_s) != ((1ULL << 32) | flags)) {
++        io->log("NWOAS-PWR STOP: HV refused the S260 config (S264F C)");
++        return 2;
++    }
++    /* P:121-129 */
++    mcc(io, buf, a, sizeof(a));
++    if (slc) {
++        u64 rc = io->pwr(OP_SLC, 1, 0, 0, 0);
++        mcc(io, buf, b2, sizeof(b2));
++        snprintf(m, sizeof(m), "NWOAS-PWR SLC enable rc=%ld before=%s after=%s (S264F C)", (long)(s64)rc, a, b2);
++    } else {
++        snprintf(m, sizeof(m), "NWOAS-PWR SLC (not enabled by S260) status=%s (S264F C)", a);
++    }
++    io->log(m);
++    snprintf(m, sizeof(m), "NWOAS-PWR S260 config flags=0x%x sectick_hz=%u tgap_us=%u print_s=%u (S264F C)",
++             flags, sec_hz, gap_us, print_s);
++    io->log(m);
++    /* P:130 _pwr_mark('boot', 0): snapshot (+ SMC read) */
++    if (io->pwr(OP_SNAPSHOT, buf, S264_PWR_SNAP_SIZE, 0, 0) != S264_PWR_SNAP_SIZE) {
++        io->log("NWOAS-PWR STOP: snapshot size (S264F C)");
++        return 3;
++    }
++    if (flags & F_SMC_SENSE) {
++        /* nwoas_pwr_layout.py DEFAULT_SMC_KEYS PSTR,PDTR,PMVR,TH0x,TW0P,F0Ac, smc_key = big-endian */
++        static const char keys[6][4] = {{'P', 'S', 'T', 'R'}, {'P', 'D', 'T', 'R'}, {'P', 'M', 'V', 'R'},
++                                        {'T', 'H', '0', 'x'}, {'T', 'W', '0', 'P'}, {'F', '0', 'A', 'c'}};
++        u8 kb[24];
++        for (int i = 0; i < 6; i++)
++            for (int j = 0; j < 4; j++)
++                kb[4 * i + j] = (u8)keys[i][3 - j]; /* to_bytes(4, 'little') of the big-endian key */
++        io->mem_write(buf, kb, sizeof(kb));
++        u64 ok = io->pwr(OP_SMC_READ, buf, 6, buf + 64, 0);
++        u64 vals[6];
++        io->mem_read(buf + 64, vals, sizeof(vals));
++        snprintf(m, sizeof(m), "NWOAS-PWR mark boot flags=0x%x smc ok=%lu (S264F C)", flags, (unsigned long)ok);
++    } else {
++        snprintf(m, sizeof(m), "NWOAS-PWR mark boot flags=0x%x (S264F C)", flags);
++    }
++    io->log(m);
++    return 0;
++}
+diff -ruN a/src/nwoas_s264_pwr.h b/src/nwoas_s264_pwr.h
+--- a/src/nwoas_s264_pwr.h	1970-01-01 09:00:00
++++ b/src/nwoas_s264_pwr.h	2026-11-20 03:47:24
+@@ -0,0 +1,31 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * NWOAS S264F: power-s260/power_module.py (S260 power interface, as the S268 launcher runs it with the
++ * S262 default) in C.  The module's work before the guest starts is a fixed sequence of
++ * P_HV_NWOAS_PWR requests (QUERY, CONFIG, MCC_STAT, [SLC + MCC_STAT], boot mark = SNAPSHOT
++ * [+ SMC_READ]); here they are the same calls into nwoas_pwr_proxy(), through struct s264_pwr_io so
++ * the host test (nwoas_scripts/standalone-s264/s264f_pwr_test.py) can compare them with the real
++ * Python module.  Not ported: the NWSTAT-MARK / NWSTAT-SET job-output hook (needs the MacBook link
++ * transport; the C launcher has no NS2 job channel) and the hvstats.jsonl file on the MacBook.
++ * HARDWARE-UNVERIFIED.
++ */
++#ifndef NWOAS_S264_PWR_H
++#define NWOAS_S264_PWR_H
++
++#include "nwoas_s264_plan.h"
++
++struct s264_pwr_io {
++    u64 (*pwr)(u64 op, u64 a0, u64 a1, u64 a2, u64 a3); /* p.request(P_HV_NWOAS_PWR, ...) */
++    void (*mem_write)(u64 pa, const void *src, u32 len);  /* iface.writemem */
++    void (*mem_read)(u64 pa, void *dst, u32 len);         /* iface.readmem */
++    void (*log)(const char *msg);                         /* hv.log */
++};
++
++#define S264_PWR_SNAP_SIZE 2368 /* nwoas_pwr_layout.py SIZE = sizeof(struct nwoas_pwr_snapshot) */
++
++/* 0 = done; 1 = QUERY answer wrong, 2 = CONFIG refused (Python asserts: the launch stops),
++ * 3 = SNAPSHOT size wrong (assert). buf = scratch >= S264_PWR_SNAP_SIZE + 256 bytes. */
++int s264_pwr_run(const struct s264_pwr_io *io, u64 buf, u32 flags, u32 sec_hz, u32 gap_us, u32 print_s,
++                 bool slc);
++
++#endif

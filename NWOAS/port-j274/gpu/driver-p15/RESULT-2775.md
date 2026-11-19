@@ -374,3 +374,76 @@ nohup bash gpupool-s267/run-k43d-chain.sh <지금 실행기 .out> <지금 .link>
 - 회귀(부팅 C, 스위치 모두 꺼짐): K43c PASS 등 2775와 같음.
 
 다음 시험(새 빌드 없음, 2776 그대로): K47a = 한 부팅에서 off R R ×4(R = 되살리기 40회 × 250 ms, 버퍼당 최대 약 10초). R은 "되살리기가 돈 다리"에서만 판정합니다: `rehome_ok` 1 이상이고 그 크기가 PASS면 R이 고친 것, 되살리기 40회가 다 실패하면 R은 고침이 아닙니다. T는 사용 중 재시작을 피해 K47t로 값만 1로 바꾸고 다음 부팅에서 K47b(off R ×4)를 돌립니다. 같은 부팅에 T 꺼짐 대조군이 없으므로 T는 실패 비율 비교만 됩니다(약한 근거).
+
+---
+
+## 14. K47 결과와 다음 (01:15~01:38, `nwoas_scripts/gpupool-s272/runs/chain-2776-20261120-011535.txt`)
+
+**결론: R은 고침이 아닙니다 [사실]. T는 배치를 의도대로 바꾸고 그 부팅에서 8/8 통과했지만, 같은 조건의 대조군이 없어 아직 고침으로 확정하지 않습니다. 다음은 T를 부팅마다 번갈아 켜는 시험이며, 2776 그대로 돌릴 수 있어 새 빌드가 필요 없습니다.**
+
+| 부팅 | 다리 | 결과 | 되살리기(성공) |
+|---|---|---|---|
+| B (T=0) | off 1·4·7 | 1: 2048·3072 FAIL, 4: 3072 FAIL, 7: 3072 FAIL | 4(0), 2(0), 2(0) |
+| B (T=0) | R 2·3·5·6·8 | 모두 3072 FAIL | 40(0) × 5 |
+| B (T=0) | 9~12 | 모두 PASS | 0 |
+| C (T=1, 부팅 때부터) | off·R 8다리 | 모두 PASS | 0 |
+
+- R: 되살리기 40회 × 250 ms(약 10초) 동안 한 번도 풀로 돌아오지 않았습니다(5다리 모두). VidMm은 한 번 시스템 페이지로 보낸 CPU에서 보이는 버퍼를 적어도 10초 안에는 다시 풀에 들이지 않습니다 [사실].
+- 3072 실패의 거절 대상은 64 MiB 스테이징이 아니라 64 KiB짜리 CPU에서 보이는 버퍼였습니다(풀 밖 0x10 페이지). 스테이징 두 개도 같은 때 구역 0으로 갔습니다. 같은 무렵 다른 프로세스(pid 3924)의 64 KiB 버퍼도 풀 밖이었습니다 [사실]. 그 프로세스가 무엇인지는 모릅니다 [가설: DWM 등]. 22:49의 DWM 충돌과 같은 경로일 수 있습니다 [가설].
+- T=1 부팅의 배치: 스테이징 3,773·3,866·3,930 MiB(위쪽), 큰 버퍼 0·0.75 MiB(아래쪽), 구역 0으로 가는 갱신 0건 [사실]. 다만 같은 T=0 부팅 안에서도 다리 9~12는 통과했고, 2776 부팅 C(T=0)도 8/8 통과했으므로 "8/8 통과"만으로는 T의 효과라고 할 수 없습니다.
+- T의 한계 [가설]: 앞 큰 버퍼의 자리가 늦게 풀리는 동안 새 큰 버퍼가 위쪽까지 써야 하면, VidMm이 위쪽 스테이징을 내보낼 수 있습니다.
+
+다음 시험: `nwoas_scripts/gpupool-s272/run-t-alternate.sh` — 부팅 4번(T 0·1·0·1), 부팅마다 K48(8다리). 마지막 T=1 부팅에서 회귀 전부. 판정: T=1 부팅의 다리 16개가 모두 통과하고, T=0 부팅 중 하나라도 실패 다리가 있으면 T를 고침으로 인정 → 2777(T 기본 켬, 초안 `P41-draft-topdown-default.diff`).
+구조 변경(CPU에서 보이는 버퍼를 구역 2로 분리)은 UMD의 CPU 매핑 검사(`POOL_ONLY`)까지 바꿔야 하고 구역 2가 952 MiB뿐이라, T가 안 될 때의 다음 단계로 둡니다.
+
+---
+
+## 15. Edge `edge://gpu`의 Rasterization·Skia Graphite "Unavailable" (목표 3)
+
+**결론: 둘 다 Chromium의 공개 차단 목록에 걸린 것이고, 드라이버 오류가 아닙니다 [사실, 소스].** "Unavailable"은 상태값 `unavailable_off` = 차단 목록(`kGpuFeatureStatusBlocklisted`)일 때만 나옵니다(`content/browser/gpu/compositor_util.cc` GetFeatureStatusImpl). 꺼짐이면 "Disabled"로 나옵니다.
+
+| 항목 | 걸린 조건 (Chromium main, 2026-11-20 받음) | 우리 값 | 드라이버로 풀 수 있나 |
+|---|---|---|---|
+| Rasterization | `gpu/config/software_rendering_list.json` 122번: Windows에서 GPU 래스터는 NVIDIA·Intel·AMD(FL 11.0 이상), Xbox, Qualcomm(공급자 0x4d4f4351, 드라이버 31.0.2.0 이상 등), LISUAN(0x4c54)만 허용 | 공급자 0x4c505041 → 목록 밖 | 공급자 번호를 남의 것(예: Qualcomm)으로 속여야만 됨 → 권하지 않음 |
+| Skia Graphite | 같은 파일 188번: D3D11 기능 수준 12.0 미만이면 차단. 게다가 `gpu_finch_features.cc` IsSkiaGraphiteSupportedByDevice: Windows ARM64에서는 아예 false("requires further research") | D3D11 UMD 최대 11_1(`agx_d3d11_ddi.cpp` AgxD3d11Fl111Enabled, `build-native-asahi-state.py` 3DPIPELINESUPPORT) | 안 됨: 12_0을 알려도 ARM64 Edge에서는 Graphite를 쓰지 않음 |
+| Direct Rendering Display Compositor | `kEnableDrDc`가 Windows에서 "NOT SUPPORTED. DO NOT ENABLE!" 기본 꺼짐, 표시는 `disabled_off_ok` | — | 해당 없음(모든 Windows PC가 Disabled) |
+
+- 대조 [사실, VM]: Parallels VM의 Edge(공급자 0x05404c42)에서도 `rasterization=unavailable_off`, `skia_graphite=unavailable_off`, `direct_rendering_display_compositor=disabled_off_ok`로 같게 나옵니다.
+- 참고: ANGLE은 D3D11 장치를 12_1·12_0·11_1·11_0 순으로 요청하고(`Renderer11.cpp:435-470`), Chromium은 그 장치의 GetFeatureLevel()을 씁니다(`gpu_info_collector_win.cc:239`).
+
+권장 순서:
+
+| 순위 | 할 일 | 이득 | 위험 |
+|---|---|---|---|
+| 1 | 드라이버는 그대로. `--enable-gpu-rasterization`(edge://flags "GPU rasterization" Enabled)으로 차단만 넘겨 우리 드라이버에서 GPU 래스터가 바르게·안정적으로 도는지 먼저 잼(K49 2회째 + 기존 Edge 시험) | 스크롤·페이지 그리기를 GPU로 | 그 Edge 프로필에만 적용, 되돌리기 쉬움 |
+| 2 | 1이 좋으면 콘치님 Edge에 그 플래그를 켬(사용자 설정) | 같음 | 낮음 |
+| 3 | Chromium에 공급자 0x4c505041 예외를 요청(장기) | 플래그 없이 | 시간 |
+| 하지 않음 | 공급자 번호를 Qualcomm 등으로 바꿈 | 차단이 풀림 | Qualcomm용 우회 5개(`gpu_driver_bug_list.json` 433·446·448·462·481: WebNN·동영상 경로 끔)와 앱·게임의 공급자별 경로가 잘못 걸림, 사실과 다른 장치 정보 |
+| 하지 않음 | D3D11 12_0 올리기(타일 자원 Tier 2 등 D3D11 쪽 구현 필요) | Graphite에는 효과 없음(ARM64) | 큼 |
+
+`edge://gpu` 글로 받기: `gpucov/ps/edgegpu.ps1`(Edge를 사용자 세션에서 별도 프로필 + 127.0.0.1 DevTools 포트로 띄우고 `SystemInfo.getInfo` JSON 저장, 화면 캡처 없음), 작업 `gpucov/jobs/K49-edge-gpuinfo.cmd`, 실행 `gpupool-s272/run-edgegpu.sh`. VM에서 사용자 세션으로 실행해 JSON 7,335 B를 받는 것까지 확인 [사실, VM].
+
+---
+
+## 16. x86(32비트) UMD 준비 (P42, 목표 4) [빌드 전]
+
+**결론: 코드는 이미 x86을 고려해 만들어져 있고(원본 EXP1222·EXP1874B, 고정 폭 통신 구조), 이번에 J274 빌드 경로·INF·시험만 붙였습니다. 빌드는 Parallels VM이 필요해 아직 하지 않았습니다.**
+
+| 부분 | 상태 | 근거 |
+|---|---|---|
+| KMD | 바꿀 것 없음. INF가 `UserModeDriverNameWow`를 넣으면 `SupportsOnly64Bit=0`이 되어 32비트 앱에 어댑터가 보임 | `lifecycle.c:669-705, 1125-1134`, `render_wow64.c` [사실, 코드] |
+| UMD↔KMD 통신 구조 | 포인터 크기 필드 없음(APPLE_AGX_U32/U64만). "identical for ARM64/x64/WOW64" | `render_win32_transport.h:37`, `apple_agx_g3_copy_abi.h` 등 [사실, 코드] |
+| 사용자 공간 매핑(네이티브 스테이징) | KMD가 4 GiB 위에 매핑하면 UMD가 거절하고 그 기능만 끔 | `umd_win32_screen.c:813-815` [사실, 코드] |
+| UMD 소스의 x86 분기 | 이미 있음(`_WIN64` 아닌 쪽: 펜스 64비트 읽기를 콜백으로) | `umd_gpuva_windows.c:923`, `umd.c:444` |
+| 빌드 도구 | Mesa 스크립트는 x86을 이미 받음(`compiler-x86.ini`, `configure-x86-nir.ps1`, build-*.py `--architecture x86`). dxil-spirv 빌드만 x86이 없어서 추가 | `c49-build-dxspv.ps1` |
+
+바꾼 것·새 파일 (P42, `P42-driver.diff`):
+- `umd/AppleAgxRenderAdmissionUmd.vcxproj`: `Release|Win32` 구성 추가(다른 구성 그대로)
+- `scripts/build-umd-x86-msbuild.ps1`(새): x64용(P37)과 같은 방식, Platform=Win32, x86 런타임
+- `mesa/dxil/patches/c49-build-dxspv.ps1`: `-Architecture x86`
+- `mesa/scripts/configure-x86-nir.ps1`: `-CrossFile`, `-Platforms` 인자(기본값은 원본 그대로)
+- `AppleAgxRenderAdmission.arm64xwow.inf`(새): P37 INF + `AppleAgxRenderAdmissionUmd32.dll`을 SysWOW64(DIRID 10)에 복사, `UserModeDriverNameWow`
+- VM 단계 `agx-build-p42/05y·08y·11y·12y`, 빌드 `build-p42.sh`
+- Windows 작업: `agx-s248/jobs/I39-install-2777.cmd`, `R39-rollback-2776.cmd`, `gpucov/jobs/K50-x86-umd-p15.cmd`; 시험 도구 probe15(x86 판 + `AppleAgxRenderAdmissionUmd32.dll` 확인 줄, `gpucov/probe/build-probe15.cmd`); 전달 `file-delivery-s243/make-2777.py`; 연쇄 `gpupool-s273/run-2777-chain.sh`
+
+위험 [가설]: J274 소스(P15~P40)는 x86으로 한 번도 컴파일된 적이 없어 빌드 오류가 날 수 있음. x86 Mesa 구성·빌드와 dxil-spirv x86은 처음이라 오래 걸림. VM에 `vcvarsarm64_x86.bat`가 있는지 모름. 되돌릴 때 SysWOW64 파일은 이름만 바꿔 둠(R39).

@@ -1,0 +1,352 @@
+diff -ruN a/rust/src/lib.rs b/rust/src/lib.rs
+--- a/rust/src/lib.rs
++++ b/rust/src/lib.rs
+@@ -26,13 +26,14 @@
+ static GLOBAL: DLMalloc = dlmalloc::DLMalloc;
+ 
+ extern "C" {
+-    fn flush_and_reboot();
++    /* NWOAS 4-1 (was flush_and_reboot): USB proxy fallback while the first-stage chainload runs, else flush_and_reboot */
++    fn nwoas_rust_panic();
+ }
+ 
+ #[panic_handler]
+ fn panic(info: &::core::panic::PanicInfo) -> ! {
+     println!("{}", info);
+-    unsafe { flush_and_reboot() };
++    unsafe { nwoas_rust_panic() };
+     loop {}
+ }
+ 
+diff -ruN a/src/chainload.c b/src/chainload.c
+--- a/src/chainload.c
++++ b/src/chainload.c
+@@ -51,6 +51,16 @@
+     image_size += sepfw[1];
+     image_size = ALIGN_UP(image_size, SZ_16K);
+ 
++    /* NWOAS 4-1: preoslog moved like proxyclient tools/chainload.py does (the region the next image
++     * is copied over may hold it; the S264/Python launchers copy it to the guest from the ADT address) */
++    size_t preoslog_off = image_size;
++    u64 preoslog[2] = {0, 0};
++    bool have_preoslog = ADT_GETPROP_ARRAY(adt, anode, "preoslog", preoslog) >= 0 && preoslog[1];
++    if (have_preoslog) {
++        image_size += preoslog[1];
++        image_size = ALIGN_UP(image_size, SZ_16K);
++    }
++
+     // Bootargs
+     size_t bootargs_off = image_size;
+     const size_t bootargs_size = SZ_16K;
+@@ -61,6 +71,10 @@
+     size_t stub_size = _chainload_stub_end - _chainload_stub_start;
+ 
+     void *new_image = malloc(image_size + stub_size);
++    if (!new_image) { /* NWOAS 4-1: fail -> USB proxy, not a NULL write */
++        printf("chainload: out of memory (0x%lx bytes)\n", image_size + stub_size);
++        return -1;
++    }
+ 
+     // Copy m1n1
+     memcpy(new_image, image, size);
+@@ -87,6 +101,28 @@
+         printf("chainload: Failed to set SEPFW prop\n");
+         free(new_image);
+         return -1;
++    }
++
++    if (have_preoslog) { /* NWOAS 4-1 */
++        memcpy(new_image + preoslog_off, (void *)preoslog[0], preoslog[1]);
++        preoslog[0] = new_base + preoslog_off;
++        if (adt_setprop(adt, anode, "preoslog", &preoslog, sizeof(preoslog)) < 0) {
++            printf("chainload: Failed to set preoslog prop\n");
++            free(new_image);
++            return -1;
++        }
++    }
++    {   /* NWOAS 4-1: BootArgs entry like chainload.py (u.adt[..].BootArgs = (new_base + off, 0x4000)) */
++        u64 ba[2];
++        if (ADT_GETPROP_ARRAY(adt, anode, "BootArgs", ba) >= 0) {
++            ba[0] = new_base + bootargs_off;
++            ba[1] = bootargs_size;
++            if (adt_setprop(adt, anode, "BootArgs", &ba, sizeof(ba)) < 0) {
++                printf("chainload: Failed to set BootArgs prop\n");
++                free(new_image);
++                return -1;
++            }
++        }
+     }
+ 
+     // Copy bootargs
+diff -ruN a/src/exception.c b/src/exception.c
+--- a/src/exception.c
++++ b/src/exception.c
+@@ -21,6 +21,9 @@
+ 
+ volatile enum exc_guard_t exc_guard = GUARD_OFF;
+ volatile int exc_count = 0;
++/* NWOAS 4-1 (stage 1): while set, an unhandled exception continues at this address (the USB proxy
++ * fallback) instead of rebooting, so a first-stage chainload failure can never become a reboot loop. */
++volatile u64 exc_recover_pc = 0;
+ 
+ void el0_ret(void);
+ void el1_ret(void);
+@@ -347,6 +350,12 @@
+             break;
+         case GUARD_OFF:
+         default:
++            if (exc_recover_pc) { /* NWOAS 4-1 stage 1 */
++                elr = exc_recover_pc;
++                exc_recover_pc = 0;
++                printf("NWOAS-STAGE1: exception during the chainload: falling back to the USB proxy\n");
++                break;
++            }
+             printf("Unhandled exception, rebooting...\n");
+             flush_and_reboot();
+     }
+@@ -476,6 +485,15 @@
+     if (!(exc_guard & GUARD_SILENT))
+         print_regs(regs, 0);
+ 
++    if ((exc_guard & GUARD_TYPE_MASK) == GUARD_OFF && exc_recover_pc) { /* NWOAS 4-1 stage 1 */
++        u64 pc = exc_recover_pc;
++        exc_recover_pc = 0;
++        printf("NWOAS-STAGE1: SError during the chainload: falling back to the USB proxy\n");
++        msr(ELR_EL1, pc);
++        exc_count++;
++        sysop("isb");
++        return;
++    }
+     if ((exc_guard & GUARD_TYPE_MASK) == GUARD_OFF) {
+         // NWOAS stage-8 candidate-2 instrumentation (observational only).
+         // Read-only snapshot of the EL2 syndrome and vGIC maintenance state
+diff -ruN a/src/exception.h b/src/exception.h
+--- a/src/exception.h
++++ b/src/exception.h
+@@ -41,6 +41,7 @@
+ 
+ extern volatile enum exc_guard_t exc_guard;
+ extern volatile int exc_count;
++extern volatile u64 exc_recover_pc; /* NWOAS 4-1 stage 1 */
+ 
+ void exception_initialize(void);
+ void exception_shutdown(void);
+diff -ruN a/src/hv_vm.c b/src/hv_vm.c
+--- a/src/hv_vm.c
++++ b/src/hv_vm.c
+@@ -2,6 +2,7 @@
+ 
+ // #define DEBUG
+ 
++#include "../build/build_cfg.h" /* NWOAS 4-1: CHAINLOADING */
+ #include "hv.h"
+ #include "nwoas_pwr.h" /* NWOAS S260 */
+ #include "assert.h"
+@@ -2576,7 +2577,13 @@
+ #define DART_CMD_BUSY             (1u << 2)
+ #define DART_L2_IDENTITY(pa)      (((pa) & ~0x3fffUL) | 0x3UL | (0xfffUL << 40)) // leaf: VALID|SP|addr
+ #define DART_L1_POINTER(l2)       (((l2) & ~0x3fffUL) | 0x1UL) // L1 -> L2 table: VALID only (dart.c)
++#ifdef CHAINLOADING
++/* NWOAS 4-1: the first-stage m1n1 never runs the hypervisor; keeping its image (incl. bss) within the
++ * 2 MiB of D4 so iBoot lays it out exactly like today's boot (PLAN-4-1 10장). */
++#define NWOAS_DART_POOL           1
++#else
+ #define NWOAS_DART_POOL           48
++#endif
+ 
+ // Session 6 path-B seed.  Keep the guest's Windows ERST untouched for diagnosis,
+ // but point the physical FL1100 interrupter at one EL2-owned 16KB DART page below
+diff -ruN a/src/main.c b/src/main.c
+--- a/src/main.c
++++ b/src/main.c
+@@ -143,11 +143,67 @@
+         printf("NWOAS-S264G: waiting %u s for a MacBook proxy client, then auto-start\n", s);
+     }
+ 
++    exc_recover_pc = 0; /* NWOAS 4-1: from here the proxy behaves as in D4 (an unguarded fault reboots) */
+     printf("Running proxy...\n");
+ 
+     uartproxy_run(NULL);
+ }
+ 
++/* The upstream m1n1_main tail (NWOAS 4-1: a function, so the stage-1 fallback proxy can hand over too). */
++static void __attribute__((noreturn)) nwoas_handover(void)
++{
++    if (!next_stage.entry) {
++        panic("Nothing to do!\n");
++    }
++
++    printf("Preparing to run next stage at %p...\n", next_stage.entry);
++
++    nvme_shutdown();
++    exc_recover_pc = 0; /* NWOAS 4-1: the next image owns the exception vectors from here */
++    exception_shutdown();
++#ifndef BRINGUP
++    usb_iodev_shutdown();
++    display_shutdown(DCP_SLEEP_IF_EXTERNAL);
++#ifdef USE_FB
++    fb_shutdown(next_stage.restore_logo);
++#endif
++    mmu_shutdown();
++#endif
++
++    printf("Vectoring to next stage...\n");
++
++    next_stage.entry(next_stage.args[0], next_stage.args[1], next_stage.args[2], next_stage.args[3],
++                     next_stage.args[4]);
++
++    panic("Next stage returned!\n");
++}
++
++/* NWOAS 4-1 stage 1: target of exc_recover_pc (exception, SError, Rust panic, panic(), assert) until the
++ * hand-over.  Brings up USB and runs the proxy; a P_VECTOR from the MacBook (chainload.py -r D4) makes
++ * uartproxy_run return with next_stage set, and the normal tail hands over.  Never returns. */
++void nwoas_stage1_fallback(void)
++{
++    exc_recover_pc = 0; /* a fault inside the fallback itself reboots (nothing left to fall back to) */
++    printf("NWOAS-STAGE1: USB proxy fallback (waiting for the MacBook)\n");
++    usb_init();
++    usb_iodev_init();
++    printf("Running proxy...\n");
++    while (1) {
++        uartproxy_run(NULL);
++        if (next_stage.entry)
++            nwoas_handover();
++    }
++}
++
++void nwoas_rust_panic(void)
++{
++    if (exc_recover_pc) {
++        exc_recover_pc = 0;
++        nwoas_stage1_fallback();
++    }
++    flush_and_reboot();
++}
++
+ void m1n1_main(void)
+ {
+     printf("\n\nm1n1 %s\n", m1n1_version);
+@@ -156,6 +212,12 @@
+ 
+     printf("Running in EL%lu\n\n", mrs(CurrentEL) >> 2);
+ 
++#ifdef CHAINLOADING
++    /* NWOAS 4-1 stage 1: from here until the hand-over to the next image, an unhandled exception,
++     * SError, Rust panic, panic() or failed assert continues in the USB proxy, never a reboot. */
++    exc_recover_pc = (u64)nwoas_stage1_fallback;
++#endif
++
+     firmware_init();
+ 
+     heapblock_init();
+@@ -201,27 +263,5 @@
+ 
+     run_actions();
+ 
+-    if (!next_stage.entry) {
+-        panic("Nothing to do!\n");
+-    }
+-
+-    printf("Preparing to run next stage at %p...\n", next_stage.entry);
+-
+-    nvme_shutdown();
+-    exception_shutdown();
+-#ifndef BRINGUP
+-    usb_iodev_shutdown();
+-    display_shutdown(DCP_SLEEP_IF_EXTERNAL);
+-#ifdef USE_FB
+-    fb_shutdown(next_stage.restore_logo);
+-#endif
+-    mmu_shutdown();
+-#endif
+-
+-    printf("Vectoring to next stage...\n");
+-
+-    next_stage.entry(next_stage.args[0], next_stage.args[1], next_stage.args[2], next_stage.args[3],
+-                     next_stage.args[4]);
+-
+-    panic("Next stage returned!\n");
++    nwoas_handover();
+ }
+diff -ruN a/src/payload.c b/src/payload.c
+--- a/src/payload.c
++++ b/src/payload.c
+@@ -7,6 +7,7 @@
+ #include "adt.h"
+ #include "assert.h"
+ #include "chainload.h"
++#include "exception.h"
+ #include "nwoas_s264.h" /* S264G */
+ #include "cpufreq.h"
+ #include "display.h"
+@@ -177,6 +178,7 @@
+ #endif
+ 
+ static bool enable_tso = false;
++static bool nwoas_stage1_fault = false;
+ 
+ static bool check_var(u8 **p)
+ {
+@@ -206,6 +208,8 @@
+         mitigations_configure(val);
+     } else if (IS_VAR("tso=")) {
+         enable_tso = val[0] == '1';
++    } else if (IS_VAR("nwoas_stage1_fault=")) { /* NWOAS 4-1 negative rehearsal only */
++        nwoas_stage1_fault = val[0] == '1';
+     } else if (IS_VAR("nwoas_autostart=")) { /* NWOAS S264G (4-2): seconds, 0 = off */
+         u32 s = 0;
+         for (const char *c = val; *c >= '0' && *c <= '9' && s < 100000; c++)
+@@ -316,7 +320,20 @@
+         p = load_one_payload(p, 0);
+ 
+     if (chainload_spec) {
+-        return chainload_load(chainload_spec, chosen, chosen_cnt);
++        /* NWOAS 4-1: from here until the hand-over, any unhandled exception / SError / Rust panic
++         * continues in the USB proxy (main.c nwoas_stage1_fallback) instead of rebooting. */
++        extern void nwoas_stage1_fallback(void);
++        u64 prev_recover_pc = exc_recover_pc; /* CHAINLOADING: already set in m1n1_main */
++        exc_recover_pc = (u64)nwoas_stage1_fallback;
++        if (nwoas_stage1_fault) { /* rehearsal of the exception path: a data abort on purpose */
++            printf("NWOAS-STAGE1: test fault (nwoas_stage1_fault=1)\n");
++            (void)read64(0xfff0000000000ULL);
++        }
++        int r = chainload_load(chainload_spec, chosen, chosen_cnt);
++        exc_recover_pc = prev_recover_pc;
++        if (r < 0)
++            printf("NWOAS-STAGE1: chainload failed (%d): falling back to the USB proxy\n", r);
++        return r;
+     }
+ 
+     if (kernel && fdt) {
+diff -ruN a/src/utils.c b/src/utils.c
+--- a/src/utils.c
++++ b/src/utils.c
+@@ -3,8 +3,11 @@
+ #include <assert.h>
+ #include <stdarg.h>
+ 
++#include "../build/build_cfg.h"
++
+ #include "utils.h"
+ #include "cpu_regs.h"
++#include "exception.h"
+ #include "iodev.h"
+ #include "smp.h"
+ #include "types.h"
+@@ -129,6 +132,15 @@
+ void flush_and_reboot(void)
+ {
+     iodev_console_flush();
++#ifdef CHAINLOADING
++    /* NWOAS 4-1 stage 1: panic()/assert()/unhandled exceptions continue in the USB proxy
++     * (main.c nwoas_stage1_fallback) instead of rebooting; 11-16 ended in a reboot loop. */
++    if (exc_recover_pc) {
++        void (*fallback)(void) = (void (*)(void))exc_recover_pc;
++        exc_recover_pc = 0;
++        fallback();
++    }
++#endif
+     reboot();
+ }
+ 

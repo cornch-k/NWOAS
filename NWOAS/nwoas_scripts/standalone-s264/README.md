@@ -412,3 +412,79 @@ bash /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/s264-dryru
 - (나) `run-s264d-launch-slot.sh <옛 .out> <옛 .link>`: C가 Windows 시작. 스위치 `S264D_NO_WIFI=1`, `S264D_NO_AUDIO_B=1`, `S264D_AUDIO_PROT=sense|moderate|full`(실행 스크립트 기본 moderate), 그 밖에 `S264C_*`.
 - 첫 (나)는 나눠서 권합니다: ① `S264D_NO_WIFI=1 S264D_NO_AUDIO_B=1`(s264C와 같은 동작 확인) → ② 소리만 → ③ 와이파이까지.
 - 페이로드는 아직 S259(`fw-wifi-s259`)입니다. S261 블루투스 페이로드로 바꾸는 것은 블루투스 제어 페이지와 함께 합니다(다음 단계).
+
+## 12. s264E (2026-11-20 새벽) [빌드만]
+
+결론: s264D에 ① 보조 처리기(RTKit·SMC·DCP용 AFK) 기다림 10 s 한도, ② 블루투스 S261(`bt-s261/bt_module.py` + `nwoas_bt_s261.py`)의 하이퍼바이저 쪽 C 이식, ③ S261 블루투스 페이로드로 교체, ④ 소리 보호 기본값 moderate를 더했습니다. 맥미니에서는 아직 돌리지 않았습니다.
+
+- 바이너리 `out-s264E/m1n1-s264E-agx-hv2-standalone.bin` (2,572,288 B, sha256 `9254d61922779ba997e8be1575868b0e92d8ec6ee7db3419fc39e0dd58949615`), 패치 `out-s264E/hv2-s264D-to-s264E.patch` (sha256 `bd9c54224189b8070f90cfe2d44c3b28d78533671931537e1776fb1488b0f4b2`), 재현 `build-s264e.sh <새 폴더>`.
+- 기본 설정 깃발 `0x3eff` = s264D `0xeff` + `S261`(1<<12) + `BT_ON`(1<<13). `BT_NOFENCE_WR`(1<<14) = `NWOAS_BT_FENCE_WIFI_RESET=0`. `audio_prot` 기본 1 = moderate.
+
+기다림 한도(①)
+- `rtkit.c`: 부팅 때 IOP 켜짐, 정지 때 AP·IOP 전원 상태 기다림에 10 s 한도(원래 무한).
+- `smc.c`: 호출자가 기한을 안 주면 메시지마다 10 s(원래 무한, `dcp.c`가 이 경우).
+- `afk.c`(DCP): 막는 폴링, 명령 답 기다림, 서비스 알림 기다림에 10 s.
+- 한도에 걸리면 그 함수가 실패를 돌려줍니다(정상 동작 때는 걸리지 않음 [가설]).
+- 이미 한도가 있어 고치지 않은 것: `nwoas_pwr.c`(277줄), `nvme.c`의 기다림들, `dcp.c`·`dcp_iboot.c`(자체 루프 없음, RTKit·SMC·AFK를 씀).
+- 이 한도는 체인로드 때마다(미리보기 비교 포함) 도는 부팅 코드에도 들어갔으므로, s264E의 (가)는 바뀐 부팅 코드를 처음 돌리는 것입니다.
+
+블루투스(②, `src/nwoas_s264_wifi.c`의 WifiBtS261 부분)
+- 옮긴 것: fn1 설정(BAR0 0xE0900000·BAR2 0xE0C00000, 루트 포트 창 0xE0F0E000, DevCtl, 명령), BT 제어 페이지(0x348004000: 상태·설정 창·FLR·ARM·ADT BD 주소·보정 자료), fn1 BAR 울타리(부팅·전원 켜고 끄기·Wi-Fi 칩 리셋·fn1 쉼 때 닫힘, 드라이버 ARM으로 열림), fn1 실패 때 되돌리기.
+- 플랜: BT 페이지 HOOK, fn1 BAR 두 개 BYPASS, 그 위 울타리 HOOK, BT 페이지·fn1 BAR 범위 검사, `NWOAS_BT=1`이면 ADT 블루투스 자료 검사. 단계 `WIFI`의 d: bit0 Wi-Fi, bit1 S261, bit2 BT, bit3 리셋 때 울타리 안 닫음.
+- 울타리 여닫기는 실기에서 `hv_map_hook`/`hv_map`(BYPASS로 되돌림) + TLB 무효화입니다 [빌드만].
+- BT 명령(CMD)·FLR 쓰기는 Wi-Fi 명령처럼 다른 CPU를 모으고 시간을 숨깁니다. 울타리를 여닫을 때(ARM 쓰기, Wi-Fi 0xBC 쓰기 포함)도 2단계 표를 바꾸기 전에 다른 CPU를 모읍니다.
+
+호스트 시험(`s264e_offline_test.py`, 11/11 같음)
+- s264C 시험 전체를 S268 모듈 묶음(Python 쪽 진짜 `bt_module.py`)으로: 2단계 매핑 51구간 같음(BT 페이지·fn1 BAR·울타리 포함).
+- 플랜 항목 7개, `s264d_audio_test.py` 10/10, `s264d_wifi_test.py` 28/28, `s264e_bt_test.py` 18/18(실제 ADT 2개의 BT 페이지 + 시나리오 14 + 음성 대조 2).
+
+실기 단계(맥미니 필요, 아직 안 함)
+- (가) `run-s264e-compare-slot.sh <옛 .out> <옛 .link>`.
+- (나) `run-s264e-launch-slot.sh <옛 .out> <옛 .link>`: 콘치님이 보고 계실 때만. 스위치 `S264D_NO_WIFI=1`, `S264D_NO_AUDIO_B=1`, `S264D_AUDIO_PROT=…`(기본 moderate), `S264E_NO_BT=1`, `S264E_S259=1`(S259 모듈 묶음 + S259 페이로드), `S264E_NO_FENCE_WR=1`, 그 밖에 `S264C_*`.
+- 첫 (나) 권장 순서: ① `S264D_NO_WIFI=1 S264D_NO_AUDIO_B=1`(s264C와 같은 동작 + S261 페이지는 꺼진 상태) → ② 소리만 → ③ `S264E_NO_BT=1`로 와이파이까지 → ④ 블루투스까지(기본값).
+- 아직 C에 없는 것: `power-s260/power_module.py`(S268 기본 실행에 들어 있음).
+
+## 13. s264F (2026-11-20 새벽) [빌드만]
+
+결론: s264E에 `power-s260/power_module.py`(S268 실행기가 S262 기본으로 돌리는 그대로)를 C로 옮겼습니다(`src/nwoas_s264_pwr.c`, 단계 19 `PWR`, 설정 깃발 `1<<15` 기본 켬, 설정 칸 `pwr`(옛 `reserved[2]`) 기본 0 = 모든 `NWOAS_PWR_*` 꺼짐). 맥미니에서는 아직 돌리지 않았습니다.
+
+- 바이너리 `out-s264F/m1n1-s264F-agx-hv2-standalone.bin` (2,572,288 B, sha256 `9db7de2ae0ef1a8afb781bc3246d8a33795465524015a166b9998717868fc8ea`), 패치 `out-s264F/hv2-s264E-to-s264F.patch` (sha256 `1b2771bb0fff9a33d5ed1b61e77074fc290bf877b40e857fa6ddf25bc5a52f72`), 재현 `build-s264f.sh <새 폴더>`(A~F 모두 같은 지문).
+- 기본 깃발 `0xbeff`. 순서는 Python과 같습니다: WIFI(bt_module) → PWR → NVME_QD.
+- 옮긴 것: 시작 전의 P_HV_NWOAS_PWR 요청 순서 전부(QUERY, CONFIG, MCC_STAT, [SLC + MCC_STAT], 부팅 표시 = SNAPSHOT [+ SMC_READ]). 기본 S268에서는 CONFIG(0,0,0,0) = HV 초기 상태와 같은 값입니다 [사실: `nwoas_pwr.c:46-75`].
+- 옮기지 않은 것: 작업 출력의 `NWSTAT-MARK`/`NWSTAT-SET` 처리와 맥북의 `hvstats.jsonl`(맥북 통로가 필요), `NWOAS_PWR_SMC_KEYS` 바꾸기(기본 키 6개만).
+- `pwr` 칸: flags 7:0, sec_tick_hz 23:8, timer_gap_us 43:24, print_s 55:44, SLC 56. Python이 거부하는 값(SECTICK 5, TGAP_US 70000, PRINT 4000)은 플랜 오류 `0xb0`입니다.
+- 호스트 시험 `s264f_offline_test.py` 2/2: s264E 시험 전체 + `s264f_pwr_test.py` 16/16(환경 11가지에서 진짜 `power_module.py`와 요청 순서·인자·메모리 쓰기 비교, 거부 3가지, 끔 1가지, 음성 대조 1가지).
+- 실기 단계: `run-s264f-compare-slot.sh`(Python 쪽에 `power_module.py`도 돎), `run-s264f-launch-slot.sh`(스위치 `S264F_NO_PWR=1` 추가).
+- 디스크에서 켜기 계획: `PLAN-4-1-disk-boot.md`.
+
+## 14. s264G + 4-1 1단계 준비 (2026-11-20 새벽) [빌드만]
+
+결론: ① 4-2 자동 시작(맥북이 N초 안에 안 붙으면 ESP의 설정·페이로드로 LAUNCH)을 넣은 s264G, ② 4-1용 1단계 m1n1과 1TR 스크립트·맥북 리허설·ESP 작업을 만들었습니다. 아무것도 실행하지 않았습니다.
+
+- s264G 바이너리 `out-s264G/m1n1-s264G-agx-hv2-standalone.bin` (2,605,056 B, sha256 `d1fea3d73ad7d0d7da562802dbdec88527490dfe5f395d28dbd464a324c43ce6`), 패치 `out-s264G/hv2-s264F-to-s264G.patch` (sha256 `d688e7ebf4fe904b5cd8dbb87c3acbc9c067ad784ea60bf8bd888f6c6655cfa9`), 재현 `build-s264g.sh`(A~G 같은 지문).
+- 자동 시작은 이미지 변수 `nwoas_autostart=<초>`가 있을 때만 켜집니다(ESP의 4-2 `boot.bin`에만 붙임). 맥북이 `chainload.py -r`로 띄우는 s264G에는 이 변수가 없어 s264F와 같습니다.
+- 마감 전에 프록시 장치로 1바이트라도 오면 지금 방식. 마감이 지나면: ESP `m1n1/nowin`이 있으면 계속 맥북 대기, 없으면 `m1n1/nwoas-s264.cfg`(정확히 192 B, 없으면 기본 설정) + `m1n1/nwoas-payload.bin`을 Python 힙 자리(heapblock 위 + 128 MiB)에 읽고 예외 정책 FATAL을 더해 LAUNCH. 실패하면 맥북 대기로 남습니다.
+- ESP 읽기는 m1n1 Rust 코드에 더한 `rust_load_file_into`입니다. 빌드 경로가 바이너리에 들어가지 않게 Makefile에 `--remap-path-prefix`를 더했습니다(재현을 위해).
+- 호스트 시험 `s264g_offline_test.py` 2/2: s264F 시험 전체 + `s264g_auto_test.py` 26/26. 판단 시험 17개 + 진짜 `nvme.rs`·`gpt.rs`·`chainload.rs`를 호스트로 빌드해 4 KiB 섹터 GPT + FAT32 ESP 이미지에서 읽기 9개. 경로 `m1n1\boot.bin`(역슬래시)은 못 찾음 → 1단계 변수는 `m1n1/boot.bin`.
+- 1단계: `stage1/build-stage1.sh` (s264G 트리, `CHAINLOADING=1`, `USE_FB` 끔). `stage1.bin` 2,490,433 B, sha256 `10ebb73b07c6ea5bd974f4aaa46b6d42b6be96ece93448d0b5aade1932066968`, md5 `0cf97ea05c5100e740b74878e0eb85fd`. 다른 폴더에서 다시 빌드해 같음.
+- `stage1/go1.sh`, `stage1/cleanbp-local.sh`, `stage1/run-stage1-rehearsal.sh`(+ 슬롯), `stage1/make-esp-bundles.sh`, ESP 작업, 지문 `stage1/SHA256SUMS`. 순서와 1TR 카드는 `PLAN-4-1-disk-boot.md` 7·8장.
+
+## 15. 4-1 독립 검토 반영 (2026-11-20) [빌드만]
+
+결론: 1TR은 아직 콘치님께 가져가지 않습니다. 맥북 리허설 세 가지(4-2 끝까지, 1단계 + S268 + SSD, 일부러 실패시키기)를 먼저 통과해야 합니다. 자세한 내용은 `PLAN-4-1-disk-boot.md`(0·2·3·4·6·7·8장)에 있습니다. 아무것도 실행하지 않았습니다.
+
+- 1단계 = s264G 소스 + `stage1/hv2-s264G-to-stage1.patch`(sha256 `9588a8f1…89b4`)입니다. raw 1,720,320 B이고, 파일은 D4와 같은 2,097,152 B로 0을 채웠습니다. 두 번 빌드해 같았습니다.
+  - `chainload.c`: preoslog·ADT BootArgs를 `chainload.py`처럼 옮기고, malloc 실패를 검사합니다. 호스트 시험 `stage1/stage1_layout_test.py` 3/3 SAME이고, 고치기 전 코드는 3/3 DIFF였습니다.
+  - `CHAINLOADING` 빌드에서는 예외·SError·Rust panic·`panic()`·assert가 넘기기 전까지 USB 대체 프록시로 갑니다. 그 프록시에서도 P_VECTOR로 넘길 수 있습니다(`nwoas_handover`).
+  - `nwoas_stage1_fault=1` 변수는 리허설에서 예외 길을 시험하는 데만 씁니다.
+  - DART 풀은 `CHAINLOADING`에서만 1쪽입니다. **이 트리로 하이퍼바이저를 `CHAINLOADING=1`로 빌드하지 않습니다.**
+- 하이퍼바이저는 s264G 그대로입니다(다시 재현해 같음). s264H는 없습니다.
+- `s264g_auto_test.py`에 "파일 없음 → rc < 0"을 더했습니다. 27/27입니다(1단계 소스와 s264G 소스 둘 다).
+- 새 스크립트(모두 준비만, 실행 안 함):
+  - `stage1/run-stage1-42-rehearsal.sh` + `chainload_nonop.py`(점프 뒤 맥북 바이트 없음)
+  - `stage1/run-stage1-rehearsal.sh main|missing|fault` + `probe_running_image.py`
+  - `stage1/run-s268-after-stage1.sh`(재부팅 없는 S268 + Q1S/Q2/chkdsk)
+  - `stage1/run-stage1-rehearsal-slot.sh 42|main|negative`(`idle -` 가능)
+  - `stage1/watch-after-go1.sh [--rollback]`(KEEP / HOLD / ROLLBACK)
+  - `stage1/go1.sh [--d4]`: ESP에 쓰지 않고, 되돌리기 줄을 화면에 보여 줌
+- ESP 묶음 `esp-4-1`은 이제 파일 6개입니다: boot.bin(D4), stage1.bin, go1.sh, cleanbp-local.sh, nwoas-s264g.bin, nwoas-payload.bin. 지문은 `stage1/SHA256SUMS`(35개 OK)에 있습니다.

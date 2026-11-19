@@ -89,6 +89,10 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--audio-prot")) /* s264D: 0 sense, 1 moderate, 2 full */
             cfg.audio_prot = strtoull(v, NULL, 0), i++;
 #endif
+#ifdef S264_CFG_F_PWR
+        else if (!strcmp(a, "--pwr")) /* s264F: power_module.py env encoding (nwoas_s264_plan.h) */
+            cfg.pwr = strtoull(v, NULL, 0), i++;
+#endif
         else if (!strcmp(a, "--carveout")) {
             char *end;
             if (in.n_carveouts >= 64)

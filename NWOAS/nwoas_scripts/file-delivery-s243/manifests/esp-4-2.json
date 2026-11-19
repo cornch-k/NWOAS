@@ -1,0 +1,11 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "boot.bin",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/stage1/esp-4-2/boot.bin",
+   "bytes": 2605078,
+   "sha256": "0191520648dfd5c18d7099b7bc7c2ad95c3aa6d0c21218dd1fb11843b35b6272"
+  }
+ ]
+}

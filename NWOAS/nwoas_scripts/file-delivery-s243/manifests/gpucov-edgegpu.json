@@ -1,0 +1,11 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "edgegpu.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/ps/edgegpu.ps1",
+   "bytes": 2553,
+   "sha256": "e032f3a6aa8c8e9e3f5371edfe0d355727fbeb232701e608f94faa7bef91d697"
+  }
+ ]
+}
