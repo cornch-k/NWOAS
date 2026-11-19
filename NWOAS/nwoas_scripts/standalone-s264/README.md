@@ -366,3 +366,49 @@ bash /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/s264-dryru
 5. NS2가 없으면 맥북이 GPU 다시 켜기(D28)를 보낼 수 없어 GPU 드라이버가 첫 시작에 실패할 수 있습니다.
 6. C 실행기의 작업용 자리(ADT 조립 4 MiB, NVMe 16 KiB, 소리 256 KiB)는 Python 힙 맨 위 8 MiB입니다. (나)에서 맥북이 Python 힙을 760 MiB 넘게 쓰면 겹칩니다(스크립트가 펌웨어 묶음 위치를 확인함).
 7. m1n1 힙이 128 MiB를 넘게 자라면 Python 힙과 겹치는 위험은 지금 Python 실행기와 같습니다.
+
+---
+
+## 10. s264C (2026-11-19 밤) [빌드만]
+
+결론: s264B에 ① g262R(ANS 5칸 인터럽트 수정), ② S262 동시 처리 SSD 설정(`S264_STEP_NVME_QD`, 기본 QD 32·인터럽트), ③ 맥북 없이 버틸 예외 정책(`S264_POL_LOCAL` = Python 처리기와 같은 일을 C에서, `S264_POL_FATAL` = 그래도 맥북으로 갈 것은 기록 후 재시작)을 더했습니다. 맥미니에서는 아직 돌리지 않았습니다.
+
+- 10:50 실행에서 맥북으로 넘어온 `EXC_SYNC`의 "20번"은 감시 도구의 출력 상한(`s264_launch.py:87` `seen <= 20`)이고 총수가 아닙니다 [사실]. Python 처리기가 아무 줄도 찍지 않은 것과 S268 부팅의 HV 계수기(바탕화면까지 기타 동기 예외 217~259번)로 보아, Windows의 `BRK`(디버그 서비스 호출)를 Python `handle_brk` → `_lower`가 조용히 게스트로 되돌린 것으로 봅니다 [가설]. s264C는 이것을 C에서 되돌리고 `HVLOG: S264C LOWER #n esr=…` 줄로 남깁니다.
+- 바이너리 `out-s264C/m1n1-s264C-agx-hv2-standalone.bin` (2,424,832 B, sha256 `6e6182c0d7a36ef09174d2c6af96142f5d2534476cf2ca292db18f8b3ce0ae0d`), 패치 `out-s264C/hv2-s264B-to-s264C.patch`, 재현 `build-s264c.sh <새 폴더>`.
+- 호스트 시험: `s264c_offline_test.py` (s264B 15/15 × 2상태 + s264C 6항목 + 음성 대조 4개). 실기 단계: `run-s264c-compare-slot.sh`(미리보기 비교), `run-s264c-launch-slot.sh`(C가 게스트 시작; `S264C_NO_QD=1`·`S264C_NO_LOCAL=1`·`S264C_FATAL=1` 스위치).
+- 옮기지 않은 것: 와이파이 켜기·사실 검사, 소리 B단계, 블루투스. GPU 다시 켜기(D28)는 Windows 시작 작업 `jobs/T1-install-d28-boot-task.cmd`로 준비만 했습니다(설치 전 `T0-disk-check.cmd`로 규칙 확인, GPU 담당과 합의 필요).
+
+## 11. s264D (2026-11-20) [빌드만]
+
+결론: s264C에 ① 소리 B단계·감지 단계·마지막 머리말(`sound-s256/audio_module.py`)과 ② 와이파이 하이퍼바이저 쪽(`NWOAS_WIFI=1`: 부팅 때 강제 끄기, 제어 페이지 안에서 켜기·끄기·설정 창, ADT 사실 검사)을 C로 옮겼습니다. 호스트 비교 시험은 모두 같음이고, 맥미니에서는 아직 돌리지 않았습니다.
+
+- 바이너리 `out-s264D/m1n1-s264D-agx-hv2-standalone.bin` (2,523,136 B, sha256 `2c3127d59814394a34c8f9ad0924fccbd446866bc5dfcc8f889481398a5ac17e`), 패치 `out-s264D/hv2-s264C-to-s264D.patch` (sha256 `f439a05e7a41717ff0a0938aa6ffc919033014c33208f9dbbe8a68af1b830a2f`), 재현 `build-s264d.sh <새 폴더>` (s264A→B→C→D 네 개 모두 같은 지문으로 재현됨).
+- 기본 설정 깃발 `0xeff` = s264C `0x2ff` + `AUDIO_B`(1<<10) + `WIFI_ON`(1<<11). 보호 단계 `audio_prot`(옛 `reserved[1]`) 기본 0 = sense(Python 기본과 같음).
+
+소리(`src/nwoas_s264_audio.c`, 단계 18 `AUDIO_B`)
+- Python 모듈과 proxyclient 드라이버(i2c·admac·mca·nco·dart8020·pmgr)의 레지스터 읽기·쓰기를 같은 순서·같은 값으로 옮겼습니다(`Register.set()`의 읽고-쓰기, 기록 줄용 읽기, 실패 메시지용 다시 읽기까지).
+- 일부러 다르게 한 것: 쓰기마다 20 µs, 기다림 되풀이마다 10 µs 쉼. Python은 접근마다 USB 왕복이 있었고 C는 연달아 하기 때문입니다(m1n1 `i2c.c`·`pmgr.c` 방식) [가설: 실기 필요].
+- DART-sio 페이지 표는 `buf+0x40000`(L1)·`+0x44000`(L2). Python 힙 안·게스트 RAM 아래인지 플랜이 검사합니다.
+- B0 "그대로 통과" 검사는 플랜이 만든 매핑으로 합니다(통과 쪽 시험만 있음). 실패하면 Python처럼 부팅은 계속하고 머리말 상태 0으로 끕니다.
+
+와이파이(`src/nwoas_s264_wifi.c`, 단계 11 `WIFI`의 d = 1)
+- 옮긴 것: `wifi-s259/nwoas_wifi_s259.py`(WifiS259), 그것이 쓰는 `wifi-s257/wifi_up.py`·`wifi-s240/wifi_probe.py`·`wifi_scan.py` 부분, `wifi_module.py`의 사실 검사. 쓰기 허용 목록과 FL1100(포트 1) 전후 비교도 C 쓰기 경로에 그대로 있습니다.
+- S259 의미 그대로입니다(블루투스 S261 제어 페이지·S268 내용은 아직 없음).
+- ADT 사실 검사는 이제 와이파이를 꺼도 플랜 때 돕니다(Python도 두 경우 모두 검사). 거부되는 ADT면 플랜이 멈춥니다.
+- SMC: `smc_get_key_info`를 `smc.c`에 더했습니다 [빌드만]. 시작·키 정보·쓰기·멈춤마다 20 s 기한을 둡니다(`nwoas_pwr.c`와 같은 설정-후-0 방식).
+- 제어 페이지 명령 쓰기(켜기·끄기, 수 초 걸림)는 Python 프록시 때처럼 다른 CPU를 모으고(`hv_rendezvous`) 걸린 시간을 게스트에서 숨깁니다(`hv_add_time`). 근거: `hv_exc.c:71` `time_stealing = true`. `nwoas_scripts`·`port-j274/gpu/hv/tools-hv2`·`m1n1_windows/proxyclient` 전체(`*.py`, `*.sh`)와 `src/*.c`에서 이것을 끄는 곳은 `proxyclient/hv/trace_avd.py`·`trace_codecs.py`(우리 실행기에서 쓰지 않음)뿐입니다. HV 감시견도 그 동안 멈춥니다.
+- DART 무효화 기다림(1000번 읽기)은 되풀이마다 100 µs 쉼 = 100 ms 한도입니다(일부러 다르게 한 것).
+- 남은 위험 [가설]: SMC 기한은 `smc_work`에만 걸립니다. `rtkit.c`의 부팅(646줄)·정지(684·704줄) 기다림은 한도가 없어, SMC가 답하지 않으면 명령 쓰기 안에서 모든 CPU가 모인 채 멈출 수 있습니다(Python은 20 s 알람으로 실패 처리). `dcp.c`·`nwoas_pwr.c`도 같은 함수를 씁니다.
+- 옮기지 않은 것: 사건 JSON·실행 폴더 기록, `wifi_probe.py` 파일 지문 검사, SMC 외 단계 알람(C에서는 MMIO가 USB에 막히지 않음).
+
+호스트 시험(`s264d_offline_test.py`, 12/12 같음)
+- s264C 시험 전체 + AUDIO_B 플랜 7항목 + WIFI d 항목.
+- `s264d_audio_test.py`: 진짜 `audio_module.py`와 C를 같은 가짜 하드웨어에서 돌려 MMIO·클럭·캐시·메모리 기록을 비교, 10/10 같음(보호 3단계 + 실패 주입 7가지).
+- `s264d_wifi_test.py`: 진짜 S259/S257/S240 Python과 C를 S240/S257 가짜 하드웨어(각자 새 사본, 같은 정수 µs 시계)에서 돌려 비교, 28/28 같음(ADT 2개 + 사실 변형 10가지 + 시나리오 13가지 + 음성 대조 3가지).
+- 실기 입출력 함수(`s264a_*`, `s264w_*`), `smc_get_key_info`, 통과 검사의 실패 쪽은 [빌드만]입니다.
+
+실기 단계(맥미니 필요, 아직 안 함)
+- (가) `run-s264d-compare-slot.sh <옛 .out> <옛 .link>`: C 미리보기 vs Python(같은 부팅), 게스트 시작 안 함.
+- (나) `run-s264d-launch-slot.sh <옛 .out> <옛 .link>`: C가 Windows 시작. 스위치 `S264D_NO_WIFI=1`, `S264D_NO_AUDIO_B=1`, `S264D_AUDIO_PROT=sense|moderate|full`(실행 스크립트 기본 moderate), 그 밖에 `S264C_*`.
+- 첫 (나)는 나눠서 권합니다: ① `S264D_NO_WIFI=1 S264D_NO_AUDIO_B=1`(s264C와 같은 동작 확인) → ② 소리만 → ③ 와이파이까지.
+- 페이로드는 아직 S259(`fw-wifi-s259`)입니다. S261 블루투스 페이로드로 바꾸는 것은 블루투스 제어 페이지와 함께 합니다(다음 단계).

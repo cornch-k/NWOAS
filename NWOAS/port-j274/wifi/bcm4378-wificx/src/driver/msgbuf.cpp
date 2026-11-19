@@ -10,10 +10,29 @@
 #define ID_RX        0x3000
 #define N_RX_WANT    256
 
-static void Dbell(PNWOA_DEVICE Dev)
+// s271: which H2D mailbox register rings the ring doorbell (HostReady = FALSE) or the hostready doorbell
+// (TRUE).  s258r: the rev >= 64 (DAR) registers whenever the PCIe2 core is rev >= 64.  DbLegacy bit 1 / 2: the
+// Asahi brcmfmac rule, DAR only when the firmware sets SHARED_DAR, else the legacy H2D_MAILBOX_0/1.
+ULONG NwoaDbellReg(PNWOA_DEVICE Dev, BOOLEAN HostReady)
+{
+    BOOLEAN legacy = !Dev->PciReg64 || (!Dev->Sh.shared_dar && (Dev->Cfg.DbLegacy & (HostReady ? 2u : 1u)));
+    if (HostReady)
+        return legacy ? NB_PCIE2_H2D_MB1 : NB_PCIE2_64_H2D_MB1;
+    return legacy ? NB_PCIE2_H2D_MB0 : NB_PCIE2_64_H2D_MB0;
+}
+
+// s272: Val = the doorbell value (1 as brcmfmac/s271, or a bcmdhd magic value, see Cfg.DbMagic)
+static void DbellV(PNWOA_DEVICE Dev, ULONG Val)
 {
     InterlockedIncrement(&Dev->CntDbell);                  // s258o: counted
-    NwoaRegWrite(Dev, Dev->PciReg64 ? NB_PCIE2_64_H2D_MB0 : NB_PCIE2_H2D_MB0, 1);
+    Dev->DbLastVal = Val;
+    NwoaRegWrite(Dev, NwoaDbellReg(Dev, FALSE), Val);
+}
+
+// H2D ring R got new items up to its write index: 1, or with DbMagic bit 1 the bcmdhd write-pointer magic
+static void Dbell(PNWOA_DEVICE Dev, const NWOA_RING* R)
+{
+    DbellV(Dev, (Dev->Cfg.DbMagic & 1) ? (0xFF000000u | ((ULONG)(R->D.idx & 0xFF) << 16) | (R->WPtr & 0xFFFF)) : 1u);
 }
 
 // ------------------------------------------------------------ DMA memory
@@ -162,7 +181,7 @@ static NTSTATUS Submit(PNWOA_DEVICE Dev, NWOA_RING* R, const UCHAR* Items, ULONG
     KeMemoryBarrier();
     IdxSet(Dev, 0, R->D.idx, R->WPtr);
     KeMemoryBarrier();
-    Dbell(Dev);
+    Dbell(Dev, R);
     if (R == &Dev->Flow)
         InterlockedIncrement(&Dev->CntFlowDbell);          // s258o: doorbells after a connected scan
     return STATUS_SUCCESS;
@@ -313,6 +332,11 @@ NTSTATUS NwoaRingsInit(PNWOA_DEVICE Dev)
     Dev->Flow.Va = Dev->Ctl.Va + Dev->Flow.D.off;
     Dev->Flow.La = Dev->Ctl.La + Dev->Flow.D.off;
     Dev->FlowState = 0;
+    Dev->Spare.D = Dev->L.flow[1];                           // s270 FlowSpare: flow ring id 3
+    Dev->Spare.Va = Dev->Ctl.Va + Dev->Spare.D.off;
+    Dev->Spare.La = Dev->Ctl.La + Dev->Spare.D.off;
+    Dev->SpareState = 0;
+    Dev->SpareRoute = 0;
     if (s->idx_sz) {
         for (ULONG k = 0; k < 4; k++) {
             ULONG64 a = Dev->Ctl.La + Dev->L.idx_off + k * Dev->L.idx_stride;
@@ -379,7 +403,7 @@ NTSTATUS NwoaRingsInit(PNWOA_DEVICE Dev)
             NwoaRegWrite(Dev, mi, st);
     }
     if (s->hostrdy_db1)
-        NwoaRegWrite(Dev, Dev->PciReg64 ? NB_PCIE2_64_H2D_MB1 : NB_PCIE2_H2D_MB1, 1);
+        NwoaRegWrite(Dev, NwoaDbellReg(Dev, TRUE), 1);                // s271: DbLegacy bit 2
 
     KeAcquireSpinLock(&Dev->RingLock, &irql);
     Dev->RingsUp = TRUE;
@@ -535,12 +559,18 @@ static void Dispatch(PNWOA_DEVICE Dev, const UCHAR* It, ULONG Sz, BOOLEAN* RxQue
         if (m.flow_ring_id == Dev->Flow.D.idx && Dev->FlowState == 1) {
             InterlockedExchange(&Dev->FlowState, m.status ? 4 : 2);
             KeSetEvent(&Dev->FlowEvent, IO_NO_INCREMENT, FALSE);
+        } else if (m.flow_ring_id == Dev->Spare.D.idx && Dev->SpareState == 1) {   // s270
+            InterlockedExchange(&Dev->SpareState, m.status ? 4 : 2);
+            KeSetEvent(&Dev->SpareEvent, IO_NO_INCREMENT, FALSE);
         }
         break;
     case NB_MSG_FLOW_RING_DELETE_CMPLT:
         if (m.flow_ring_id == Dev->Flow.D.idx && Dev->FlowState == 3) {
             InterlockedExchange(&Dev->FlowState, 0);
             KeSetEvent(&Dev->FlowEvent, IO_NO_INCREMENT, FALSE);
+        } else if (m.flow_ring_id == Dev->Spare.D.idx && Dev->SpareState == 3) {   // s270
+            InterlockedExchange(&Dev->SpareState, 0);
+            KeSetEvent(&Dev->SpareEvent, IO_NO_INCREMENT, FALSE);
         }
         break;
     case NB_MSG_D2H_MAILBOX_DATA:
@@ -582,7 +612,8 @@ static void Drain(PNWOA_DEVICE Dev, int Which, BOOLEAN* RxQueued, BOOLEAN* TxFre
         return;
     }
     KeMemoryBarrier();
-    if (R->RPtr != w)
+    BOOLEAN any = R->RPtr != w;
+    if (any)
         Dev->LastActivity = (LONG64)KeQueryInterruptTime();
     while (R->RPtr != w && guard++ < R->D.nitem) {
         Dispatch(Dev, R->Va + (SIZE_T)R->RPtr * R->D.itemsz, R->D.itemsz, RxQueued, TxFreed);
@@ -591,6 +622,11 @@ static void Drain(PNWOA_DEVICE Dev, int Which, BOOLEAN* RxQueued, BOOLEAN* TxFre
             IdxSet(Dev, 3, R->D.idx, R->RPtr);
     }
     IdxSet(Dev, 3, R->D.idx, R->RPtr);
+    if (any && (Dev->Cfg.DbMagic & 2) && !Dev->Dead) {    // s272: bcmdhd read-index doorbell (ring ids 2/3/4)
+        KeMemoryBarrier();
+        DbellV(Dev, 0xDD000000u | ((ULONG)Which << 16) | (R->RPtr & 0xFFFF));
+        InterlockedIncrement(&Dev->CntDbRd);
+    }
 }
 
 void NwoaProcess(PNWOA_DEVICE Dev)
@@ -737,12 +773,63 @@ NTSTATUS NwoaGetVar(PNWOA_DEVICE Dev, PCSTR Name, PUCHAR Out, ULONG Len)
 }
 
 // ------------------------------------------------------------- flowring
-NTSTATUS NwoaFlowringCreate(PNWOA_DEVICE Dev, const UCHAR* Da)
+// Open one H2D TX flowring (FLOW_RING_CREATE) and wait up to 2 s for its completion.  s270: shared by the
+// main ring and the FlowSpare ring; for the main ring the item bytes are those of s258r when FlowTid = 0.
+static NTSTATUS RingOpen(PNWOA_DEVICE Dev, NWOA_RING* R, volatile LONG* State, PKEVENT Ev, const UCHAR* Da)
 {
     UCHAR it[64];
     KIRQL irql;
     NTSTATUS st;
     LARGE_INTEGER t;
+    RtlZeroMemory(R->Va, (SIZE_T)R->D.nitem * R->D.itemsz);
+    R->WPtr = R->RPtr = 0;
+    IdxSet(Dev, 0, R->D.idx, 0);
+    IdxSet(Dev, 1, R->D.idx, 0);
+    KeClearEvent(Ev);
+    InterlockedExchange(State, 1);
+    nb_enc_flowring_create(it, Dev->Ring[NB_RING_CTRL_SUBMIT].D.itemsz, 0, R->D.idx, Da, Dev->Mac,
+                           NwoaFlowTidFifo(Dev->Cfg.FlowTid), R->D.nitem, R->D.itemsz, R->La);
+    KeAcquireSpinLock(&Dev->RingLock, &irql);
+    st = SubmitCtl(Dev, it);
+    KeReleaseSpinLock(&Dev->RingLock, irql);
+    if (!NT_SUCCESS(st)) {
+        InterlockedExchange(State, 0);
+        return st;
+    }
+    t.QuadPart = -2 * 10000;
+    for (ULONG64 dl = KeQueryInterruptTime() + 2ull * 10000000ull; *State == 1 && KeQueryInterruptTime() < dl;) {   // 2 s
+        KeWaitForSingleObject(Ev, Executive, KernelMode, FALSE, &t);
+        NwoaProcess(Dev);
+    }
+    return *State == 2 ? STATUS_SUCCESS : STATUS_IO_TIMEOUT;
+}
+
+static void RingClose(PNWOA_DEVICE Dev, NWOA_RING* R, volatile LONG* State, PKEVENT Ev)
+{
+    UCHAR it[64];
+    KIRQL irql;
+    LARGE_INTEGER t;
+    if (*State != 2) {
+        InterlockedExchange(State, 0);
+        return;
+    }
+    KeClearEvent(Ev);
+    InterlockedExchange(State, 3);
+    nb_enc_flowring_delete(it, Dev->Ring[NB_RING_CTRL_SUBMIT].D.itemsz, 0, R->D.idx);
+    KeAcquireSpinLock(&Dev->RingLock, &irql);
+    (void)SubmitCtl(Dev, it);
+    KeReleaseSpinLock(&Dev->RingLock, irql);
+    t.QuadPart = -2 * 10000;
+    for (ULONG64 dl = KeQueryInterruptTime() + 2ull * 10000000ull; *State == 3 && KeQueryInterruptTime() < dl;) {
+        KeWaitForSingleObject(Ev, Executive, KernelMode, FALSE, &t);
+        NwoaProcess(Dev);
+    }
+    InterlockedExchange(State, 0);
+}
+
+NTSTATUS NwoaFlowringCreate(PNWOA_DEVICE Dev, const UCHAR* Da)
+{
+    NTSTATUS st;
     if (Dev->FlowState == 2 && RtlEqualMemory(Dev->FlowDa, Da, 6))
         return STATUS_SUCCESS;
     if (Dev->FlowState == 2)
@@ -764,52 +851,29 @@ NTSTATUS NwoaFlowringCreate(PNWOA_DEVICE Dev, const UCHAR* Da)
         Dev->EapolPending = 0;
         KeReleaseSpinLock(&Dev->TxLock, tl);
     }
-    RtlZeroMemory(Dev->Flow.Va, (SIZE_T)Dev->Flow.D.nitem * Dev->Flow.D.itemsz);
-    Dev->Flow.WPtr = Dev->Flow.RPtr = 0;
-    IdxSet(Dev, 0, Dev->Flow.D.idx, 0);
-    IdxSet(Dev, 1, Dev->Flow.D.idx, 0);
     RtlCopyMemory(Dev->FlowDa, Da, 6);
-    KeClearEvent(&Dev->FlowEvent);
-    InterlockedExchange(&Dev->FlowState, 1);
-    nb_enc_flowring_create(it, Dev->Ring[NB_RING_CTRL_SUBMIT].D.itemsz, 0, Dev->Flow.D.idx, Da, Dev->Mac,
-                           0, Dev->Flow.D.nitem, Dev->Flow.D.itemsz, Dev->Flow.La);
-    KeAcquireSpinLock(&Dev->RingLock, &irql);
-    st = SubmitCtl(Dev, it);
-    KeReleaseSpinLock(&Dev->RingLock, irql);
-    if (!NT_SUCCESS(st)) {
-        InterlockedExchange(&Dev->FlowState, 0);
-        return st;
-    }
-    t.QuadPart = -2 * 10000;
-    for (ULONG64 dl = KeQueryInterruptTime() + 2ull * 10000000ull; Dev->FlowState == 1 && KeQueryInterruptTime() < dl;) {   // 2 s
-        KeWaitForSingleObject(&Dev->FlowEvent, Executive, KernelMode, FALSE, &t);
-        NwoaProcess(Dev);
-    }
+    st = RingOpen(Dev, &Dev->Flow, &Dev->FlowState, &Dev->FlowEvent, Da);
     NwoaDiagDword(Dev, L"NwoaFlowState", (ULONG)Dev->FlowState);
-    return Dev->FlowState == 2 ? STATUS_SUCCESS : STATUS_IO_TIMEOUT;
+    if (!NT_SUCCESS(st))
+        return st;
+    // s270 FlowSpare: the second ring, same da/tid, opened after the main one; it stays idle until a probe.
+    // A failure here never fails the main ring.
+    InterlockedExchange(&Dev->SpareRoute, 0);
+    if (Dev->Cfg.FlowSpare && Dev->SpareState != 2) {
+        if (Dev->Spare.D.idx >= Dev->Sh.max_sub || !NT_SUCCESS(RingOpen(Dev, &Dev->Spare, &Dev->SpareState,
+                                                                         &Dev->SpareEvent, Da))) {
+            InterlockedIncrement(&Dev->CntSpareOpenFail);
+            InterlockedExchange(&Dev->SpareState, 0);
+        }
+    }
+    return STATUS_SUCCESS;
 }
 
 void NwoaFlowringDelete(PNWOA_DEVICE Dev)
 {
-    UCHAR it[64];
-    KIRQL irql;
-    LARGE_INTEGER t;
-    if (Dev->FlowState != 2) {
-        InterlockedExchange(&Dev->FlowState, 0);
-        return;
-    }
-    KeClearEvent(&Dev->FlowEvent);
-    InterlockedExchange(&Dev->FlowState, 3);
-    nb_enc_flowring_delete(it, Dev->Ring[NB_RING_CTRL_SUBMIT].D.itemsz, 0, Dev->Flow.D.idx);
-    KeAcquireSpinLock(&Dev->RingLock, &irql);
-    (void)SubmitCtl(Dev, it);
-    KeReleaseSpinLock(&Dev->RingLock, irql);
-    t.QuadPart = -2 * 10000;
-    for (ULONG64 dl = KeQueryInterruptTime() + 2ull * 10000000ull; Dev->FlowState == 3 && KeQueryInterruptTime() < dl;) {
-        KeWaitForSingleObject(&Dev->FlowEvent, Executive, KernelMode, FALSE, &t);
-        NwoaProcess(Dev);
-    }
-    InterlockedExchange(&Dev->FlowState, 0);
+    InterlockedExchange(&Dev->SpareRoute, 0);
+    RingClose(Dev, &Dev->Spare, &Dev->SpareState, &Dev->SpareEvent);     // s270: no-op unless open
+    RingClose(Dev, &Dev->Flow, &Dev->FlowState, &Dev->FlowEvent);
 }
 
 // One Ethernet frame (<= 2048 bytes): copy into a TX slot and post TX_POST.
@@ -853,10 +917,16 @@ NTSTATUS NwoaTxFrame(PNWOA_DEVICE Dev, const UCHAR* Eth, ULONG Len)
 
     PUCHAR b = Dev->TxPool.Va + (SIZE_T)slot * NWOA_SLOT_SIZE;
     RtlCopyMemory(b, Eth, Len);
-    nb_enc_tx_post(it, Dev->Flow.D.itemsz, 0, slot + 1, Eth, 0,
+    nb_enc_tx_post(it, Dev->Flow.D.itemsz, 0, slot + 1, Eth, (UCHAR)Dev->Cfg.FlowTid,
                    Dev->TxPool.La + (ULONG64)slot * NWOA_SLOT_SIZE + 14, (USHORT)(Len - 14));
     KeAcquireSpinLock(&Dev->RingLock, &irql);
-    st = Dev->FlowState == 2 ? Submit(Dev, &Dev->Flow, it, 1) : STATUS_DEVICE_NOT_READY;
+    if (Dev->SpareRoute && Dev->SpareState == 2 && InterlockedExchange(&Dev->SpareRoute, 0)) {
+        st = Submit(Dev, &Dev->Spare, it, 1);                   // s270 FlowSpare probe: this one frame only
+        if (NT_SUCCESS(st))
+            InterlockedIncrement(&Dev->CntSpareTx);
+    } else {
+        st = Dev->FlowState == 2 ? Submit(Dev, &Dev->Flow, it, 1) : STATUS_DEVICE_NOT_READY;
+    }
     KeReleaseSpinLock(&Dev->RingLock, irql);
     if (!NT_SUCCESS(st)) {
         OnTxStatus(Dev, slot + 1, 0);                          // give the slot back
@@ -939,6 +1009,7 @@ void NwoaEvtPollTimer(WDFTIMER Timer)
     static ULONG64 lastDiag;
     ULONG64 now;
     InterlockedIncrement(&Dev->CntPoll);
+    NwoaMbAckTick(Dev);                                           // s270: no-op unless MbAck=1
     NwoaProcess(Dev);
     now = KeQueryInterruptTime();
     // interrupt on trial: no ISR within 3 s of rings up although messages were handled -> poll only
@@ -1098,10 +1169,40 @@ void NwoaFlowKick(PNWOA_DEVICE Dev)
         KeMemoryBarrier();
         IdxSet(Dev, 0, Dev->Flow.D.idx, Dev->Flow.WPtr);
         KeMemoryBarrier();
-        Dbell(Dev);
+        Dbell(Dev, &Dev->Flow);
         InterlockedIncrement(&Dev->CntFlowDbell);
     }
     KeReleaseSpinLock(&Dev->RingLock, irql);
+}
+
+// s270 FlowSpare: host write pointer / firmware read index of the spare flowring
+BOOLEAN NwoaSpareIdx(PNWOA_DEVICE Dev, ULONG* W, ULONG* R)
+{
+    KIRQL irql;
+    BOOLEAN ok;
+    KeAcquireSpinLock(&Dev->RingLock, &irql);
+    ok = Dev->RingsUp && Dev->Ctl.Va && Dev->SpareState == 2 && !Dev->Dead;
+    *W = ok ? Dev->Spare.WPtr : 0xFFFFFFFFu;
+    *R = ok ? IdxGet(Dev, 1, Dev->Spare.D.idx) : 0xFFFFFFFFu;
+    KeReleaseSpinLock(&Dev->RingLock, irql);
+    return ok;
+}
+
+// s270 MbAck: brcmf_pcie_isr_thread reads MAILBOXINT and writes the value back before it handles the rings;
+// in poll mode s258r never clears it (NwoaMb int=1 stays set).  Same window guard as NwoaMbPollTick.
+void NwoaMbAckTick(PNWOA_DEVICE Dev)
+{
+    if (!Dev->Cfg.MbAck || !Dev->RingsUp || Dev->Dead || !Dev->Bar0 || Dev->IrqMode == 2)
+        return;
+    if (!(Dev->WindowValid && Dev->CurWindow == Dev->Pcie2Base))
+        return;
+    ULONG mi = Dev->PciReg64 ? NB_PCIE2_64_MAILBOXINT : NB_PCIE2_MAILBOXINT;
+    ULONG st = NwoaRegRead(Dev, mi);
+    if (st && st != 0xFFFFFFFF) {
+        NwoaRegWrite(Dev, mi, st);
+        InterlockedIncrement(&Dev->CntMbAck);
+        Dev->MbAckLast = st;
+    }
 }
 
 // s258p: FLOW_RING_RESUME (bcmdhd dhd_prot_flow_ring_resume: if_id, request_id 0, flow_ring_id) on the

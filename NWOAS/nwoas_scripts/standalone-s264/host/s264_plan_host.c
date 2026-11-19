@@ -43,6 +43,18 @@ int main(int argc, char **argv)
     const char *adt_path = NULL, *ba_path = NULL, *out_path = NULL, *wifi_path = NULL;
     s264_default_config(&cfg);
     in.iodev = S264_IODEV_USB0;
+#ifdef S264_POL_LOCAL /* s264C plan header only: the s264B source (build-s264.sh) still compiles */
+    /* s264C: --lower SPSR VBAR CODE  -> "ok NEW_SPSR NEW_ELR" or "refused" (s264_lower_calc) */
+    if (argc == 5 && !strcmp(argv[1], "--lower")) {
+        u64 ns = 0, ne = 0;
+        if (s264_lower_calc(strtoull(argv[2], NULL, 0), strtoull(argv[3], NULL, 0),
+                            (u32)strtoul(argv[4], NULL, 0), &ns, &ne))
+            printf("ok 0x%llx 0x%llx\n", (unsigned long long)ns, (unsigned long long)ne);
+        else
+            printf("refused\n");
+        return 0;
+    }
+#endif
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : "";
         if (!strcmp(a, "--adt"))
@@ -69,6 +81,14 @@ int main(int argc, char **argv)
             cfg.payload_size = strtoull(v, NULL, 0), i++;
         else if (!strcmp(a, "--flags"))
             cfg.flags = (u32)strtoul(v, NULL, 0), i++;
+#ifdef S264_POL_LOCAL
+        else if (!strcmp(a, "--nvme-qd")) /* s264C: depth | flags << 32 */
+            cfg.nvme_qd = strtoull(v, NULL, 0), i++;
+#endif
+#ifdef S264_CFG_F_AUDIO_B
+        else if (!strcmp(a, "--audio-prot")) /* s264D: 0 sense, 1 moderate, 2 full */
+            cfg.audio_prot = strtoull(v, NULL, 0), i++;
+#endif
         else if (!strcmp(a, "--carveout")) {
             char *end;
             if (in.n_carveouts >= 64)

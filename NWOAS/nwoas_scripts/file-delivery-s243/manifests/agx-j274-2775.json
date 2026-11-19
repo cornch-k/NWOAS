@@ -1,0 +1,53 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "AppleAgxRenderAdmission.sys",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261119-2115-p39/package/AppleAgxRenderAdmission.sys",
+   "bytes": 654096,
+   "sha256": "2c451f39a30c7d98c4b309bd130ad8f7cb397d15834ab7b57eaa5636685128e3"
+  },
+  {
+   "name": "AppleAgxRenderAdmissionUmd.dll",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261119-2115-p39/package/AppleAgxRenderAdmissionUmd.dll",
+   "bytes": 14848,
+   "sha256": "9b3d5876b97ceeb5d873dc67231305aee7db2de52bbaa37cd07ee3125e5ec1de"
+  },
+  {
+   "name": "AppleAgxRenderAdmissionUmdArm64.dll",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261119-2115-p39/package/AppleAgxRenderAdmissionUmdArm64.dll",
+   "bytes": 13522944,
+   "sha256": "4210c890b80144f549f5535134fe896873e323a9782871216f9ab234f5351687"
+  },
+  {
+   "name": "AppleAgxRenderAdmissionUmdX64.dll",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261119-2115-p39/package/AppleAgxRenderAdmissionUmdX64.dll",
+   "bytes": 14092288,
+   "sha256": "825cf0f079683359a6d9dfcd716eb7280667d7ac7c47361d76bf9d84118d9fd2"
+  },
+  {
+   "name": "AppleAgxRenderAdmission.arm64x.inf",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261119-2115-p39/package/AppleAgxRenderAdmission.arm64x.inf",
+   "bytes": 4290,
+   "sha256": "2352da497e6d7c0aad893b54588edafa4ba8996d3df8e5e26ee7ef2e2edda4ca"
+  },
+  {
+   "name": "appleagxrenderadmission.cat",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261119-2115-p39/package/appleagxrenderadmission.cat",
+   "bytes": 4112,
+   "sha256": "a261e41ba6c2e3c0bc158f9edc1a6e09839c9d8b13fafc7186f561a0cdcdcbfb"
+  },
+  {
+   "name": "nwgpuprobe14-arm64.exe",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/bin/nwgpuprobe14-arm64.exe",
+   "bytes": 290816,
+   "sha256": "4c5432fe80882bb5e99236e63f0bfe3c75268826274f9829dfe680f1d3ef4c50"
+  },
+  {
+   "name": "nwgpuprobe14-x64.exe",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/bin/nwgpuprobe14-x64.exe",
+   "bytes": 313856,
+   "sha256": "8badfe35fbf69c28d9b5809a9e48d4480a078dee3bed899d11ecd3f9278c8971"
+  }
+ ]
+}

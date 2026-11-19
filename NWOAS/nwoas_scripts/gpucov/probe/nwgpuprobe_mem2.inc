@@ -21,6 +21,9 @@
 static UINT g_ladder[16] = {1792, 2048, 2304, 2560, 3072};
 static UINT g_ladderCount = 5;
 static UINT g_settleMs = 0;
+// probe14 (after 2774 K43u/K43v: the first 64 MiB staging buffer was outside the pool before the first copy at
+// 2304/2560): "order=bigfirst" creates the big DEFAULT buffer BEFORE the UPLOAD/READBACK staging buffers.
+static bool g_bigFirst = false;
 
 static double MemQpcAgeMs(UINT64 qpc, UINT64 freq) {
   LARGE_INTEGER now, f;
@@ -137,23 +140,29 @@ static void TestMemLadder2() {
           pd ? MemU64(d, 272) / MiB : 0ull, pd ? MemU64(d, 24) * g / MiB : 0ull);
     }
     ID3D12Resource *up = nullptr, *rb = nullptr, *big = nullptr;
+    const UINT64 bytes = (UINT64)mib * MiB, chunks = bytes / kMemChunk;
+    const UINT32 seed = 0x5266u + mib;
+    ULONGLONG t0 = 0, createMs = 0;
+    HRESULT hr = E_FAIL;
+    auto makeBig = [&]() {
+      t0 = GetTickCount64();
+      hr = D12Buffer(s.dev, D3D12_HEAP_TYPE_DEFAULT, bytes, D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_COMMON,
+                     &big);
+      createMs = GetTickCount64() - t0;
+    };
+    if (g_bigFirst) makeBig();  // probe14
     HRESULT hu = D12Buffer(s.dev, D3D12_HEAP_TYPE_UPLOAD, kMemChunk, D3D12_RESOURCE_FLAG_NONE,
                            D3D12_RESOURCE_STATE_GENERIC_READ, &up);
     HRESULT hb = D12Buffer(s.dev, D3D12_HEAP_TYPE_READBACK, kMemChunk, D3D12_RESOURCE_FLAG_NONE,
                            D3D12_RESOURCE_STATE_COPY_DEST, &rb);
     if (FAILED(hu) || FAILED(hb)) {
-      Out("memladder2 size_mib=%u staging upload_hr=0x%08lx readback_hr=0x%08lx", mib, (unsigned long)hu,
-          (unsigned long)hb);
-      Rel(up); Rel(rb); D12Close(s);
+      Out("memladder2 size_mib=%u staging upload_hr=0x%08lx readback_hr=0x%08lx order=%s", mib, (unsigned long)hu,
+          (unsigned long)hb, g_bigFirst ? "bigfirst" : "stagingfirst");
+      Rel(big); Rel(up); Rel(rb); D12Close(s);
       if (!firstFail) firstFail = mib;
       continue;
     }
-    const UINT64 bytes = (UINT64)mib * MiB, chunks = bytes / kMemChunk;
-    const UINT32 seed = 0x5266u + mib;
-    ULONGLONG t0 = GetTickCount64();
-    HRESULT hr = D12Buffer(s.dev, D3D12_HEAP_TYPE_DEFAULT, bytes, D3D12_RESOURCE_FLAG_NONE,
-                           D3D12_RESOURCE_STATE_COMMON, &big);
-    ULONGLONG createMs = GetTickCount64() - t0;
+    if (!g_bigFirst) makeBig();
     HRESULT r0 = s.dev->GetDeviceRemovedReason();
     Sleep(500);
     HRESULT r1 = s.dev->GetDeviceRemovedReason();
@@ -222,10 +231,11 @@ static void TestMemLadder2() {
     if (pass) largestPass = mib; else if (!firstFail) firstFail = mib;
     Out("memladder2 d3d12 size_mib=%u create_hr=0x%08lx create_ms=%llu removed_at_create=0x%08lx "
         "removed_500ms=0x%08lx stage=%s chunks_ok=%llu/%llu mismatches=%llu first_bad=0x%llx got=0x%08x want=0x%08x "
-        "local_usage_mib=%llu local_budget_mib=%llu removed=0x%08lx ms=%llu result=%s",
+        "local_usage_mib=%llu local_budget_mib=%llu removed=0x%08lx ms=%llu result=%s order=%s",
         mib, (unsigned long)hr, createMs, (unsigned long)r0, (unsigned long)r1, stage, chunksOk, chunks, mism, bad,
         got, want, (unsigned long long)(l.CurrentUsage / MiB), (unsigned long long)(l.Budget / MiB),
-        (unsigned long)removed, (unsigned long long)(GetTickCount64() - t0), pass ? "PASS" : "FAIL");
+        (unsigned long)removed, (unsigned long long)(GetTickCount64() - t0), pass ? "PASS" : "FAIL",
+        g_bigFirst ? "bigfirst" : "stagingfirst");
     Rel(big);
     Rel(up);
     Rel(rb);

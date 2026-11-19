@@ -945,6 +945,7 @@ static void ScanStartFw(PNWOA_DEVICE Dev, BOOLEAN Self)
             Dev->ScanEvBase124 = Dev->EvAllCnt[NB_E_CCA_CHAN_QUAL];
             Dev->ScanEvBase120 = Dev->EvAllCnt[NB_E_MSCH];
         }
+        NwoaSnapTake(Dev, 0);                                     // s273: firmware RAM before the escan
         RtlZeroMemory(&c, sizeof(c));
         c.PmBefore = ReadPm(Dev);
         c.StartMs = NowMs();
@@ -1101,17 +1102,62 @@ static void SfDelay10(void)
     KeDelayExecutionThread(KernelMode, FALSE, &d);
 }
 
+// s270 FlowSpare probe: the main ring is stuck after the scan.  The next TX frame goes to the spare ring
+// (open and idle since the connect, so it also went through the scan).  Up to 1 s for a frame to come, then
+// 300 ms for the firmware to take it.  Only records; the caller goes on with doorbell + re-create.
+static void SpareProbe(PNWOA_DEVICE Dev)
+{
+    ULONG w0, r0, w, r;
+    if (!NwoaSpareIdx(Dev, &w0, &r0))
+        return;
+    InterlockedExchange(&Dev->SpareRoute, 1);
+    int i;
+    for (i = 0; i < 100; i++) {                                   // 1 s for a frame
+        SfDelay10();
+        if (!NwoaSpareIdx(Dev, &w, &r) || w != w0)
+            break;
+    }
+    InterlockedExchange(&Dev->SpareRoute, 0);
+    if (!NwoaSpareIdx(Dev, &w, &r))
+        return;
+    if (w == w0) {
+        InterlockedIncrement(&Dev->CntSpareNoFrame);
+        Dev->SpareLast = 3;
+        return;
+    }
+    for (i = 0; i < 30; i++) {                                    // 300 ms for the firmware to read it
+        if (r == w) {
+            InterlockedIncrement(&Dev->CntSpareAlive);
+            Dev->SpareLast = 1;
+            return;
+        }
+        SfDelay10();
+        if (!NwoaSpareIdx(Dev, &w, &r))
+            return;
+    }
+    if (r == w) {
+        InterlockedIncrement(&Dev->CntSpareAlive);
+        Dev->SpareLast = 1;
+        return;
+    }
+    InterlockedIncrement(&Dev->CntSpareStuck);
+    Dev->SpareLast = 2;
+}
+
 // items posted after the scan were not taken: (s258p RSM: FLOW_RING_RESUME first,) doorbell once
 // more, then delete + create
 static void SfFix(PNWOA_DEVICE Dev, NWOA_SFREC* R)
 {
     ULONG w, r;
     InterlockedIncrement(&Dev->CntSfStuck);
+    NwoaSnapTake(Dev, 1);                                         // s273: stuck, before any fix
     SfFwView(Dev, R);
     if (Dev->Cfg.ScanFlowCheck == 3) {
         R->Verdict = NWOA_SF_STUCKREC;
         return;
     }
+    if (Dev->Cfg.FlowSpare)                                       // s270: record only, before any fix
+        SpareProbe(Dev);
     if ((R->Bits & NB_CAND_RSM) && NT_SUCCESS(NwoaFlowResume(Dev))) {
         for (int i = 0; i < 10; i++) {                            // 100 ms
             SfDelay10();
@@ -1215,9 +1261,18 @@ static void ScanFlowAfter(PNWOA_DEVICE Dev, BOOLEAN Self, ULONG StartMs, ULONG E
         InterlockedIncrement(&Dev->CntSfAlive);
         rec.Verdict = NWOA_SF_ALIVE;
         SfFwView(Dev, &rec);
+        NwoaSnapTake(Dev, 1);                                     // s273: a scan without the stall (control)
+        NwoaSnapReport(Dev, 2, rec.Verdict);
         break;
     case NB_FW_STUCK:
         SfFix(Dev, &rec);
+        if (rec.Verdict == NWOA_SF_REFRESH) {                     // s273: 0.3 s after the re-create
+            for (int i = 0; i < 30; i++)
+                SfDelay10();
+            NwoaSnapTake(Dev, 2);
+            NwoaSnapReport(Dev, 3, rec.Verdict);
+        } else
+            NwoaSnapReport(Dev, 2, rec.Verdict);
         break;
     case NB_FW_IDLE:
         // nothing posted yet: the 2 s diag tick goes on watching for 30 s (SfArmTick)

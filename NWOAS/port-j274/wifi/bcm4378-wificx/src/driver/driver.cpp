@@ -67,6 +67,7 @@ NTSTATUS NwoaEvtDeviceAdd(WDFDRIVER Driver, PWDFDEVICE_INIT DeviceInit)
     ExInitializeFastMutex(&Dev->IoctlMutex);
     KeInitializeEvent(&Dev->IoctlEvent, NotificationEvent, FALSE);
     KeInitializeEvent(&Dev->FlowEvent, NotificationEvent, FALSE);
+    KeInitializeEvent(&Dev->SpareEvent, NotificationEvent, FALSE);       // s270
     KeInitializeEvent(&Dev->ConnEvent, NotificationEvent, FALSE);
     Dev->IoType = NB_IO_TYPE_D11AC;
     Dev->RadioOn = TRUE;
@@ -218,6 +219,8 @@ NTSTATUS NwoaEvtReleaseHardware(WDFDEVICE Device, WDFCMRESLIST Trans)
     PNWOA_DEVICE Dev = NwoaGetDevice(Device);
     NwoaShutdown(Dev);
     NwoaFreeFiles(Dev);
+    NwoaSnapFree(Dev);                        // s273
+    Dev->SnapN = 0;
     NwoaUnmapResources(Dev);
     Dev->Interrupt = NULL;                    // created in PrepareHardware, deleted by the framework
     Dev->HaveIntRes = FALSE;

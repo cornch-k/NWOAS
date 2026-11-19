@@ -1,0 +1,282 @@
+--- a/drivers/apple-agx/render-admission/include/render_admission.h
++++ b/drivers/apple-agx/render-admission/include/render_admission.h
+@@ -1585,6 +1585,45 @@
+  * paging receipt work item). Callers fill Context->PagingExecFailure under
+  * PagingExecFailureLock first. IRQL <= DISPATCH_LEVEL. */
+ void AdmissionRecordPagingExecFailure(_In_opt_ ADMISSION_CONTEXT *Context);
++/* P39 (NWOAS-J274, recording only): Wom1PoolTimeline, the last 64 page-table
++ * updates VidMm sent for allocations of 16 MiB or more (segment id and
++ * segment-3 offset as VidMm gave them), their destruction, and every
++ * placement census that found pages outside segment 3 (the rc107 repair's
++ * NOT_POOL answer). Updates of one allocation are folded (receipts.c). A
++ * census entry, or the end of an allocation of 1 GiB or more, stages the
++ * whole ring for the paging receipt work item, which writes and flushes it
++ * (at most ADMISSION_POOL_TIMELINE_WRITES times per KMD start); the first
++ * census of a start is also kept in Wom1PoolTimelineFirst. The values
++ * survive reboots: StartQpc/WrittenQpc tell a reader which start wrote it.
++ * Nothing here changes a placement, a segment set or a result. */
++#define ADMISSION_POOL_TIMELINE_VERSION 1u
++#define ADMISSION_POOL_TIMELINE_ENTRIES 64u
++#define ADMISSION_POOL_TIMELINE_WRITES 64u
++#define ADMISSION_POOL_TIMELINE_MIN_BYTES 0x1000000ULL
++#define ADMISSION_POOL_TIMELINE_UPDATE 1u  /* UpdatePageTable (AdmissionG3PoolPlace) */
++#define ADMISSION_POOL_TIMELINE_DESTROY 2u /* DestroyAllocation */
++#define ADMISSION_POOL_TIMELINE_CENSUS 3u  /* placement census answered NOT_POOL */
++typedef struct _ADMISSION_POOL_TIMELINE_ENTRY {
++  unsigned long long Qpc, Sequence;
++  unsigned long long Allocation, AllocationBytes;
++  /* UPDATE: update->FirstPteVirtualAddress / AllocationOffsetInBytes; CENSUS:
++   * the queried GPU VA / first non-pool VA. */
++  unsigned long long Va, AllocationOffset;
++  /* Segment-3 offset of allocation offset 0 from the first segment-3 PTE
++   * (UPDATE), the KMD placement base (DESTROY); ~0: none. */
++  unsigned long long PoolBase;
++  unsigned int Pages, PoolPages, OtherPages, FirstSegment;
++  unsigned int CpuVisible, OsProcessId, Kind, Reserved;
++} ADMISSION_POOL_TIMELINE_ENTRY; /* 88 bytes */
++typedef struct _ADMISSION_POOL_TIMELINE {
++  unsigned int Version, Bytes, EntryBytes, Capacity;
++  unsigned long long Total, Writes, CensusEvents;
++  unsigned long long QpcFrequency, StartQpc, WrittenQpc;
++  ADMISSION_POOL_TIMELINE_ENTRY Ring[ADMISSION_POOL_TIMELINE_ENTRIES];
++} ADMISSION_POOL_TIMELINE;
++/* IRQL <= DISPATCH_LEVEL. Kind CENSUS also stages the ring for writing. */
++void AdmissionRecordPoolTimeline(_In_opt_ ADMISSION_CONTEXT *Context,
++                                 _In_ const ADMISSION_POOL_TIMELINE_ENTRY *Entry);
+ /* M2-f3 receipt Wom1M2PoolDemand (staged; written by a work item). */
+ void AdmissionRecordM2PoolDemand(
+     _In_opt_ ADMISSION_CONTEXT *Context,
+--- a/drivers/apple-agx/render-admission/src/allocation_windows.c
++++ b/drivers/apple-agx/render-admission/src/allocation_windows.c
+@@ -795,6 +795,21 @@
+         (ADMISSION_ALLOCATION_HANDLE *)Args->pAllocationList[index];
+ #if defined(APPLE_AGX_GPUVA_G3_QUALIFICATION)
+     AdmissionGpuvaG3InvalidateAllocation(context, allocation);
++    /* P39 (recording only): a large allocation's end, for Wom1PoolTimeline. */
++    if (context->PoolDemand != NULL &&
++        allocation->Object.Description.Size >=
++            ADMISSION_POOL_TIMELINE_MIN_BYTES) {
++      ADMISSION_POOL_TIMELINE_ENTRY e;
++      RtlZeroMemory(&e, sizeof(e));
++      e.Kind = ADMISSION_POOL_TIMELINE_DESTROY;
++      e.Allocation = (ULONGLONG)(ULONG_PTR)allocation;
++      e.AllocationBytes = allocation->Object.Description.Size;
++      e.PoolBase = allocation->PoolPlacement.Bytes != 0ULL ?
++          allocation->PoolPlacement.Base : MAXULONGLONG;
++      e.FirstSegment = 0xffu;
++      e.CpuVisible = allocation->Object.Description.CpuVisible ? 1u : 0u;
++      AdmissionRecordPoolTimeline(context, &e);
++    }
+     /* M2-f3: the segment-3 placement ends with the allocation. */
+     AdmissionMemoryPoolForget(context, &allocation->PoolPlacement);
+     /* M2-f5: so does its reservation. */
+--- a/drivers/apple-agx/render-admission/src/gpuva_g3_paging_windows.c
++++ b/drivers/apple-agx/render-admission/src/gpuva_g3_paging_windows.c
+@@ -477,6 +477,35 @@
+       ((key & (ULONGLONG)(sizeof(ULONG_PTR) - 1u)) != 0ULL ||
+        handle->Object.Magic != ADMISSION_ALLOCATION_OBJECT_MAGIC))
+     handle = NULL;
++  /* P39 (recording only): what VidMm sent for a large allocation. */
++  if (handle != NULL &&
++      handle->Object.Description.Size >= ADMISSION_POOL_TIMELINE_MIN_BYTES) {
++    ADMISSION_POOL_TIMELINE_ENTRY e;
++    RtlZeroMemory(&e, sizeof(e));
++    e.Kind = ADMISSION_POOL_TIMELINE_UPDATE;
++    e.Allocation = key;
++    e.AllocationBytes = handle->Object.Description.Size;
++    e.Va = update->FirstPteVirtualAddress;
++    e.AllocationOffset = update->AllocationOffsetInBytes;
++    e.PoolBase = MAXULONGLONG;
++    e.FirstSegment = 0xffu;
++    e.CpuVisible = handle->Object.Description.CpuVisible ? 1u : 0u;
++    e.OsProcessId = process != NULL ? process->OsProcessId : 0u;
++    for (i = first; i < first + count; ++i) {
++      if (!ptes[i].Flags) continue;
++      ++e.Pages;
++      if (e.FirstSegment == 0xffu) e.FirstSegment = ptes[i].SegmentId;
++      if (ptes[i].SegmentId != ADMISSION_MEMORY_POOL_SEGMENT) {
++        ++e.OtherPages;
++        continue;
++      }
++      ++e.PoolPages;
++      if (e.PoolBase == MAXULONGLONG &&
++          ptes[i].GuestIpa - pool_ipa >= ptes[i].AllocationOffset)
++        e.PoolBase = ptes[i].GuestIpa - pool_ipa - ptes[i].AllocationOffset;
++    }
++    AdmissionRecordPoolTimeline(adapter, &e);
++  }
+   for (i = first; i < first + count; ++i) {
+     ULONGLONG offset;
+     if (!ptes[i].Flags) continue;
+--- a/drivers/apple-agx/render-admission/src/gpuva_g3_windows.c
++++ b/drivers/apple-agx/render-admission/src/gpuva_g3_windows.c
+@@ -1871,6 +1871,23 @@
+     }
+     q.Reserved2 = poolPages | (otherPages << 32);
+     if (otherPages) {
++      /* P39 (recording only): stage the placement timeline. */
++      ADMISSION_POOL_TIMELINE_ENTRY e;
++      RtlZeroMemory(&e, sizeof(e));
++      e.Kind = ADMISSION_POOL_TIMELINE_CENSUS;
++      e.Allocation = (ULONGLONG)(ULONG_PTR)allocation;
++      e.AllocationBytes = allocation->Object.Description.Size;
++      e.Va = q.GpuVa;
++      e.AllocationOffset = firstOther - q.GpuVa;
++      e.PoolBase = allocation->PoolPlacement.Bytes != 0ULL ?
++          allocation->PoolPlacement.Base : MAXULONGLONG;
++      e.Pages = (unsigned int)(poolPages + otherPages);
++      e.PoolPages = (unsigned int)poolPages;
++      e.OtherPages = (unsigned int)otherPages;
++      e.FirstSegment = 0xffu;
++      e.CpuVisible = allocation->Object.Description.CpuVisible ? 1u : 0u;
++      e.OsProcessId = p->OsProcessId;
++      AdmissionRecordPoolTimeline(adapter, &e);
+       q.Reason = APPLE_AGX_G3_NATIVE_QUERY_NOT_POOL;
+       q.FailedVa = firstOther;
+     } else if (firstAbsent) {
+--- a/drivers/apple-agx/render-admission/src/receipts.c
++++ b/drivers/apple-agx/render-admission/src/receipts.c
+@@ -2074,7 +2074,8 @@
+   AdmissionPagingReceiptBrokerFailures = 256u,
+   AdmissionPagingReceiptNativePteRefusal = 2048u,
+   AdmissionPagingReceiptLiveWait = 4096u,
+-  AdmissionPagingReceiptExecFailure = 8192u /* P38 */
++  AdmissionPagingReceiptExecFailure = 8192u, /* P38 */
++  AdmissionPagingReceiptPoolTimeline = 16384u /* P39 */
+ };
+ typedef struct _ADMISSION_PAGING_RECEIPTS {
+   KSPIN_LOCK Lock;
+@@ -2094,6 +2095,13 @@
+   ADMISSION_NATIVE_PTE_REFUSAL NativePteRefusal;
+   ADMISSION_G3_LIVE_WAIT_RECEIPT LiveWait;
+   ADMISSION_PAGING_EXEC_FAILURE ExecFailure; /* P38 */
++  /* P39: ring appended under Lock by AdmissionRecordPoolTimeline; only
++   * the serial worker copies it into the snapshot it writes. */
++  ADMISSION_POOL_TIMELINE Timeline;
++  ADMISSION_POOL_TIMELINE TimelineSnapshot;
++  /* Set by the first census of a KMD start: the worker also writes the
++   * snapshot to Wom1PoolTimelineFirst, which later writes keep. */
++  ULONG TimelineFirstPending, TimelineFirstSnapshot;
+   /* Only the serial worker writes this snapshot. Keep the 3912-byte buffer
+    * off the kernel stack; publishers touch LiveWait under Lock only. */
+   ADMISSION_G3_LIVE_WAIT_RECEIPT LiveWaitSnapshot;
+@@ -2198,6 +2206,12 @@
+     if (dirty & AdmissionPagingReceiptLiveWait)
+       RtlCopyMemory(&receipts->LiveWaitSnapshot, &receipts->LiveWait,
+                     sizeof(receipts->LiveWaitSnapshot));
++    if (dirty & AdmissionPagingReceiptPoolTimeline) {
++      RtlCopyMemory(&receipts->TimelineSnapshot, &receipts->Timeline,
++                    sizeof(receipts->TimelineSnapshot));
++      receipts->TimelineFirstSnapshot = receipts->TimelineFirstPending;
++      receipts->TimelineFirstPending = 0u;
++    }
+     receipts->Dirty = 0u;
+     RtlCopyMemory(&flush, &receipts->Flush, sizeof(flush));
+     RtlCopyMemory(&failure, &receipts->Failure, sizeof(failure));
+@@ -2223,6 +2237,15 @@
+           &receipts->LiveWaitSnapshot, sizeof(receipts->LiveWaitSnapshot), FALSE);
+     if (dirty & AdmissionPagingReceiptDdiStatus)
+       AdmissionWriteDdiStatuses(context);
++    if (dirty & AdmissionPagingReceiptPoolTimeline)
++      /* P39, flushed: the device removal that follows must keep it. */
++    {
++      AdmissionPagingReceiptWrite(context, L"Wom1PoolTimeline",
++          &receipts->TimelineSnapshot, sizeof(receipts->TimelineSnapshot), TRUE);
++      if (receipts->TimelineFirstSnapshot)
++        AdmissionPagingReceiptWrite(context, L"Wom1PoolTimelineFirst",
++            &receipts->TimelineSnapshot, sizeof(receipts->TimelineSnapshot), TRUE);
++    }
+     if (dirty & AdmissionPagingReceiptExecFailure)
+       /* Flushed: the device removal that follows must keep it. */
+       AdmissionPagingReceiptWrite(context, L"Wom1PagingExecFailure", &exec,
+@@ -2717,6 +2740,90 @@
+                               &copy);
+ }
+ 
++_Use_decl_annotations_ void AdmissionRecordPoolTimeline(
++    ADMISSION_CONTEXT *Context, const ADMISSION_POOL_TIMELINE_ENTRY *Entry) {
++  ADMISSION_PAGING_RECEIPTS *receipts;
++  ADMISSION_POOL_TIMELINE *t;
++  BOOLEAN write = FALSE;
++  LARGE_INTEGER frequency;
++  ULONGLONG now;
++  KIRQL oldIrql;
++  if (Context == NULL || Entry == NULL || KeGetCurrentIrql() > DISPATCH_LEVEL)
++    return;
++  receipts = (ADMISSION_PAGING_RECEIPTS *)Context->PagingReceipts;
++  if (receipts == NULL) return;
++  now = (ULONGLONG)KeQueryPerformanceCounter(&frequency).QuadPart;
++  KeAcquireSpinLock(&receipts->Lock, &oldIrql);
++  t = &receipts->Timeline;
++  if (t->Version == 0u) {
++    t->Version = ADMISSION_POOL_TIMELINE_VERSION;
++    t->Bytes = (unsigned int)sizeof(*t);
++    t->EntryBytes = (unsigned int)sizeof(t->Ring[0]);
++    t->Capacity = ADMISSION_POOL_TIMELINE_ENTRIES;
++    t->QpcFrequency = (unsigned long long)frequency.QuadPart;
++    t->StartQpc = now;
++  }
++  {
++    /* VidMm maps a large allocation with one UpdatePageTable per leaf table
++     * (hundreds per GiB). Fold an update into one of the last four entries
++     * of the same allocation, process and placement class (segment 3 or
++     * not): Pages/PoolPages/OtherPages add up, Va/AllocationOffset/PoolBase
++     * stay the first update's, Reserved counts folded updates and Qpc is
++     * the latest. */
++    ADMISSION_POOL_TIMELINE_ENTRY *e = NULL;
++    ULONGLONG back;
++    if (Entry->Kind == ADMISSION_POOL_TIMELINE_UPDATE) {
++      for (back = 1u; back <= 4u && back <= t->Total; ++back) {
++        ADMISSION_POOL_TIMELINE_ENTRY *c =
++            &t->Ring[(t->Total - back) % ADMISSION_POOL_TIMELINE_ENTRIES];
++        if (c->Kind == ADMISSION_POOL_TIMELINE_UPDATE &&
++            c->Allocation == Entry->Allocation &&
++            c->OsProcessId == Entry->OsProcessId &&
++            (c->PoolPages != 0u) == (Entry->PoolPages != 0u) &&
++            (c->OtherPages != 0u) == (Entry->OtherPages != 0u) &&
++            (c->PoolBase == MAXULONGLONG || Entry->PoolBase == MAXULONGLONG ||
++             c->PoolBase == Entry->PoolBase)) {
++          e = c;
++          break;
++        }
++      }
++    }
++    if (e != NULL) {
++      e->Pages += Entry->Pages;
++      e->PoolPages += Entry->PoolPages;
++      e->OtherPages += Entry->OtherPages;
++      if (e->PoolBase == MAXULONGLONG) e->PoolBase = Entry->PoolBase;
++      ++e->Reserved;
++      e->Qpc = now;
++    } else {
++      e = &t->Ring[t->Total % ADMISSION_POOL_TIMELINE_ENTRIES];
++      *e = *Entry;
++      e->Qpc = now;
++      e->Reserved = 0u;
++      e->Sequence = ++t->Total;
++    }
++  }
++  /* Written: every census that found pages outside segment 3, and the end
++   * of every allocation of 1 GiB or more (so a passing size is on record
++   * too), at most ADMISSION_POOL_TIMELINE_WRITES times per KMD start. */
++  if (Entry->Kind == ADMISSION_POOL_TIMELINE_CENSUS ||
++      (Entry->Kind == ADMISSION_POOL_TIMELINE_DESTROY &&
++       Entry->AllocationBytes >= 0x40000000ULL)) {
++    if (Entry->Kind == ADMISSION_POOL_TIMELINE_CENSUS &&
++        ++t->CensusEvents == 1u)
++      receipts->TimelineFirstPending = 1u;
++    if (t->Writes < ADMISSION_POOL_TIMELINE_WRITES) {
++      ++t->Writes;
++      t->WrittenQpc = now;
++      write = TRUE;
++    }
++  }
++  KeReleaseSpinLock(&receipts->Lock, oldIrql);
++  if (write)
++    AdmissionPagingReceiptStage(Context, AdmissionPagingReceiptPoolTimeline,
++                                NULL);
++}
++
+ _Use_decl_annotations_ void AdmissionRecordM2PoolDemand(
+     ADMISSION_CONTEXT *Context, const ADMISSION_POOL_DEMAND_RECEIPT *Receipt) {
+   if (Context == NULL || Receipt == NULL) return;

@@ -1,0 +1,714 @@
+File s264B-base/data/bootlogo_128.png is a unknown type while file b/data/bootlogo_128.png is a unknown type
+File s264B-base/data/bootlogo_256.png is a unknown type while file b/data/bootlogo_256.png is a unknown type
+File s264B-base/data/bootlogo_48.png is a unknown type while file b/data/bootlogo_48.png is a unknown type
+diff -ruN --exclude build s264B-base/src/hv_exc.c b/src/hv_exc.c
+--- s264B-base/src/hv_exc.c	2026-11-19 02:42:19
++++ b/src/hv_exc.c	2026-11-19 23:37:32
+@@ -153,6 +153,10 @@
+ 
+ void hv_exc_proxy(struct exc_info *ctx, uartproxy_boot_reason_t reason, u32 type, void *extra)
+ {
++    /* s264C: S264_POL_LOCAL takes the UPMC FIQ like Python; S264_POL_FATAL logs and reboots
++     * instead of waiting for a MacBook that is not there (does not return then). */
++    if (nwoas_s264_proxy_policy(ctx, (u32)reason, type))
++        return;
+     /*
+      * Wait while another CPU is pinned or being switched to.
+      * If a CPU switch is requested, handle it before actually handling the
+@@ -1928,6 +1932,9 @@
+                 return true;
+         }
+ #undef S264_PASS
++        /* s264C: the rest of proxyclient handle_msr (shadow / skip / xlate / unknown) */
++        if (nwoas_s264_msr_policy(ctx, reg, rt, is_read))
++            return true;
+     }
+ 
+     return false;
+@@ -2241,11 +2248,17 @@
+ 
+     hv_exc_entry();
+ 
++    bool s264_lowered = false;
+     switch (ec) {
+         case ESR_EC_DABORT_LOWER:
+             hv_wdt_breadcrumb('D');
+             handled = hv_handle_dabort(ctx);
+             break;
++        case ESR_EC_BRK:
++            /* s264C: proxyclient handle_brk (hv/__init__.py:1297-1300): ISS != 0x4242 -> _lower */
++            if (nwoas_s264_traps_armed && FIELD_GET(ESR_ISS, ctx->esr) != 0x4242)
++                handled = s264_lowered = nwoas_s264_lower(ctx);
++            break;
+         case ESR_EC_MSR:
+             hv_wdt_breadcrumb('M');
+             handled = hv_handle_msr(ctx, FIELD_GET(ESR_ISS, ctx->esr));
+@@ -2262,7 +2275,8 @@
+ 
+     if (handled) {
+         hv_wdt_breadcrumb('+');
+-        ctx->elr += 4;
++        if (!s264_lowered) /* s264C: a reflected exception enters the guest vector instead */
++            ctx->elr += 4;
+     } else {
+         hv_wdt_breadcrumb('-');
+         // VM code can forward a nested SError exception here
+diff -ruN --exclude build s264B-base/src/nvme.c b/src/nvme.c
+--- s264B-base/src/nvme.c	2026-11-19 02:15:22
++++ b/src/nvme.c	2026-11-19 23:34:48
+@@ -7,6 +7,7 @@
+ #include "mcc.h"
+ #include "memory.h"
+ #include "nvme.h"
++#include "nwoas_ans_irq.h" /* NWOAS S262 g262R */
+ #include "pmgr.h"
+ #include "rtkit.h"
+ #include "sart.h"
+@@ -827,16 +828,30 @@
+            tag < NVME_QD_FIRST_TAG + (int)nvme_qd.depth;
+ }
+ 
+-static u32 nvme_qd_find_irq(void)
++/* g262R: ADT lookup only (no side effects), so the hypervisor can decide before anything is
++ * set up whether the engine may run.  Returns the AIC line (> 0) or -reason (nwoas_ans_irq.h);
++ * *ncells / *index say which cell of /arm-io/ans "interrupts" was used. */
++int nvme_qd_probe_irq(u32 *ncells, u32 *index)
+ {
++    *ncells = 0;
++    *index = 0;
+     int node = adt_path_offset(adt, "/arm-io/ans");
+-    u32 len = 0;
+-    const u32 *irqs = node < 0 ? NULL : adt_getprop(adt, node, "interrupts", &len);
+-    if (!irqs || len != 4 || !irqs[0] || irqs[0] >= 0x1000) {
+-        printf("nvme: S262 /arm-io/ans interrupts unusable (len=%u): polling only\n", len);
+-        return 0;
+-    }
+-    return irqs[0];
++    if (node < 0)
++        return -NWOAS_ANS_IRQ_NO_NODE;
++    u32 len = 0, parent = 0, aic_ph = 0, irq = 0;
++    const u32 *irqs = adt_getprop(adt, node, "interrupts", &len);
++    if (!irqs)
++        return -NWOAS_ANS_IRQ_NO_PROP;
++    *ncells = len / 4;
++    if (adt_getprop_copy(adt, node, "interrupt-parent", &parent, sizeof(parent)) < 0)
++        parent = 0;
++    int aic_node = adt_path_offset(adt, "/arm-io/aic");
++    if (aic_node < 0 || adt_getprop_copy(adt, aic_node, "AAPL,phandle", &aic_ph, sizeof(aic_ph)) < 0)
++        aic_ph = 0;
++    int r = nwoas_ans_irq_pick(irqs, len, parent, aic_ph, aic ? aic->nr_irq : 0, &irq, index);
++    if (r)
++        return -r;
++    return irq;
+ }
+ 
+ static bool nvme_qd_recreate_ioq(void)
+@@ -877,7 +892,8 @@
+     return nvme_exec_command(&adminq, &cmd, NULL);
+ }
+ 
+-int nvme_qd_setup(u32 depth, bool want_irq)
++/* g262R: irq = the line from nvme_qd_probe_irq() (0 = polling only, an explicit opt-in). */
++int nvme_qd_setup(u32 depth, u32 irq)
+ {
+     if (!nvme_initialized)
+         return -1;
+@@ -890,7 +906,6 @@
+         return -4;
+     memset(prp, 0, NVME_QUEUE_SIZE * SZ_4K);
+ 
+-    u32 irq = want_irq ? nvme_qd_find_irq() : 0;
+     if (irq && !nvme_qd_recreate_ioq()) {
+         /* The I/O queue state is unknown now: refuse; the launcher must stop. */
+         printf("nvme: S262 I/O queue re-create with IRQ enable FAILED\n");
+diff -ruN --exclude build s264B-base/src/nvme.h b/src/nvme.h
+--- s264B-base/src/nvme.h	2026-11-19 02:15:22
++++ b/src/nvme.h	2026-11-19 23:34:48
+@@ -42,11 +42,13 @@
+     u64 bad_tag, inval_fail, stash_max, sync_cmds, sync_drain_waits;
+ };
+ extern volatile u32 nwoas_nvmeqd_irq_live; /* AIC line owned by the HV, 0 = none */
+-/* Pre-guest only, I/O idle.  want_irq re-creates I/O CQ 1 with interrupts enabled.
+- * Returns the AIC IRQ (>0), 0 = polling only, or an error: -1 ANS not initialized,
++/* g262R: ADT /arm-io/ans completion line (> 0) or -reason (nwoas_ans_irq.h).  No side effects. */
++int nvme_qd_probe_irq(u32 *ncells, u32 *index);
++/* Pre-guest only, I/O idle.  irq != 0 re-creates I/O CQ 1 with interrupts enabled.
++ * Returns irq (>= 0), or an error: -1 ANS not initialized,
+  * -2 engine already active, -3 depth out of range, -4 PRP memory allocation failed,
+  * -5 I/O queue re-create with IRQ enable failed (I/O queue may be unusable). */
+-int nvme_qd_setup(u32 depth, bool want_irq);
++int nvme_qd_setup(u32 depth, u32 irq);
+ bool nvme_qd_active(void);
+ bool nvme_qd_faulted(void);
+ int nvme_qd_alloc(void);
+diff -ruN --exclude build s264B-base/src/nwoas_ans_irq.h b/src/nwoas_ans_irq.h
+--- s264B-base/src/nwoas_ans_irq.h	1970-01-01 09:00:00
++++ b/src/nwoas_ans_irq.h	2026-11-19 23:34:48
+@@ -0,0 +1,64 @@
++/* SPDX-License-Identifier: MIT */
++/* NWOAS S262 (g262R): pick the ANS2 NVMe completion interrupt out of the ADT /arm-io/ans node.
++ *
++ * Header-only and free of m1n1 state so the host test (tools-hv2/hosttest/test_ansirq_g262R.c)
++ * runs this exact code against the real J274 ADT dump.
++ *
++ * Observed (J274, iBoot-8422.141.2 / macOS 13.5 ADT dump 2026-11-16, adt.bin sha256 32e63706...):
++ *   /arm-io/ans  interrupt-parent = 0x5f (= /arm-io/aic AAPL,phandle)
++ *                interrupts       = 48 02 00 00 47 02 00 00 4a 02 00 00 49 02 00 00 4e 02 00 00
++ *                                 = 584, 583, 586, 585, 590   (20 bytes, 5 cells)
++ * Linux arch/arm64/boot/dts/apple/t8103.dtsi gives the four ASC mailbox lines 583..586 to
++ * ans_mbox (send-empty, send-not-empty, recv-empty, recv-not-empty) and AIC_IRQ 590 to
++ * nvme@27bcc0000 (the apple,nvme-ans2 completion interrupt).  g262Q accepted only a 4-byte
++ * property, so it found no line on this machine and fell back to polling.
++ *
++ * Rule: 1 cell -> that cell; 5 cells -> the 5th (the line that is not one of the four
++ * mailbox lines); anything else is refused (no guessing).  The parent must be the AIC. */
++#ifndef NWOAS_ANS_IRQ_H
++#define NWOAS_ANS_IRQ_H
++
++enum {
++    NWOAS_ANS_IRQ_OK = 0,
++    NWOAS_ANS_IRQ_NO_NODE = 2,     /* no /arm-io/ans */
++    NWOAS_ANS_IRQ_NO_PROP = 3,     /* no interrupts property */
++    NWOAS_ANS_IRQ_CELLS = 4,       /* cell count is not 1 or 5 (or length not a multiple of 4) */
++    NWOAS_ANS_IRQ_PARENT = 5,      /* interrupt-parent missing or not the AIC phandle */
++    NWOAS_ANS_IRQ_RANGE = 6,       /* line 0 or >= the AIC line count */
++    NWOAS_ANS_IRQ_MAILBOX = 7,     /* 5 cells but the 5th repeats one of the first four */
++};
++
++/* cells/len: the interrupts property; parent: interrupt-parent (0 = missing); aic_phandle:
++ * /arm-io/aic AAPL,phandle (0 = unknown); nr_irq: AIC line count (0 = unknown, then < 0x1000).
++ * Returns 0 and sets *irq / *index, or one of the reasons above. */
++static inline int nwoas_ans_irq_pick(const unsigned int *cells, unsigned int len, unsigned int parent,
++                                     unsigned int aic_phandle, unsigned int nr_irq,
++                                     unsigned int *irq, unsigned int *index)
++{
++    *irq = 0;
++    *index = 0;
++    if (!cells)
++        return NWOAS_ANS_IRQ_NO_PROP;
++    if (!parent || !aic_phandle || parent != aic_phandle)
++        return NWOAS_ANS_IRQ_PARENT;
++    if (len % 4)
++        return NWOAS_ANS_IRQ_CELLS;
++    unsigned int n = len / 4, i;
++    if (n == 1)
++        i = 0;
++    else if (n == 5)
++        i = 4;
++    else
++        return NWOAS_ANS_IRQ_CELLS;
++    for (unsigned int k = 0; k < i; k++)
++        if (cells[k] == cells[i])
++            return NWOAS_ANS_IRQ_MAILBOX;
++    unsigned int limit = nr_irq ? nr_irq : 0x1000;
++    if (!cells[i] || cells[i] >= limit)
++        return NWOAS_ANS_IRQ_RANGE;
++    *irq = cells[i];
++    *index = i;
++    return NWOAS_ANS_IRQ_OK;
++}
++
++#endif
+diff -ruN --exclude build s264B-base/src/nwoas_nvmeqd.inc b/src/nwoas_nvmeqd.inc
+--- s264B-base/src/nwoas_nvmeqd.inc	2026-11-19 02:42:19
++++ b/src/nwoas_nvmeqd.inc	2026-11-19 23:34:48
+@@ -23,14 +23,20 @@
+  *    (CSTS.CFS), exactly like a failed synchronous command today.
+  *  - Before the guest I/O queues are disabled, re-armed or reset, all in-flight
+  *    commands are waited for (their DMA targets guest memory).
++ * g262R: the ANS line comes from the 5-cell /arm-io/ans "interrupts" of the J274 ADT (5th
++ * cell, 590 in the 13.5 dump); with no usable line the engine stays off (QD-off path) unless
++ * QD_F_POLL; a stuck line switches the engine off for the rest of the boot.
+  * HARDWARE-UNVERIFIED.  Build success is not boot success.
+  */
+ #define NWOAS_QD_F_IRQ    1u /* complete by the ANS interrupt (else tick/doorbell polling only) */
+ #define NWOAS_QD_F_STRICT 2u /* FUA / no-cache writes run alone */
+ #define NWOAS_QD_F_NOKICK 4u /* do not IPI the NVMe IRQ CPU after posting on another CPU */
+-#define NWOAS_QD_F_ALL    7u
++#define NWOAS_QD_F_POLL   8u /* g262R: allow the engine without the ANS interrupt (experiment only:
++                              * completions then wait for the 200 us tick, hardware 2026-11-19 halved
++                              * rand4k IOPS that way).  Without it, no interrupt = engine off. */
++#define NWOAS_QD_F_ALL    15u
+ #define NWOAS_QD_SIG      0x53323632ULL /* "S262" */
+-#define NWOAS_QD_VERSION  2ULL /* g262Q: refusal reason codes */
++#define NWOAS_QD_VERSION  3ULL /* g262R: ADT 5-cell ANS interrupt, engine off without IRQ */
+ 
+ enum { NWOAS_QD_FREE = 0, NWOAS_QD_RW, NWOAS_QD_FLUSH, NWOAS_QD_CHAIN };
+ enum { NWOAS_QD_CTX_SQDB = 0, NWOAS_QD_CTX_CQDB, NWOAS_QD_CTX_TICK, NWOAS_QD_CTX_IRQ,
+@@ -65,6 +71,8 @@
+ 
+ static struct {
+     bool active, barrier, irq_storm;
++    bool fell_back;   /* g262R: engine switched itself off (stuck IRQ) -> synchronous path */
++    u32 off_reason;   /* g262R: last "engine off" reason of action 24 (NWOAS_QD_OFF_*) */
+     u32 depth, flags, irq, busy, idle_empty_irqs;
+     struct nwoas_qd_slot slot[64];
+     struct nwoas_qd_stats st;
+@@ -502,8 +510,22 @@
+             nwoas_qd.irq_storm = true;
+             nwoas_qd.st.storm++;
+             nvme_qd_irq_disarm();
++            if (!(nwoas_qd.flags & NWOAS_QD_F_POLL)) {
++                /* g262R: polling-only completions cost about half the IOPS (tick-bound), so
++                 * go back to the one-at-a-time synchronous path for the rest of this boot.
++                 * Nothing is in flight here (busy == 0); not-yet-fetched guest commands are
++                 * picked up by the synchronous path's deferred tick. */
++                nwoas_qd.active = false;
++                nwoas_qd.fell_back = true;
++                nwoas_nvme_fp.deferred = nwoas_nvme_fp.armed && !nwoas_nvme_fp.faulted &&
++                                         nwoas_nvme_fp.sq_head != nwoas_nvme_fp.sq_tail;
++                printf("NWOAS-S262 NVMe QD engine OFF: ANS IRQ looks stuck (32 empty IRQs, "
++                       "nothing in flight) -> synchronous path\n");
++                nwoas_qd_finish(before);
++                return;
++            }
+             printf("NWOAS-S262 ANS IRQ looks stuck (32 empty IRQs, nothing in flight): "
+-                   "polling only\n");
++                   "polling only (QD_POLL)\n");
+         }
+     }
+     nwoas_qd_fetch(ctx, NWOAS_QD_CTX_IRQ);
+@@ -529,6 +551,14 @@
+     NWOAS_QD_R_SETUP = 10,   /* nvme_qd_setup() failed, sub = its negative code */
+ };
+ 
++/* g262R: "engine off, synchronous path, nothing set up" answers
++ * (NWOAS_QD_OFF_SIG << 32) | (ncells << 16) | reason (bit 63 clear).  reason 1 = the launcher
++ * asked for no interrupt (NWOAS_NVME_QD_IRQ=0) without NWOAS_NVME_QD_POLL=1; 2..7 = the ADT
++ * lookup result of nvme_qd_probe_irq() (nwoas_ans_irq.h); ncells = /arm-io/ans interrupt cells. */
++#define NWOAS_QD_OFF_SIG          0x51444f46ULL /* "FODQ" */
++#define NWOAS_QD_OFF(r, ncells)   ((NWOAS_QD_OFF_SIG << 32) | ((u64)((ncells) & 0xff) << 16) | (r))
++#define NWOAS_QD_OFF_IRQ_DISABLED 1
++
+ static u64 nwoas_qd_config(u64 depth, u64 flags)
+ {
+     if (nwoas_qd.active)
+@@ -556,19 +586,37 @@
+         return NWOAS_QD_REFUSE(NWOAS_QD_R_QUEUES, 0);
+     if (s229_enabled && (s229_front.control.csts & 1))
+         return NWOAS_QD_REFUSE(NWOAS_QD_R_ENABLED, 0);
+-    int irq = nvme_qd_setup(depth, flags & NWOAS_QD_F_IRQ);
+-    if (irq < 0)
+-        return NWOAS_QD_REFUSE(NWOAS_QD_R_SETUP, (u8)-irq);
+-    if (!irq)
++    /* g262R: find the interrupt first (ADT read only).  Without it the engine would complete
++     * commands only from the 200 us tick, which halved rand4k IOPS on hardware (2026-11-19),
++     * so unless QD_POLL asks for that experiment the engine stays off and nothing is set up:
++     * the I/O path is then byte-for-byte the QD-off path. */
++    u32 ncells = 0, index = 0;
++    int irq = 0;
++    if (flags & NWOAS_QD_F_IRQ)
++        irq = nvme_qd_probe_irq(&ncells, &index);
++    if (irq <= 0) {
++        u32 why = (flags & NWOAS_QD_F_IRQ) ? (u32)-irq : NWOAS_QD_OFF_IRQ_DISABLED;
++        if (!(flags & NWOAS_QD_F_POLL)) {
++            nwoas_qd.off_reason = why;
++            printf("NWOAS-S262 NVMe QD engine OFF (reason %u, /arm-io/ans cells %u): "
++                   "synchronous path\n", why, ncells);
++            return NWOAS_QD_OFF(why, ncells);
++        }
++        irq = 0;
+         flags &= ~(u64)NWOAS_QD_F_IRQ;
++    }
++    int r = nvme_qd_setup(depth, irq);
++    if (r < 0)
++        return NWOAS_QD_REFUSE(NWOAS_QD_R_SETUP, (u8)-r);
+     memset(&nwoas_qd, 0, sizeof(nwoas_qd));
+     nwoas_qd.depth = depth;
+     nwoas_qd.flags = flags;
+     nwoas_qd.irq = irq;
+     nwoas_qd.active = true;
+-    printf("NWOAS-S262 NVMe QD=%lu flags=0x%lx irq=%d armed (CPU %d)\n", depth, flags, irq,
+-           nwoas_qd_icpu());
+-    return (1ULL << 63) | ((u64)irq << 32) | (depth << 8) | flags;
++    printf("NWOAS-S262 NVMe QD engine ON: QD=%lu flags=0x%lx irq=%d (cell %u of %u) (CPU %d)\n",
++           depth, flags, irq, index, ncells, nwoas_qd_icpu());
++    return (1ULL << 63) | ((u64)irq << 32) | ((u64)(index & 0xff) << 24) |
++           ((u64)(ncells & 0xff) << 16) | (depth << 8) | flags;
+ }
+ 
+ static u64 nwoas_qd_snapshot(u64 ptr, u64 size)
+@@ -580,7 +628,9 @@
+     nvme_qd_get_info(&in);
+     o->sig_version = (NWOAS_QD_SIG << 32) | NWOAS_QD_VERSION;
+     o->depth = nwoas_qd.depth;
+-    o->flags = nwoas_qd.flags | ((u64)nwoas_qd.irq_storm << 8) | ((u64)nwoas_qd.barrier << 9);
++    o->flags = nwoas_qd.flags | ((u64)nwoas_qd.irq_storm << 8) | ((u64)nwoas_qd.barrier << 9) |
++               ((u64)nwoas_qd.fell_back << 10) | ((u64)(nwoas_qd.off_reason & 0xff) << 16) |
++               ((u64)nwoas_qd.active << 24);
+     o->irq = nwoas_qd.irq;
+     o->eng_active = in.active;
+     o->eng_depth = in.depth;
+diff -ruN --exclude build s264B-base/src/nwoas_s264.c b/src/nwoas_s264.c
+--- s264B-base/src/nwoas_s264.c	2026-11-19 02:41:40
++++ b/src/nwoas_s264.c	2026-11-19 23:49:16
+@@ -19,6 +19,8 @@
+  */
+ #include "nwoas_s264.h"
+ #include "nwoas_s264_plan.h"
++#include "exception.h" /* s264C: struct exc_info */
++#include "smp.h"       /* s264C: MAX_CPUS */
+ 
+ #include "adt.h"
+ #include "cpu_regs.h"
+@@ -42,6 +44,7 @@
+ 
+ bool nwoas_s264_traps_armed;
+ struct nwoas_s264_counters nwoas_s264_cnt;
++u32 nwoas_s264_policy; /* s264C: S264_POL_* (0 = s264B: forward everything C does not take) */
+ 
+ extern u64 nwoas_nvme_fastpath_control(u64 action, u64 sq_base, u64 sq_size, u64 cq_base,
+                                        u64 cq_size, u64 flags);
+@@ -194,6 +197,125 @@
+     return true;
+ }
+ 
++/* ------------------------------------------------------- s264C exception policy */
++/* Shadow sysregs of proxyclient handle_msr (hv/__init__.py:754-797): MDSCR_EL1, VMSA_LOCK_EL1,
++ * DBGBVR/BCR n < 5, DBGWVR/WCR n < 4 (len(self._bps) = 5, len(self._wps) = 4, :144-146). */
++#define S264_SHADOW_N 20
++static u64 s264_shadow[MAX_CPUS][S264_SHADOW_N];
++
++static int s264_shadow_slot(u32 op0, u32 op1, u32 crn, u32 crm, u32 op2)
++{
++    if (op0 == 2 && op1 == 0 && crn == 0 && crm == 2 && op2 == 2)
++        return 0; /* MDSCR_EL1 */
++    if (op0 == 3 && op1 == 4 && crn == 15 && crm == 1 && op2 == 2)
++        return 1; /* VMSA_LOCK_EL1 (tools/apple_regs.json) */
++    if (op0 == 2 && op1 == 0 && crn == 0) {
++        if (op2 == 4 && crm < 5)
++            return 2 + crm; /* DBGBVRn_EL1 */
++        if (op2 == 5 && crm < 5)
++            return 7 + crm; /* DBGBCRn_EL1 */
++        if (op2 == 6 && crm < 4)
++            return 12 + crm; /* DBGWVRn_EL1 */
++        if (op2 == 7 && crm < 4)
++            return 16 + crm; /* DBGWCRn_EL1 */
++    }
++    return -1;
++}
++
++bool nwoas_s264_msr_policy(struct exc_info *ctx, u64 reg, u64 rt, bool is_read)
++{
++    if (!(nwoas_s264_policy & S264_POL_LOCAL))
++        return false;
++    u32 op0 = (u32)((reg & ESR_ISS_MSR_OP0) >> ESR_ISS_MSR_OP0_SHIFT);
++    u32 op1 = (u32)((reg & ESR_ISS_MSR_OP1) >> ESR_ISS_MSR_OP1_SHIFT);
++    u32 crn = (u32)((reg & ESR_ISS_MSR_CRn) >> ESR_ISS_MSR_CRn_SHIFT);
++    u32 crm = (u32)((reg & ESR_ISS_MSR_CRm) >> ESR_ISS_MSR_CRm_SHIFT);
++    u32 op2 = (u32)((reg & ESR_ISS_MSR_OP2) >> ESR_ISS_MSR_OP2_SHIFT);
++    u64 *regs = ctx->regs;
++    u32 cpu = (u32)mrs(TPIDR_EL2);
++    int slot = s264_shadow_slot(op0, op1, crn, crm, op2);
++    if (slot >= 0 && cpu < MAX_CPUS) {
++        if (is_read)
++            regs[rt] = s264_shadow[cpu][slot];
++        else
++            s264_shadow[cpu][slot] = regs[rt];
++        nwoas_s264_cnt.msr_shadow++;
++        return true;
++    }
++    if (op0 == 3 && op1 == 5 && crn == 15 && crm == 6 && op2 == 0) { /* ACC_OVRD_EL1 */
++        if (is_read)
++            regs[rt] = mrs(SYS_IMP_APL_ACC_OVRD); /* Python "Pass" read */
++        nwoas_s264_cnt.msr_skip += is_read ? 0 : 1; /* "Skip" write (ro set) */
++        nwoas_s264_cnt.msr_pass += is_read ? 1 : 0;
++        return true;
++    }
++    if (op0 == 3 && op1 == 5 && crn == 15 && crm == 5 && op2 == 0 && !is_read) { /* CYC_OVRD */
++        if (regs[rt] & 1)
++            return false; /* Python: "Guest is shutting down CPU" -> hv_exit_cpu: not ported */
++        nwoas_s264_cnt.msr_skip++;
++        return true;
++    }
++    if (op0 == 1 && op1 == 3 && crn == 7 && crm == 14 && op2 == 1 && !is_read) { /* DC CIVAC */
++        u64 pa = hv_translate(regs[rt], true, false, NULL);  /* Python xlate (:1126-1127) */
++        /* only inside the guest RAM range the EL2 map covers (boot args phys_base..+mem_size) */
++        if (pa && pa >= cur_boot_args.phys_base && pa < cur_boot_args.phys_base + cur_boot_args.mem_size)
++            dc_civac_range((void *)(pa & ~63ULL), 64);
++        nwoas_s264_cnt.dc_civac++;
++        return true;
++    }
++    /* Unknown: Python passes it to the CPU.  C cannot encode an arbitrary sysreg at run time,
++     * so it is counted and read as 0 / dropped.  Never seen in the S259/S264 logs. */
++    if (nwoas_s264_cnt.msr_unknown++ < 16)
++        printf("HVLOG: S264 POLICY unknown sysreg %s s%u_%u_c%u_c%u_%u x%lu elr=0x%lx -> %s\n",
++               is_read ? "mrs" : "msr", op0, op1, crn, crm, op2, rt, ctx->elr,
++               is_read ? "0" : "dropped");
++    if (is_read)
++        regs[rt] = 0;
++    return true;
++}
++
++bool nwoas_s264_lower(struct exc_info *ctx)
++{
++    if (!(nwoas_s264_policy & S264_POL_LOCAL))
++        return false;
++    u64 spsr, elr;
++    if (!s264_lower_calc(ctx->spsr, mrs(VBAR_EL12), 0, &spsr, &elr))
++        return false;
++    u64 n = nwoas_s264_cnt.exc_lowered + 1;
++    if (n <= 8 || !(n & (n - 1))) /* first 8, then every power of two */
++        printf("HVLOG: S264C LOWER #%lu esr=0x%lx (EC 0x%lx ISS 0x%lx) elr=0x%lx spsr.M=0x%lx cpu=%lu "
++               "-> guest vector 0x%lx\n",
++               n, ctx->esr, (ctx->esr >> 26) & 0x3f, ctx->esr & 0x1ffffff, ctx->elr, ctx->spsr & 0x1f,
++               (u64)mrs(TPIDR_EL2), elr);
++    msr(ELR_EL12, ctx->elr);
++    msr(SPSR_EL12, ctx->spsr);
++    msr(ESR_EL12, ctx->esr);
++    msr(FAR_EL12, ctx->far);
++    ctx->spsr = spsr;
++    ctx->elr = elr;
++    nwoas_s264_cnt.exc_lowered++;
++    return true;
++}
++
++bool nwoas_s264_proxy_policy(struct exc_info *ctx, u32 reason, u32 type)
++{
++    if (!nwoas_s264_policy)
++        return false;
++    if ((nwoas_s264_policy & S264_POL_LOCAL) && reason == START_EXCEPTION_LOWER && type == EXC_FIQ) {
++        msr(CNTV_CTL_EL0, 0); /* hv/__init__.py:1413-1416 */
++        nwoas_s264_cnt.fiq_local++;
++        return true;
++    }
++    if (!(nwoas_s264_policy & S264_POL_FATAL))
++        return false;
++    nwoas_s264_cnt.fatal++;
++    printf("HVLOG: S264 FATAL (no MacBook policy) reason=%u type=%u esr=0x%lx far=0x%lx elr=0x%lx "
++           "spsr=0x%lx cpu=%lu -> reboot\n",
++           reason, type, ctx->esr, ctx->far, ctx->elr, ctx->spsr, (u64)mrs(TPIDR_EL2));
++    nwoas_s264_print_counters("fatal");
++    flush_and_reboot();
++}
++
+ void nwoas_s264_print_counters(const char *why)
+ {
+     struct nwoas_s264_counters *c = &nwoas_s264_cnt;
+@@ -204,6 +326,10 @@
+            why, c->msr_pass, c->msr_skip, c->pmgr_reads, c->pmgr_writes, c->pg_reads,
+            c->cpustart_writes, c->cpustart_gated, c->cpustate_reads, c->nvme_unhandled,
+            c->wifi_reads, c->wifi_writes, c->wifi_cmds);
++    printf("HVLOG: S264C POLICY (%s) pol=%u lowered=%lu shadow=%lu unknown=%lu dc_civac=%lu "
++           "fiq_local=%lu fatal=%lu qd_ret=0x%lx\n",
++           why, nwoas_s264_policy, c->exc_lowered, c->msr_shadow, c->msr_unknown, c->dc_civac,
++           c->fiq_local, c->fatal, c->qd_ret);
+ }
+ 
+ /* s93-nvme-ecam / s93-nvme-bar after layout-s231/module.py: the C fast path owns every
+@@ -621,10 +747,52 @@
+                         fb_improve_logo();
+                         fb_shutdown(true);
+                         break;
+-                    case S264_STEP_ARM_TRAPS:
++                    case S264_STEP_ARM_TRAPS: {
++                        u64 qd = nwoas_s264_cnt.qd_ret;
+                         memset(&nwoas_s264_cnt, 0, sizeof(nwoas_s264_cnt));
++                        nwoas_s264_cnt.qd_ret = qd;
++                        nwoas_s264_policy = (u32)(o->a & (S264_POL_LOCAL | S264_POL_FATAL));
++                        v = nwoas_s264_policy;
+                         nwoas_s264_traps_armed = true;
++                        printf("HVLOG: S264C exception policy %u (1 = local Python-equivalent "
++                               "handlers, 2 = fatal -> reboot)\n",
++                               nwoas_s264_policy);
+                         break;
++                    }
++                    case S264_STEP_NVME_QD: {
++                        /* nvmeqd-s262/nvmeqd_module.py:44-105, same answers */
++                        u64 sig = nwoas_nvme_fastpath_control(26, 0, 0, 0, 0, 0);
++                        if ((sig >> 32) != 0x53323632ULL || ((sig >> 24) & 0xff) != 3) {
++                            printf("HVLOG: S264C NVMe QD: HV is not g262R (action 26 = 0x%lx), "
++                                   "synchronous path\n",
++                                   sig);
++                            st = S264_ST_SKIP;
++                            v = sig;
++                            break;
++                        }
++                        u64 r = nwoas_nvme_fastpath_control(24, o->a, o->b, 0, 0, 0);
++                        nwoas_s264_cnt.qd_ret = r;
++                        v = r;
++                        if (!(r >> 63) && (r >> 32) == 0x51444f46ULL) {
++                            printf("[S262] NVMe QD engine OFF (asked QD=%lu flags=0x%lx): reason %lu "
++                                   "(/arm-io/ans cells=%lu) -> synchronous path, same cost as QD off "
++                                   "(S264C)\n",
++                                   o->a, o->b, r & 0xff, (r >> 16) & 0xff);
++                        } else if (!(r >> 63)) {
++                            /* Python asserts here (no boot); C keeps the synchronous path, which
++                             * the refused configuration left untouched. */
++                            printf("[S262] HV refused NVMe QD=%lu flags=0x%lx ret=0x%lx -> synchronous "
++                                   "path (S264C; Python would stop)\n",
++                                   o->a, o->b, r);
++                            st = S264_ST_FAIL;
++                        } else {
++                            printf("[S262] NVMe QD engine ON: QD=%lu flags=0x%lx (asked 0x%lx) ANS "
++                                   "irq=%lu (ADT /arm-io/ans interrupts cell %lu of %lu) (S264C)\n",
++                                   (r >> 8) & 0xff, r & 0xff, o->b, (r >> 32) & 0x7fffffff,
++                                   (r >> 24) & 0x7f, (r >> 16) & 0xff);
++                        }
++                        break;
++                    }
+                     case S264_STEP_HV_START: {
+                         step_result(o->id, S264_ST_OK, o->a);
+                         u64 regs[4] = {o->b, 0, 0, 0};
+@@ -632,6 +800,7 @@
+                         s264_launched = true;
+                         hv_start((void *)o->a, regs);
+                         nwoas_s264_traps_armed = false;
++                        nwoas_s264_policy = 0;
+                         nwoas_s264_print_counters("hv_start returned");
+                         return 1;
+                     }
+diff -ruN --exclude build s264B-base/src/nwoas_s264.h b/src/nwoas_s264.h
+--- s264B-base/src/nwoas_s264.h	2026-11-19 02:39:33
++++ b/src/nwoas_s264.h	2026-11-19 23:36:05
+@@ -25,8 +25,21 @@
+     u64 cpustart_writes, cpustart_gated, cpustate_reads, cpustate_hooks;
+     u64 nvme_unhandled, nvme_first_seen;
+     u64 wifi_reads, wifi_writes, wifi_cmds;
++    /* s264C exception policy (S264_POL_LOCAL / S264_POL_FATAL) */
++    u64 exc_lowered, msr_shadow, msr_unknown, dc_civac, fiq_local, fatal;
++    u64 qd_ret;
+ };
+ extern struct nwoas_s264_counters nwoas_s264_cnt;
+ void nwoas_s264_print_counters(const char *why);
++
++/* s264C: policy bits (nwoas_s264_plan.h S264_POL_*), set by S264_STEP_ARM_TRAPS. */
++extern u32 nwoas_s264_policy;
++struct exc_info;
++/* hv_exc.c sync path: BRK (ISS != 0x4242) -> reflect to the guest's EL1 vector like HV._lower */
++bool nwoas_s264_lower(struct exc_info *ctx);
++/* hv_exc.c locked MSR path: shadow / skip / translate / unknown as hv/__init__.py handle_msr */
++bool nwoas_s264_msr_policy(struct exc_info *ctx, u64 reg, u64 rt, bool is_read);
++/* hv_exc_proxy entry: true = handled here (do not go to the MacBook); does not return on fatal */
++bool nwoas_s264_proxy_policy(struct exc_info *ctx, u32 reason, u32 type);
+ 
+ #endif
+diff -ruN --exclude build s264B-base/src/nwoas_s264_plan.c b/src/nwoas_s264_plan.c
+--- s264B-base/src/nwoas_s264_plan.c	2026-11-19 08:24:56
++++ b/src/nwoas_s264_plan.c	2026-11-19 23:35:55
+@@ -554,8 +554,31 @@
+     c->agx_cfg_flags = 0x2;         /* NWOAS_AGX_DCP_SERVICE=1 */
+     c->agx_dcp_latch_us = 0;
+     c->link_lbas = 0;               /* NS1 only */
++    c->nvme_qd = 32ULL | (1ULL << 32); /* s264C: S268 default NWOAS_NVME_QD=32, QD_IRQ=1 */
+ }
+ 
++/* ------------------------------------------------------------------ s264C lower */
++bool s264_lower_calc(u64 spsr, u64 vbar_el12, u32 exc_code, u64 *new_spsr, u64 *new_elr)
++{
++    u64 off = 0x80ULL * exc_code;
++    u32 m = (u32)(spsr & 0xf);         /* SPSR.M[3:0] (AArch64) */
++    if (spsr & 0x10)                   /* M[4] = AArch32: not a mode _lower handles */
++        return false;
++    if (m == 0x0)                      /* EL0t */
++        off += 0x400;
++    else if (m == 0x4)                 /* EL1t */
++        ;
++    else if (m == 0x5)                 /* EL1h */
++        off += 0x200;
++    else
++        return false;                  /* "Unknown exception level" */
++    u64 s = (spsr & ~0xfULL) | 0x5;    /* M = EL1h */
++    s |= (1ULL << 9) | (1ULL << 8) | (1ULL << 7) | (1ULL << 6); /* D A I F */
++    *new_spsr = s;
++    *new_elr = vbar_el12 + off;
++    return true;
++}
++
+ /* ------------------------------------------------------------------ IRQ 900 check */
+ static bool irq900_walk(const u8 *adt, u32 len, int node, int depth)
+ {
+@@ -1286,6 +1309,18 @@
+         op(pl, S264_OP_HOOK, S264_HOOK_WIFI_CTL, 0x348000000ULL, 0, 0x4000, S264_HOOK_RW);
+         op_map_sw(pl, 0x6e0000000ULL, 0x6e0000000ULL, 0x900000);
+     }
++    /* s264C: nvmeqd-s262/nvmeqd_module.py (run LAST of the launcher modules, before hv.start):
++     * p.nwoas_nvme_fastpath(24, depth, flags).  S268 default: NWOAS_NVME_QD=32, QD_IRQ=1 (F_IRQ),
++     * KICK on, STRICT off, POLL off -> flags 0x1.  Needs the NVMe fast path (S264_CFG_F_NVME). */
++    if ((cfg->flags & S264_CFG_F_NVME_QD) && (cfg->flags & S264_CFG_F_NVME)) {
++        u64 depth = cfg->nvme_qd & 0xffffffffULL, qflags = cfg->nvme_qd >> 32;
++        if (depth > 61 || (qflags & ~0xfULL)) {
++            pl->err_arg = 0x5d;
++            return pl->err = S264_E_CFG;
++        } else if (depth) {
++            op_step(pl, S264_STEP_NVME_QD, depth, qflags, 0, 0);
++        }
++    }
+     /* HV.start 2403-2414 */
+     if (usb) {
+         for (u32 i = 0; i < S264_IODEV_COUNT; i++)
+@@ -1321,7 +1356,10 @@
+         op_step(pl, S264_STEP_FB, 0, 0, 0, 0);
+     op(pl, S264_OP_MSR, S264_MSR_SPRR_CONFIG_EL1, S264_SYSREG_ENC(3, 6, 15, 1, 0), 1, 0, 0);
+     op(pl, S264_OP_MSR, S264_MSR_GXF_CONFIG_EL1, S264_SYSREG_ENC(3, 6, 15, 1, 2), 1, 0, 0);
+-    op_step(pl, S264_STEP_ARM_TRAPS, 0, 0, 0, 0);
++    op_step(pl, S264_STEP_ARM_TRAPS,
++            ((cfg->flags & S264_CFG_F_EXC_LOCAL) ? S264_POL_LOCAL : 0) |
++                ((cfg->flags & S264_CFG_F_EXC_FATAL) ? S264_POL_FATAL : 0),
++            0, 0, 0);
+     op_step(pl, S264_STEP_HV_START, L->entry, L->bootargs_base, 0, 0);
+     return pl->err;
+ }
+diff -ruN --exclude build s264B-base/src/nwoas_s264_plan.h b/src/nwoas_s264_plan.h
+--- s264B-base/src/nwoas_s264_plan.h	2026-11-19 02:39:13
++++ b/src/nwoas_s264_plan.h	2026-11-19 23:35:11
+@@ -108,10 +108,22 @@
+     S264_STEP_WRITE_ADT,      /* a=dst c=len */
+     S264_STEP_TLBI,
+     S264_STEP_FB,             /* fb_improve_logo + fb_shutdown(true) */
+-    S264_STEP_ARM_TRAPS,
++    S264_STEP_ARM_TRAPS,      /* a=exception policy bits (S264_POL_*) */
+     S264_STEP_HV_START,       /* a=entry b=x0 */
++    S264_STEP_NVME_QD,        /* s264C: a=depth b=flags, nvmeqd-s262/nvmeqd_module.py:69-105 */
+ };
+ 
++/* s264C exception policy (cfg flags -> S264_STEP_ARM_TRAPS a).  Off = s264B behaviour:
++ * everything the C handlers do not take is forwarded to the MacBook (hv_exc_proxy). */
++#define S264_POL_LOCAL 1u /* do in C what proxyclient hv/__init__.py does for these traps:
++                           *  BRK (ISS != 0x4242) -> reflect to guest EL1 (_lower, 1571-1600);
++                           *  MDSCR/VMSA_LOCK/DBG[BW][CV]R shadow (755-822); ACC_OVRD write skip;
++                           *  DC CIVAC translate; CYC_OVRD skip; FIQ from UPMC (1413-1416);
++                           *  unknown sysreg: Python passes it to the CPU ("Pass", 1110-1129):
++                           *  C counts it and reads 0 / drops the write (logged, first 16) */
++#define S264_POL_FATAL 2u /* anything that would still go to the MacBook: log + reboot
++                           * (no MacBook = the proxy would wait forever) */
++
+ struct s264_op {
+     u32 kind;
+     u32 id;
+@@ -126,9 +138,12 @@
+ #define S264_CFG_F_PMU     (1u << 4)
+ #define S264_CFG_F_FB      (1u << 5)
+ #define S264_CFG_F_SPLIT   (1u << 6) /* M1N1_SPLIT_CONSOLE=1 behaviour */
++#define S264_CFG_F_EXC_LOCAL (1u << 7) /* s264C: S264_POL_LOCAL */
++#define S264_CFG_F_EXC_FATAL (1u << 8) /* s264C: S264_POL_FATAL (standalone: no MacBook) */
++#define S264_CFG_F_NVME_QD   (1u << 9) /* s264C: S262 concurrent NVMe, depth/flags in nvme_qd */
+ #define S264_CFG_F_DEFAULT                                                                         \
+     (S264_CFG_F_AGX | S264_CFG_F_NVME | S264_CFG_F_AUDIO_A | S264_CFG_F_WIFI0 | S264_CFG_F_PMU |   \
+-     S264_CFG_F_FB | S264_CFG_F_SPLIT)
++     S264_CFG_F_FB | S264_CFG_F_SPLIT | S264_CFG_F_EXC_LOCAL | S264_CFG_F_NVME_QD)
+ 
+ struct s264_config {
+     u32 magic;   /* S264_MAGIC */
+@@ -148,7 +163,8 @@
+     u64 agx_local_ipa, agx_pool_ipa;
+     u32 agx_base_pstate, agx_cfg_flags, agx_dcp_latch_us;
+     u32 link_lbas;      /* must be 0: NS1-only (no NS2 transport) */
+-    u64 reserved[8];
++    u64 nvme_qd;        /* s264C (was reserved[0]): depth | flags << 32 (S268 default 32 | 1 << 32) */
++    u64 reserved[7];
+ } __attribute__((packed));
+ 
+ /* Everything the planner needs from the running system. */
+@@ -245,6 +261,11 @@
+ #define S264_RESULT_HDR 160u
+ u32 s264_result_write(const struct s264_inputs *in, const struct s264_config *cfg,
+                       const struct s264_plan *pl, u32 mode, u8 *out, u32 cap);
++
++/* s264C: what proxyclient HV._lower() (hv/__init__.py:1571-1600) does to a lower-EL sync
++ * exception, as pure arithmetic: new SPSR and ELR for the guest's EL1 vector.  Returns false for
++ * the modes Python refuses ("Unknown exception level").  exc_code: 0 sync, 1 irq, 2 fiq, 3 serror. */
++bool s264_lower_calc(u64 spsr, u64 vbar_el12, u32 exc_code, u64 *new_spsr, u64 *new_elr);
+ 
+ /* S259 Wi-Fi control page contents with NWOAS_WIFI=0 (nwoas_wifi_s259.py reg_read). */
+ struct s264_wifi_page {

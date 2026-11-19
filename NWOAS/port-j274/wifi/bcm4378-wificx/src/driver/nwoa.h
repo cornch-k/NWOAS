@@ -332,6 +332,33 @@ typedef struct _NWOA_CONFIG {
     ULONG  ShapeChunkGapMs;     // shape 5: gap after each escan before the next (1000..10000, default 2000;
                                 //     the 2 s diag tick starts the next one)
     ULONG  ShapeLongMs;         // shape 2: active dwell on the home channel (100..10000, default 3000)
+    // ---- s270 (TX flowring stall tests; each 0 = s258r behaviour)
+    ULONG  FlowTid;             // 802.1d priority P (0..7) of every TX_POST; the flowring create tid is
+                                //     brcmfmac's fifo for P (flowring.c prio2fifo {0,1,1,0,2,2,3,3}).  0 = s258r
+    ULONG  MbAck;               // 1 = in every poll tick read PCIe2 MAILBOXINT and write the value back
+                                //     (brcmf_pcie_isr_thread acks it this way; s258r never clears it)
+    ULONG  FlowSpare;           // 1 = a second TX flowring (id 3, same da/tid) kept open and idle; when the
+                                //     post-scan check finds the main ring stuck, the next frame goes to it
+                                //     (probe), then the usual doorbell + re-create of both rings
+    // ---- s271 (0 = s258r / s270 behaviour)
+    ULONG  DbLegacy;            // bitmask, Asahi brcmfmac rule (commit 7e7ad07bda1c "Fix logic for deciding which
+                                //     doorbell registers to use"): without the SHARED_DAR flag the doorbells are the
+                                //     legacy PCIe2 H2D_MAILBOX_0/1 (0x140/0x144), not the DAR 0xA20/0xA24 that s258r
+                                //     uses on PCIe2 rev >= 64.  1 = H2D ring doorbell, 2 = hostready (DB1)
+    // ---- s272 (0 = s271 behaviour)
+    ULONG  RomDump;             // s276, 1 = once per device start copy the chip ROM (TCM offsets 0 .. rambase) to the
+                                //     registry values NwoaRom0..3 (private analysis only, removed by the job that reads them)
+    ULONG  FwSnap;              // s273, 1 = for the first NWOA_SNAP_SCANS scans made while connected copy the firmware
+                                //     RAM (TCM) before the escan, at the stuck / alive verdict (before any fix) and
+                                //     0.3 s after the flowring re-create; the words that differ go to NwoaSnap<k>*
+                                //     (connected BSSID and own MAC masked).  Observation only.  0 = s272 behaviour
+    ULONG  DbMagic;             // bitmask, Broadcom bcmdhd (dhd_msgbuf.c) doorbell values instead of 1:
+                                //     1 = every H2D doorbell writes DHD_WRPTR_UPDATE_H2D_DB_MAGIC
+                                //         0xFF000000 | ring id << 16 | new write index (__dhd_prot_ring_write_complete)
+                                //     2 = after a D2H completion ring was drained, one doorbell
+                                //         DHD_RDPTR_UPDATE_H2D_DB_MAGIC 0xDD000000 | ring id << 16 | read index
+                                //         ("ring doorbell once n items are read to sync with dongle",
+                                //         dhd_prot_upd_read_idx with DMA indices); ring ids as bcmpcie.h (2,3,4)
 } NWOA_CONFIG;
 
 typedef struct _NWOA_DEVICE {
@@ -408,10 +435,30 @@ typedef struct _NWOA_DEVICE {
     int             IoType;
     int             ScanVer;
 
+    // s273 FwSnap: firmware RAM at 3 moments of a scan made while connected (work item only)
+    PUCHAR          Snap[3];            // 0 before the escan, 1 at the stuck / alive verdict, 2 after the re-create
+    ULONG           SnapLen;
+    ULONG           SnapMs[3];          // ms each read took
+    BOOLEAN         SnapT0;             // Snap[0] belongs to the scan in progress
+    ULONG           SnapN;              // scans reported (NWOA_SNAP_SCANS at most)
+    ULONG           SnapRing[3][4];     // s275: firmware flowring structs found in each snapshot (offsets), SnapRingN
+    ULONG           SnapRingN[3];
+    BOOLEAN         SnapRomDone;
     // flowring
     volatile LONG   FlowState;          // 0 closed, 1 opening, 2 open, 3 closing, 4 failed
     KEVENT          FlowEvent;
     UCHAR           FlowDa[6];
+    // s270: spare TX flowring (Cfg.FlowSpare), MAILBOXINT ack (Cfg.MbAck)
+    NWOA_RING       Spare;              // flow ring id 3 (DMA layout flow[1])
+    volatile LONG   SpareState;         // same values as FlowState
+    KEVENT          SpareEvent;
+    volatile LONG   SpareRoute;         // 1 = the next TX frame is posted on the spare ring
+    volatile LONG   CntSpareAlive, CntSpareStuck, CntSpareNoFrame, CntSpareOpenFail, CntSpareTx;
+    LONG            SpareLast;          // last probe: 0 none, 1 alive, 2 stuck, 3 no frame
+    volatile LONG   CntMbAck;
+    ULONG           MbAckLast;
+    volatile LONG   CntDbRd;            // s272: DbMagic bit 2 read-index doorbells
+    ULONG           DbLastVal;          // s272: value of the last doorbell
 
     // tx slots
     KSPIN_LOCK      TxLock;
@@ -694,6 +741,11 @@ NTSTATUS NwoaLoadFiles(PNWOA_DEVICE Dev, PUCHAR* Fw, ULONG* FwLen, PUCHAR* Nv, U
 NTSTATUS NwoaFirmwareBoot(PNWOA_DEVICE Dev);
 void     NwoaFreeFiles(PNWOA_DEVICE Dev);
 NTSTATUS NwoaReadConsoleTail(PNWOA_DEVICE Dev, PCHAR Out, ULONG Cap);
+#define NWOA_SNAP_SCANS 6
+void     NwoaSnapTake(PNWOA_DEVICE Dev, ULONG Which);                  // s273 (PASSIVE)
+void     NwoaSnapReport(PNWOA_DEVICE Dev, ULONG Have, ULONG Verdict);  // Have 2 = snapshots 0 1, 3 = 0 1 2
+void     NwoaSnapFree(PNWOA_DEVICE Dev);
+void     NwoaDiagBin(PNWOA_DEVICE Dev, PCWSTR Name, const UCHAR* Data, ULONG Len);
 void     NwoaConsoleLiveTick(PNWOA_DEVICE Dev);                        // s258n
 
 // ---- msgbuf.cpp
@@ -723,6 +775,16 @@ void     NwoaMbPollTick(PNWOA_DEVICE Dev);
 // s258o (msgbuf.cpp)
 BOOLEAN  NwoaFlowIdx(PNWOA_DEVICE Dev, ULONG* W, ULONG* R);         // FALSE = no flowring
 void     NwoaFlowKick(PNWOA_DEVICE Dev);                             // rewrite the flowring w index + doorbell
+BOOLEAN  NwoaSpareIdx(PNWOA_DEVICE Dev, ULONG* W, ULONG* R);        // s270: FALSE = no spare flowring
+void     NwoaMbAckTick(PNWOA_DEVICE Dev);                            // s270: MbAck (poll tick, DISPATCH)
+ULONG    NwoaDbellReg(PNWOA_DEVICE Dev, BOOLEAN HostReady);          // s271: H2D mailbox 0 (ring) / 1 (hostready)
+// s270: brcmfmac flowring.c brcmf_flowring_prio2fifo (802.1d priority -> fifo, which brcmf_flowring_tid()
+// puts into the flowring create "tid" field): {0, 1, 1, 0, 2, 2, 3, 3}
+static __inline UCHAR NwoaFlowTidFifo(ULONG Prio)
+{
+    static const UCHAR p2f[8] = { 0, 1, 1, 0, 2, 2, 3, 3 };
+    return p2f[Prio & 7];
+}
 void     NwoaFwIdxView(PNWOA_DEVICE Dev, ULONG Slot, ULONG* FwW, ULONG* FwR);   // TCM copies (0xFFFFFFFF = n/a)
 ULONG    NwoaHostWIdx(PNWOA_DEVICE Dev, ULONG Slot);
 void     NwoaRxItemDone(PNWOA_DEVICE Dev, const NWOA_RXITEM* It);   // caller holds RingLock

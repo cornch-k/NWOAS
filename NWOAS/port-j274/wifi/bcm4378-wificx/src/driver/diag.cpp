@@ -134,6 +134,18 @@ void NwoaReadConfig(PNWOA_DEVICE Dev)
         if (!c->TestConnScanSec)
             c->TestConnScanSec = 120;
     }
+    // s270 (0 = s258r)
+    c->FlowTid       = QueryUlong(key, L"FlowTid", 0);
+    if (c->FlowTid > 7)
+        c->FlowTid = 0;
+    c->MbAck         = QueryUlong(key, L"MbAck", 0) ? 1 : 0;
+    c->FlowSpare     = QueryUlong(key, L"FlowSpare", 0) ? 1 : 0;
+    if (c->FlowSpare && !c->ScanFlowCheck)
+        c->ScanFlowCheck = 1;                     // the probe runs inside the post-scan check (re-create stays the net)
+    c->DbLegacy      = QueryUlong(key, L"DbLegacy", 0) & 3;           // s271
+    c->DbMagic       = QueryUlong(key, L"DbMagic", 0) & 3;            // s272
+    c->FwSnap        = QueryUlong(key, L"FwSnap", 0) ? 1 : 0;         // s273
+    c->RomDump       = QueryUlong(key, L"RomDump", 0) ? 1 : 0;        // s276
     if (c->SettleMs > 10000)
         c->SettleMs = 10000;
     if (key)
@@ -166,6 +178,11 @@ void NwoaDiagSz(PNWOA_DEVICE Dev, PCWSTR Name, PCSTR Value)
     w[i] = 0;
     Assign(Dev, Name, REG_SZ, (i + 1) * sizeof(WCHAR), w);
     ExFreePoolWithTag(w, NWOA_TAG);
+}
+
+void NwoaDiagBin(PNWOA_DEVICE Dev, PCWSTR Name, const UCHAR* Data, ULONG Len)
+{
+    Assign(Dev, Name, REG_BINARY, Len, (PVOID)Data);
 }
 
 void NwoaDiagDword(PNWOA_DEVICE Dev, PCWSTR Name, ULONG Value)
@@ -559,10 +576,19 @@ void NwoaDiagS258o(PNWOA_DEVICE Dev, PCHAR b, SIZE_T cap)
     CHAR one[200];
     NWOA_SFREC sf[NWOA_SF_N];
     ULONG n;
-    RtlStringCchPrintfA(b, cap, "ConnectedScan=%lu ScanFlowCheck=%lu ScanFlowProbeMs=%lu ScanTxHold=%lu TestConnScanSec=%lu",
+    RtlStringCchPrintfA(b, cap, "ConnectedScan=%lu ScanFlowCheck=%lu ScanFlowProbeMs=%lu ScanTxHold=%lu TestConnScanSec=%lu "
+        "FlowTid=%lu(tid%u) MbAck=%lu FlowSpare=%lu DbLegacy=%lu dar=%d db=%lx hr=%lx DbMagic=%lu dbrd=%ld dblast=%lx FwSnap=%lu/%lu",
         Dev->Cfg.ConnectedScan, Dev->Cfg.ScanFlowCheck, Dev->Cfg.ScanFlowProbeMs, Dev->Cfg.ScanTxHold,
-        Dev->Cfg.TestConnScanSec);
+        Dev->Cfg.TestConnScanSec, Dev->Cfg.FlowTid, (unsigned)NwoaFlowTidFifo(Dev->Cfg.FlowTid), Dev->Cfg.MbAck,
+        Dev->Cfg.FlowSpare, Dev->Cfg.DbLegacy, Dev->Sh.shared_dar, NwoaDbellReg(Dev, FALSE), NwoaDbellReg(Dev, TRUE),
+        Dev->Cfg.DbMagic, Dev->CntDbRd, Dev->DbLastVal, Dev->Cfg.FwSnap, Dev->SnapN);
     NwoaDiagSz(Dev, L"NwoaCfgS258o", b);
+    // s270: spare flowring probe and MAILBOXINT ack counters
+    RtlStringCchPrintfA(b, cap, "spare=%ld sparetx=%ld alive=%ld stuck=%ld noframe=%ld openfail=%ld last=%ld "
+        "mback=%ld mbacklast=%lx",
+        Dev->SpareState, Dev->CntSpareTx, Dev->CntSpareAlive, Dev->CntSpareStuck, Dev->CntSpareNoFrame,
+        Dev->CntSpareOpenFail, Dev->SpareLast, Dev->CntMbAck, Dev->MbAckLast);
+    NwoaDiagSz(Dev, L"NwoaS270", b);
     RtlStringCchPrintfA(b, cap, "conn=%ld test=%ld alive=%ld stuck=%ld dbfix=%ld refresh=%ld refreshfail=%ld idle=%ld forced=%ld "
         "deferred=%ld held=%ld armed=%u",
         Dev->CntConnScan, Dev->CntSelfScan, Dev->CntSfAlive, Dev->CntSfStuck, Dev->CntSfDbFix, Dev->CntSfRefresh,

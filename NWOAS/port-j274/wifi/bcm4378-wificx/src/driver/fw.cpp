@@ -284,6 +284,20 @@ NTSTATUS NwoaFirmwareBoot(PNWOA_DEVICE Dev)
         for (ULONG i = 0; i < NB_SH_WORDS; i++)
             w[i] = NwoaTcmRead32(Dev, Dev->SharedAddr + 4 * i);
         NwoaDiagDword(Dev, L"NwoaSharedFlags", w[0]);
+        if (Dev->Cfg.RomDump && KeGetCurrentIrql() == PASSIVE_LEVEL && !(L->rambase & 15) &&
+            L->rambase <= 0x400000 && L->rambase <= Dev->Bar2Len) {       // s276
+            ULONG part = L->rambase / 4;
+            PULONG rb = (PULONG)ExAllocatePool2(POOL_FLAG_PAGED, part, NWOA_TAG);
+            for (ULONG q = 0; rb && q < 4; q++) {
+                WCHAR nm[16];
+                for (ULONG i2 = 0; i2 < part / 4; i2++)
+                    rb[i2] = READ_REGISTER_ULONG((volatile ULONG*)(Dev->Bar2 + q * part + 4 * i2));
+                RtlStringCchPrintfW(nm, ARRAYSIZE(nm), L"NwoaRom%lu", q);
+                NwoaDiagBin(Dev, nm, (const UCHAR*)rb, part);
+            }
+            if (rb)
+                ExFreePoolWithTag(rb, NWOA_TAG);
+        }
         ULONG ria = w[NB_SH_RING_INFO / 4];
         if (ria < L->rambase || ria + sizeof(ri) > L->top) { st = STATUS_DEVICE_DATA_ERROR; goto out; }
         for (ULONG i = 0; i < NB_RI_WORDS; i++)
@@ -411,4 +425,217 @@ void NwoaConsoleLiveTick(PNWOA_DEVICE Dev)
         }
     }
     ExFreePoolWithTag(raw, NWOA_TAG);
+}
+
+// ------------------------------------------------------------ s273 FwSnap
+// [observation] After a scan that leaves the home channel the firmware stops reading the TX flowrings and a
+// delete + create makes it read again; no message, no console text.  So its own state is compared: the whole
+// firmware RAM before the escan (0), at the verdict before any fix (1) and after the re-create (2).
+//   NwoaSnap<k>   text summary: verdict, read ms, counts of differing words, ring base hits
+//   NwoaSnap<k>A  REG_BINARY, records of 3 u32 {offset from rambase, word in 0, word in 1} for the words that
+//                 are equal in 0 and 2 and differ in 1 ("changed by the scan, restored by the re-create")
+//                 (have2 = no snapshot 2, e.g. a scan without the stall: every word that differs between 0 and 1)
+//   NwoaSnap<k>H<i>  REG_BINARY, ring base hit i: u32 offset, then NWOA_SNAP_WIN bytes of snapshot 0, 1, 2
+//                 starting NWOA_SNAP_WIN / 2 before the hit
+//   NwoaSnap<k>C<t>  REG_BINARY, the "counters" iovar at moment t
+//   NwoaSnap<k>W<j>  REG_BINARY (s274), for an A record with no other A record within 0x40 bytes below the top
+//                 64 KiB (single state words, not tables or the stack): u32 offset of the window, then
+//                 NWOA_SNAP_WW bytes of snapshot 0, 1, 2 starting NWOA_SNAP_WW / 2 before the word
+// The connected BSSID (0xEB), the own MAC (0xEA) and the network name (0xE5) are overwritten in every copy
+// before anything is compared.
+#define NWOA_SNAP_WIN   1024u
+#define NWOA_SNAP_AMAX  4000u
+#define NWOA_SNAP_HITS  6u
+#define NWOA_SNAP_WW    768u
+#define NWOA_SNAP_WMAX  14u
+
+static ULONG SnapRamLen(PNWOA_DEVICE Dev)
+{
+    ULONG base = Dev->Ram.rambase, len = Dev->Ram.ramsize & ~3u;
+    if (!len || len > 0x200000 || (base & 3) || (ULONGLONG)base + len > Dev->Bar2Len)
+        return 0;
+    return len;
+}
+
+static void SnapMask(PUCHAR B, ULONG Len, const UCHAR* M, ULONG N, UCHAR Fill)
+{
+    ULONG nz = 0;
+    for (ULONG i = 0; i < N; i++)
+        nz |= M[i];
+    if (N < 4 || Len < N || !nz)
+        return;
+    for (ULONG i = 0; i + N <= Len; i++)
+        if (B[i] == M[0] && RtlEqualMemory(B + i, M, N)) {
+            RtlFillMemory(B + i, N, Fill);
+            i += N - 1;
+        }
+}
+
+void NwoaSnapFree(PNWOA_DEVICE Dev)
+{
+    for (ULONG i = 0; i < 3; i++)
+        if (Dev->Snap[i]) {
+            ExFreePoolWithTag(Dev->Snap[i], NWOA_TAG);
+            Dev->Snap[i] = NULL;
+        }
+    Dev->SnapT0 = FALSE;
+}
+
+void NwoaSnapTake(PNWOA_DEVICE Dev, ULONG Which)
+{
+    ULONG len = SnapRamLen(Dev);
+    WCHAR name[24];
+    UCHAR cnt[1024];
+    if (!Dev->Cfg.FwSnap || Which > 2 || Dev->SnapN >= NWOA_SNAP_SCANS || !len || !Dev->FwUp ||
+        KeGetCurrentIrql() != PASSIVE_LEVEL)
+        return;
+    if (Which && !Dev->SnapT0)
+        return;
+    if (Dev->SnapLen != len)
+        NwoaSnapFree(Dev);
+    if (!Dev->Snap[Which])
+        Dev->Snap[Which] = (PUCHAR)ExAllocatePool2(POOL_FLAG_PAGED, len, NWOA_TAG);
+    if (!Dev->Snap[Which])
+        return;
+    Dev->SnapLen = len;
+    ULONG64 t0 = KeQueryInterruptTime();
+    PULONG d = (PULONG)Dev->Snap[Which];
+    volatile ULONG* s = (volatile ULONG*)(Dev->Bar2 + Dev->Ram.rambase);
+    for (ULONG i = 0; i < len / 4; i++)
+        d[i] = READ_REGISTER_ULONG(s + i);
+    Dev->SnapMs[Which] = (ULONG)((KeQueryInterruptTime() - t0) / 10000);
+    {   // s275: the firmware's flowring structs ("txfl<n>", 0xE0 bytes): own MAC at +0x26, flowring da at +0x2c
+        UCHAR pat[12];
+        const UCHAR* sn = Dev->Snap[Which];
+        RtlCopyMemory(pat, Dev->Mac, 6);
+        RtlCopyMemory(pat + 6, Dev->FlowDa, 6);
+        Dev->SnapRingN[Which] = 0;
+        for (ULONG i = 0x26; i + 0xE0 <= len && Dev->SnapRingN[Which] < 4; i += 2)
+            if (sn[i] == pat[0] && RtlEqualMemory(sn + i, pat, 12) && sn[i - 0x25] == 't' && sn[i - 0x24] == 'x')
+                Dev->SnapRing[Which][Dev->SnapRingN[Which]++] = i - 0x26;
+    }
+    if (!Dev->SnapRomDone) {                                          // s275: is the ROM below rambase readable here?
+        static const ULONG at[3] = { 0, 0x4ad80, 0x75bec };            // reset vectors, two call targets of RAM code
+        ULONG rom[3 * 64];
+        for (ULONG q = 0; q < 3; q++)
+            for (ULONG i = 0; i < 64; i++)
+                rom[q * 64 + i] = NwoaTcmRead32(Dev, at[q] + 4 * i);
+        NwoaDiagBin(Dev, L"NwoaRomProbe", (const UCHAR*)rom, sizeof(rom));
+        Dev->SnapRomDone = TRUE;
+    }
+    SnapMask(Dev->Snap[Which], len, Dev->CurBssid, 6, 0xEB);          // s274: EB = BSSID, EA = own MAC, E5 = name
+    SnapMask(Dev->Snap[Which], len, Dev->Mac, 6, 0xEA);
+    SnapMask(Dev->Snap[Which], len, Dev->Conn.Ssid, min(Dev->Conn.SsidLen, 32ul), 0xE5);   // network name (4+ bytes)
+    if (!Which)
+        Dev->SnapT0 = TRUE;
+    RtlZeroMemory(cnt, sizeof(cnt));
+    if (NT_SUCCESS(NwoaGetVar(Dev, "counters", cnt, sizeof(cnt)))) {
+        RtlStringCchPrintfW(name, ARRAYSIZE(name), L"NwoaSnap%luC%lu", Dev->SnapN, Which);
+        NwoaDiagBin(Dev, name, cnt, sizeof(cnt));
+    }
+}
+
+void NwoaSnapReport(PNWOA_DEVICE Dev, ULONG Have, ULONG Verdict)
+{
+    ULONG len = Dev->SnapLen, k = Dev->SnapN, nw = len / 4;
+    ULONG n01 = 0, n12 = 0, n02 = 0, nA = 0, nhit = 0, hit[NWOA_SNAP_HITS] = { 0 };
+    WCHAR name[24];
+    CHAR txt[400], one[24];
+    if (!Dev->Cfg.FwSnap || !Dev->SnapT0 || k >= NWOA_SNAP_SCANS || (Have != 2 && Have != 3) ||
+        !Dev->Snap[0] || !Dev->Snap[1] || (Have == 3 && !Dev->Snap[2]) || KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        Dev->SnapT0 = FALSE;
+        return;
+    }
+    const ULONG* a = (const ULONG*)Dev->Snap[0];
+    const ULONG* b = (const ULONG*)Dev->Snap[1];
+    const ULONG* c = (const ULONG*)(Have == 3 ? Dev->Snap[2] : Dev->Snap[1]);
+    PULONG rec = (PULONG)ExAllocatePool2(POOL_FLAG_PAGED, NWOA_SNAP_AMAX * 12, NWOA_TAG);
+    PUCHAR win = (PUCHAR)ExAllocatePool2(POOL_FLAG_PAGED, 4 + 3 * NWOA_SNAP_WIN, NWOA_TAG);
+    ULONG lo = (ULONG)Dev->Flow.La, hi = (ULONG)(Dev->Flow.La >> 32);
+    for (ULONG i = 0; i < nw; i++) {
+        if (a[i] != b[i]) {
+            n01++;
+            if (Have == 2 || a[i] == c[i]) {                  // no re-create (alive: control): every changed word
+                if (rec && nA < NWOA_SNAP_AMAX) {
+                    rec[3 * nA] = i * 4; rec[3 * nA + 1] = a[i]; rec[3 * nA + 2] = b[i];
+                }
+                nA++;
+            }
+        }
+        if (b[i] != c[i]) n12++;
+        if (a[i] != c[i]) n02++;
+        // the flowring's host base (64 bit, low word first) as the firmware keeps it
+        if (lo && i + 1 < nw && b[i] == lo && b[i + 1] == hi && nhit < NWOA_SNAP_HITS)
+            hit[nhit++] = i * 4;
+    }
+    RtlStringCchPrintfA(txt, sizeof(txt), "v%lu have%lu len%lx ms%lu/%lu/%lu d01=%lu d12=%lu d02=%lu A=%lu hits%lu",
+        Verdict, Have, len, Dev->SnapMs[0], Dev->SnapMs[1], Have == 3 ? Dev->SnapMs[2] : 0, n01, n12, n02, nA, nhit);
+    for (ULONG h = 0; h < nhit; h++) {
+        RtlStringCchPrintfA(one, sizeof(one), " %lx", hit[h]);
+        RtlStringCchCatA(txt, sizeof(txt), one);
+    }
+    RtlStringCchPrintfW(name, ARRAYSIZE(name), L"NwoaSnap%lu", k);
+    NwoaDiagSz(Dev, name, txt);
+    if (rec) {
+        RtlStringCchPrintfW(name, ARRAYSIZE(name), L"NwoaSnap%luA", k);
+        NwoaDiagBin(Dev, name, (const UCHAR*)rec, min(nA, NWOA_SNAP_AMAX) * 12);
+    }
+    for (ULONG h = 0; win && h < nhit; h++) {
+        ULONG st = hit[h] > NWOA_SNAP_WIN / 2 ? hit[h] - NWOA_SNAP_WIN / 2 : 0;
+        if (st + NWOA_SNAP_WIN > len)
+            st = len - NWOA_SNAP_WIN;
+        RtlCopyMemory(win, &st, 4);
+        RtlCopyMemory(win + 4, Dev->Snap[0] + st, NWOA_SNAP_WIN);
+        RtlCopyMemory(win + 4 + NWOA_SNAP_WIN, Dev->Snap[1] + st, NWOA_SNAP_WIN);
+        RtlCopyMemory(win + 4 + 2 * NWOA_SNAP_WIN, (const UCHAR*)c + st, NWOA_SNAP_WIN);
+        RtlStringCchPrintfW(name, ARRAYSIZE(name), L"NwoaSnap%luH%lu", k, h);
+        NwoaDiagBin(Dev, name, win, 4 + 3 * NWOA_SNAP_WIN);
+    }
+    if (rec && win && Have == 3 && len > 0x10000 + NWOA_SNAP_WW) {          // s274: windows around single state words
+        ULONG n = min(nA, NWOA_SNAP_AMAX), nwin = 0;
+        for (ULONG i = 0; i < n && nwin < NWOA_SNAP_WMAX; i++) {
+            ULONG o = rec[3 * i];
+            // s275: only the two state words seen in every stalled scan of s273 (3 -> 0x10003, 0x618 -> 0)
+            if (!((rec[3 * i + 1] == 3 && rec[3 * i + 2] == 0x10003) || (rec[3 * i + 1] == 0x618 && rec[3 * i + 2] == 0)))
+                continue;
+            ULONG st = o > NWOA_SNAP_WW / 2 ? (o - NWOA_SNAP_WW / 2) & ~3u : 0;
+            if (st + NWOA_SNAP_WW > len)
+                st = len - NWOA_SNAP_WW;
+            RtlCopyMemory(win, &st, 4);
+            RtlCopyMemory(win + 4, Dev->Snap[0] + st, NWOA_SNAP_WW);
+            RtlCopyMemory(win + 4 + NWOA_SNAP_WW, Dev->Snap[1] + st, NWOA_SNAP_WW);
+            RtlCopyMemory(win + 4 + 2 * NWOA_SNAP_WW, Dev->Snap[2] + st, NWOA_SNAP_WW);
+            RtlStringCchPrintfW(name, ARRAYSIZE(name), L"NwoaSnap%luW%lu", k, nwin);
+            NwoaDiagBin(Dev, name, win, 4 + 3 * NWOA_SNAP_WW);
+            nwin++;
+        }
+    }
+    // s275 NwoaSnap<k>R<i>: flowring struct i of snapshot 1 and its open/close history (pointer at +0x78), in
+    // every snapshot: u32 ring offset, then per snapshot u32 history offset + 0xE0 ring bytes + 0x140 history bytes
+    for (ULONG r = 0; win && r < Dev->SnapRingN[1]; r++) {
+        ULONG ro = Dev->SnapRing[1][r], pos = 4;
+        RtlCopyMemory(win, &ro, 4);
+        for (ULONG t = 0; t < 3; t++) {
+            const UCHAR* sn = t == 0 ? Dev->Snap[0] : t == 1 ? Dev->Snap[1] : (const UCHAR*)c;
+            ULONG hp, ho = 0xFFFFFFFFu;
+            RtlCopyMemory(&hp, sn + ro + 0x78, 4);
+            if (hp >= Dev->Ram.rambase && hp - Dev->Ram.rambase + 0x140 <= len)
+                ho = hp - Dev->Ram.rambase;
+            RtlCopyMemory(win + pos, &ho, 4);
+            RtlCopyMemory(win + pos + 4, sn + ro, 0xE0);
+            if (ho != 0xFFFFFFFFu)
+                RtlCopyMemory(win + pos + 4 + 0xE0, sn + ho, 0x140);
+            else
+                RtlZeroMemory(win + pos + 4 + 0xE0, 0x140);
+            pos += 4 + 0xE0 + 0x140;
+        }
+        RtlStringCchPrintfW(name, ARRAYSIZE(name), L"NwoaSnap%luR%lu", k, r);
+        NwoaDiagBin(Dev, name, win, pos);
+    }
+    if (rec) ExFreePoolWithTag(rec, NWOA_TAG);
+    if (win) ExFreePoolWithTag(win, NWOA_TAG);
+    Dev->SnapT0 = FALSE;
+    Dev->SnapN = k + 1;
+    if (Dev->SnapN >= NWOA_SNAP_SCANS)
+        NwoaSnapFree(Dev);
 }

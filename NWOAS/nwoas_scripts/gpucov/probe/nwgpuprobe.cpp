@@ -845,6 +845,8 @@ int main(int argc, char **argv) {
         if (*q == ',') ++q; else break;
       }
     }
+  for (int i = 1; i < argc; ++i)  // probe14: memladder2 creates the big buffer before the staging buffers
+    if (!_stricmp(argv[i], "order=bigfirst")) g_bigFirst = true;
   for (int i = 1; i < argc; ++i)  // probe13: memladder2 waits up to <ms> for the previous size's memory
     if (!_strnicmp(argv[i], "settle=", 7)) g_settleMs = (UINT)strtoul(argv[i] + 7, nullptr, 10);
   for (int i = 1; i < argc; ++i) if (!_stricmp(argv[i], "all")) all = true;

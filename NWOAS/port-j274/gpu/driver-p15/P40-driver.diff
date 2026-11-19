@@ -1,0 +1,232 @@
+--- a/drivers/apple-agx/render-admission/include/render_admission.h
++++ b/drivers/apple-agx/render-admission/include/render_admission.h
+@@ -1548,6 +1548,8 @@
+ _IRQL_requires_(PASSIVE_LEVEL)
+ VOID AdmissionMemoryPoolExecuted(_In_opt_ ADMISSION_CONTEXT *Context,
+                                  ULONGLONG Seq);
++/* P40 test switch Wom1PoolCpuVisibleTopDown (pool_windows.c); FALSE without a pool. */
++BOOLEAN AdmissionMemoryPoolCpuVisibleTopDown(_In_opt_ const ADMISSION_CONTEXT *Context);
+ /* DestroyAllocation: the placement ends. */
+ VOID AdmissionMemoryPoolForget(_In_opt_ ADMISSION_CONTEXT *Context,
+                                _Inout_ ADMISSION_POOL_PLACEMENT *Placement);
+--- a/drivers/apple-agx/render-admission/src/allocation_windows.c
++++ b/drivers/apple-agx/render-admission/src/allocation_windows.c
+@@ -628,6 +628,9 @@
+     if (description->CpuVisible != 0u) {
+       info->PreferredSegment.SegmentId1 = ADMISSION_MEMORY_APERTURE_SEGMENT;
+       info->SupportedReadSegmentSet |= ADMISSION_APERTURE_SEGMENT_SET;
++      /* P40 test switch (default off): top-down in segment 3. */
++      if (AdmissionMemoryPoolCpuVisibleTopDown(context))
++        info->PreferredSegment.Direction0 = 1u;
+     }
+     info->SupportedWriteSegmentSet = info->SupportedReadSegmentSet;
+   }
+--- a/drivers/apple-agx/render-admission/src/pool_windows.c
++++ b/drivers/apple-agx/render-admission/src/pool_windows.c
+@@ -289,6 +289,8 @@
+   ULONGLONG NeutralHeadroomGranules;
+   /* P38: promises past AdmitGranules are refused (0: no cap). */
+   ULONGLONG AdmitGranules, SegmentRefusals;
++  /* P40: REG_DWORD Wom1PoolCpuVisibleTopDown at start (test switch). */
++  ULONG CpuVisibleTopDown;
+ } ADMISSION_POOL_RUNTIME;
+ 
+ /* rc88: what one AdmissionPoolAllocSlab call cost, folded into the runtime
+@@ -1593,8 +1595,33 @@
+     mib = value;
+   ZwClose(key);
+   return mib;
++}
++
++/* P40 (2776, test switch, default 0 = 2775): REG_DWORD Wom1PoolCpuVisibleTopDown
++ * (device key) = 1 asks VidMm to place CPU-visible segment-3 allocations
++ * top-down (D3DDDI_SEGMENTPREFERENCE.Direction0), away from the bottom-up
++ * large GPU-only buffers. Read when the pool starts (device restart). */
++static ULONG AdmissionPoolReadCpuVisibleTopDown(ADMISSION_CONTEXT *Context) {
++  HANDLE key = NULL;
++  ULONG value = 0u;
++  if (Context->PhysicalDeviceObject == NULL ||
++      !NT_SUCCESS(IoOpenDeviceRegistryKey(Context->PhysicalDeviceObject,
++          PLUGPLAY_REGKEY_DEVICE, KEY_QUERY_VALUE, &key)))
++    return 0u;
++  if (!AdmissionPoolReadDword(key, L"Wom1PoolCpuVisibleTopDown", &value))
++    value = 0u;
++  ZwClose(key);
++  return value == 1u ? 1u : 0u;
+ }
+ 
++_Use_decl_annotations_ BOOLEAN AdmissionMemoryPoolCpuVisibleTopDown(
++    const ADMISSION_CONTEXT *Context) {
++  const ADMISSION_POOL_RUNTIME *pool;
++  if (Context == NULL || Context->PoolDemand == NULL) return FALSE;
++  pool = (const ADMISSION_POOL_RUNTIME *)Context->PoolDemand;
++  return pool->CpuVisibleTopDown != 0u ? TRUE : FALSE;
++}
++
+ /* rc109: the machine policy VidMm sized TotalSystemMemoryAvailableForGraphics
+  * from (render_pool_demand.h; dxgmms2 RVA 0xaa3c8 reads the same values from
+  * the same key, once, when it initializes). VidMm keeps what it read at boot,
+@@ -1763,6 +1790,7 @@
+     if (margin > count / 2ULL) margin = count / 2ULL;
+     pool->AdmitGranules = margin != 0ULL ? count - margin : 0ULL;
+     pool->SegmentRefusals = 0ULL;
++    pool->CpuVisibleTopDown = AdmissionPoolReadCpuVisibleTopDown(Context); /* P40 */
+   }
+   pool->Granules = ExAllocatePool2(POOL_FLAG_NON_PAGED,
+       (SIZE_T)(count * sizeof(*pool->Granules)), ADMISSION_POOL_TAG);
+--- a/drivers/apple-agx/render-admission/umd/src/umd_gpuva_windows.c
++++ b/drivers/apple-agx/render-admission/umd/src/umd_gpuva_windows.c
+@@ -297,6 +297,64 @@
+  * to the slot it serves (site in the phase-2 count, slot shape in bytes). */
+ static int wait_paging_at(ADMISSION_UMD_DEVICE *device, uint64_t fence,
+                           UINT site, uint64_t token);
++
++/* P40 (NWOAS-J274, 2776, test switches; all off = 2775 behaviour). Read once
++ * per process from the environment (set before the application starts):
++ *   APPLE_AGX_CPU_POOL_REHOME_ROUNDS=<n>   rc107 repair rounds per submission
++ *                                         or CPU map (default 2, 1..64)
++ *   APPLE_AGX_CPU_POOL_REHOME_SLEEP_MS=<ms> sleep before every repair round
++ *                                         after the first (default 0, <=1000)
++ *   APPLE_AGX_CPU_POOL_PRIORITY=1|2        MakeResident priority HIGH|MAXIMUM
++ *                                         for SystemDirect (CPU-visible pool)
++ *                                         slots (default NORMAL)
++ * Context (RESULT-2775.md 11): VidMm paged both 64 MiB staging buffers out to
++ * segment 0 just before placing a large DEFAULT buffer over their range, and
++ * both repair rounds (within ~0.2 s) found them in segment 0 again. */
++static UINT p40_env(const char *name, UINT fallback, UINT maximum) {
++  char text[16] = {};
++  DWORD saved = GetLastError();
++  DWORD n = GetEnvironmentVariableA(name, text, sizeof(text));
++  SetLastError(saved);
++  if (n == 0u || n >= sizeof(text)) return fallback;
++  UINT v = 0u;
++  for (DWORD i = 0u; i < n; ++i) {
++    if (text[i] < '0' || text[i] > '9') return fallback;
++    v = v * 10u + (UINT)(text[i] - '0');
++    if (v > maximum) return maximum;
++  }
++  return v;
++}
++static UINT p40_rehome_rounds(void) {
++  static volatile LONG cached = -1;
++  LONG v = InterlockedCompareExchange(&cached, -1, -1);
++  if (v < 0) {
++    UINT r = p40_env("APPLE_AGX_CPU_POOL_REHOME_ROUNDS", ADMISSION_UMD_REHOME_ROUNDS, 64u);
++    v = (LONG)(r ? r : 1u);
++    InterlockedExchange(&cached, v);
++  }
++  return (UINT)v;
++}
++static UINT p40_rehome_sleep_ms(void) {
++  static volatile LONG cached = -1;
++  LONG v = InterlockedCompareExchange(&cached, -1, -1);
++  if (v < 0) {
++    v = (LONG)p40_env("APPLE_AGX_CPU_POOL_REHOME_SLEEP_MS", 0u, 1000u);
++    InterlockedExchange(&cached, v);
++  }
++  return (UINT)v;
++}
++static UINT p40_system_direct_priority(void) {
++  static volatile LONG cached = -1;
++  LONG v = InterlockedCompareExchange(&cached, -1, -1);
++  if (v < 0) {
++    UINT m = p40_env("APPLE_AGX_CPU_POOL_PRIORITY", 0u, 2u);
++    v = (LONG)(m == 2u ? D3DDDI_ALLOCATIONPRIORITY_MAXIMUM :
++               m == 1u ? D3DDDI_ALLOCATIONPRIORITY_HIGH :
++                         D3DDDI_ALLOCATIONPRIORITY_NORMAL);
++    InterlockedExchange(&cached, v);
++  }
++  return (UINT)v;
++}
+ 
+ /* M2-f11 (EXP1271): drop the persistent residency reference (EXP978) of idle
+  * GPU-local (including private CPU staging) or unmapped SystemDirect slots,
+@@ -507,9 +565,11 @@
+   AcquireSRWLockShared(&device->ScreenBufferLock);
+   auto *slot=find_slot(device,token);
+   bool needed=slot && !slot->Resident && slot->KernelAllocation==handle;
++  const bool systemDirect=slot && slot->SystemDirect;
+   ReleaseSRWLockShared(&device->ScreenBufferLock);
+   if(!needed || !device->KernelCallbacks->pfnMakeResidentCb) return;
+-  UINT priority=D3DDDI_ALLOCATIONPRIORITY_NORMAL;
++  UINT priority=systemDirect ? p40_system_direct_priority() :
++      D3DDDI_ALLOCATIONPRIORITY_NORMAL;
+   D3DDDI_MAKERESIDENT request={};
+   HRESULT hr=residency_request(device,&request,&handle,1u,&priority);
+   va_record(device,6u,token,handle,0,request.PagingFenceValue,hr);
+@@ -778,7 +838,12 @@
+   AcquireSRWLockShared(&device->ScreenBufferLock);
+   for(unsigned i=0;i<count;++i) {
+     auto *slot=find_slot(device,tokens[i]);
+-    if(slot && !slot->Resident) handles[pending++]=handles[i];
++    if(slot && !slot->Resident) {
++      /* P40: priorities[] follows the compacted handles[]. */
++      priorities[pending]=slot->SystemDirect ? p40_system_direct_priority() :
++          D3DDDI_ALLOCATIONPRIORITY_NORMAL;
++      handles[pending++]=handles[i];
++    }
+   }
+   watch_slots(device,1u,tokens,count,handles,pending,0,S_OK);
+   ReleaseSRWLockShared(&device->ScreenBufferLock);
+@@ -1995,12 +2060,14 @@
+   const bool terminal=device->DrawTerminal!=FALSE;
+   auto *slot=find_slot(device,token);
+   D3DKMT_HANDLE handle=slot && !slot->Resident ? slot->KernelAllocation : 0;
++  const bool systemDirect=slot && slot->SystemDirect;
+   ReleaseSRWLockShared(&device->ScreenBufferLock);
+   if(terminal) return 0;
+   device->GpuvaFailure = S_OK;
+   if(!handle) return 1;
+   if(!device->KernelCallbacks->pfnMakeResidentCb) return 0;
+-  UINT priority=D3DDDI_ALLOCATIONPRIORITY_NORMAL;
++  UINT priority=systemDirect ? p40_system_direct_priority() :
++      D3DDDI_ALLOCATIONPRIORITY_NORMAL; /* P40 */
+   D3DDDI_MAKERESIDENT request={};
+   HRESULT hr=residency_request(device,&request,&handle,1u,&priority);
+   va_record(device,6u,token,handle,0,request.PagingFenceValue,hr);
+@@ -2117,6 +2184,8 @@
+                               sizeof(option)) == 1u && option[0] == '0')
+     return 0;
+   if (!touch_va || !device->KernelCallbacks->pfnMakeResidentCb) return 0;
++  /* P40: give VidMm time between repair rounds (default 0: none). */
++  if (pass && p40_rehome_sleep_ms()) Sleep(p40_rehome_sleep_ms());
+   AcquireSRWLockShared(&device->ScreenBufferLock);
+   auto *slot = find_slot(device, token);
+   if (slot) {
+@@ -2178,7 +2247,7 @@
+       gone = true;
+   }
+   values[7] = polls | (gone ? 0x100u : 0u);
+-  UINT priority = D3DDDI_ALLOCATIONPRIORITY_NORMAL;
++  UINT priority = p40_system_direct_priority(); /* P40: a SystemDirect slot */
+   D3DDDI_MAKERESIDENT request = {};
+   hr = residency_request(device, &request, &handle, 1u, &priority);
+   va_record(device, 6u, token, handle, 0, request.PagingFenceValue, hr);
+@@ -2292,7 +2361,7 @@
+     /* rc107 (EXP1974): VidMm placed this CPU-visible allocation outside the
+      * pool, typically at creation into a full segment 3. Page it back in
+      * under the same lock and Transition, then repeat the full pool proof. */
+-    if (!SUCCEEDED(hr) || pass >= ADMISSION_UMD_REHOME_ROUNDS ||
++    if (!SUCCEEDED(hr) || pass >= p40_rehome_rounds() || /* P40 */
+         (q.Reason != APPLE_AGX_G3_NATIVE_QUERY_NOT_POOL &&
+          q.Reason != AppleAgxG3WalkLeafAbsent &&
+          q.Reason != AppleAgxG3WalkLeafNotPublished) ||
+@@ -2468,7 +2537,8 @@
+   auto *indices = (UINT *)((unsigned char *)batch + bytes);
+   int ready = 0;
+   unsigned rehomes = 0u, read_only_marks = 0u;
+-  for (unsigned attempt = 0u; attempt < 2u + ADMISSION_UMD_REHOME_ROUNDS; ++attempt) {
++  const unsigned rounds = p40_rehome_rounds(); /* P40 */
++  for (unsigned attempt = 0u; attempt < 2u + rounds; ++attempt) {
+     *batch = {};
+     bool valid = true;
+     AcquireSRWLockShared(&device->ScreenBufferLock);
+@@ -2566,7 +2636,7 @@
+       continue;
+     }
+     if (SUCCEEDED(hr) && missing && attempt != 0u &&
+-        rehomes < ADMISSION_UMD_REHOME_ROUNDS) {
++        rehomes < rounds) { /* P40: was ADMISSION_UMD_REHOME_ROUNDS */
+       /* rc107 (EXP1974): still missing after the scheduling touch. A held
+        * CPU-visible pool allocation that VidMm republished outside the pool
+        * is paged back in (bounded); then the whole set is proved again. */

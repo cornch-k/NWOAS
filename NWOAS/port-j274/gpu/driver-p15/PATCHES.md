@@ -617,3 +617,47 @@ UMD 기록 풀이 (2758, Cinebench 프로세스, 시각 순서) [사실, 소스 
 | AppleAgxRenderAdmissionUmdX64.dll | 14092288 | `3bd02d9c7da3116bdf14d089c4138da1d21e76869bde16ae98edcf95ff58c43b` |
 | AppleAgxRenderAdmission.arm64x.inf | 4290 | `e884378040af056b28e5bf4341da02169776fa503ba757fdeb3c2db20aa3e9b5` |
 | appleagxrenderadmission.cat | 4112 | `813316feab6a0f1254c986b4c3646d38f02075c877fbd03032e372812a1e81d6` |
+
+## P39 (NWOAS-J274, 2026-11-19) — 구역 3 배치 기록 영수증(기록 전용)
+
+결론: **판 2775는 2774에 KMD 영수증 `Wom1PoolTimeline`·`Wom1PoolTimelineFirst`만 더한 기록판입니다. 배치·구역 집합·결과는 하나도 바꾸지 않습니다** [빌드만]. 2304·2560 MiB 실패에서 VidMm이 64 MiB 올리기 버퍼를 풀 밖에 둔 이유를 가리려는 것입니다(`RESULT-2775.md` 8·9장).
+
+| 바뀐 것 | 내용 |
+|---|---|
+| `include/render_admission.h` | `ADMISSION_POOL_TIMELINE` v1(5,696 B, 항목 88 B × 64), `AdmissionRecordPoolTimeline` |
+| `src/gpuva_g3_paging_windows.c` | `AdmissionG3PoolPlace`: 16 MiB 이상 할당의 UpdatePageTable마다 구역 번호·구역 3 위치·페이지 수 기록(같은 할당·프로세스·위치는 합침) |
+| `src/gpuva_g3_windows.c` | 배치 조사(PLACEMENT v4)가 풀 밖 페이지를 찾으면 기록 + 영수증 쓰기 |
+| `src/allocation_windows.c` | 16 MiB 이상 할당 파괴 기록(1 GiB 이상이면 영수증 쓰기) |
+| `src/receipts.c` | 링·스냅숏(작업자 스택 밖), 쓰기 최대 64회/KMD 시작, 첫 조사 때 것은 `Wom1PoolTimelineFirst`에 따로 |
+
+- 빌드(`build-p39.sh`, 실행 이름 j274g4p): 성공, 판 30.0.2775.0, 경고 줄 수 2774와 같음(step5 로그 2줄). 결과물 `out/j274-full-20261119-2115-p39`, 차이 `P39-driver.diff`(5개 파일). (같은 소스의 앞선 판 j274g4o는 소스를 고치기 전 것이라 버렸고 VM 중간물도 지움.)
+
+| 파일 | 바이트 | sha256 |
+|---|---|---|
+| AppleAgxRenderAdmission.sys | 654096 | `2c451f39a30c7d98c4b309bd130ad8f7cb397d15834ab7b57eaa5636685128e3` |
+| AppleAgxRenderAdmissionUmd.dll (ARM64X 전달) | 14848 | `9b3d5876b97ceeb5d873dc67231305aee7db2de52bbaa37cd07ee3125e5ec1de` |
+| AppleAgxRenderAdmissionUmdArm64.dll | 13522944 | `4210c890b80144f549f5535134fe896873e323a9782871216f9ab234f5351687` |
+| AppleAgxRenderAdmissionUmdX64.dll | 14092288 | `825cf0f079683359a6d9dfcd716eb7280667d7ac7c47361d76bf9d84118d9fd2` |
+| AppleAgxRenderAdmission.arm64x.inf | 4290 | `2352da497e6d7c0aad893b54588edafa4ba8996d3df8e5e26ee7ef2e2edda4ca` |
+| appleagxrenderadmission.cat | 4112 | `a261e41ba6c2e3c0bc158f9edc1a6e09839c9d8b13fafc7186f561a0cdcdcbfb` |
+
+## P40 (NWOAS-J274, 2026-11-19) — 고침 후보 스위치(시험판, 기본은 모두 꺼짐 = 2775)
+
+결론: **판 2776은 2775에 고침 후보 3개를 스위치로만 더했습니다. 스위치를 켜지 않으면 2775와 같게 동작합니다** [빌드만]. 어느 후보가 실제로 고치는지는 같은 부팅 안에서 꺼짐/켜짐을 번갈아 돌려 가립니다(`RESULT-2775.md` 12장).
+
+| 스위치 | 위치 | 하는 일 |
+|---|---|---|
+| `APPLE_AGX_CPU_POOL_REHOME_ROUNDS=<n>` (기본 2) / `APPLE_AGX_CPU_POOL_REHOME_SLEEP_MS=<ms>` (기본 0) | UMD 환경 변수 | rc107 되살리기 횟수와, 두 번째 회차부터 앞에 쉬는 시간 |
+| `APPLE_AGX_CPU_POOL_PRIORITY=1\|2` | UMD 환경 변수 | CPU에서 보이는 풀 버퍼(SystemDirect) 상주 우선순위 HIGH / MAXIMUM (기본 NORMAL) |
+| `Wom1PoolCpuVisibleTopDown=1` | KMD 레지스트리(장치 재시작 때 읽음) | CPU에서 보이는 구역 3 버퍼를 위에서부터 배치(Direction0) |
+
+- 빌드(`build-p40.sh`, 실행 이름 j274g4q): 성공, 판 30.0.2776.0, step5 경고 줄 수 2775와 같음. 결과물 `out/j274-full-20261119-2305-p40`, 차이 `P40-driver.diff`(4개 파일).
+
+| 파일 | 바이트 | sha256 |
+|---|---|---|
+| AppleAgxRenderAdmission.sys | 654096 | `7fcdbd7d787662992f02559fa149bf813db382633a338b66100f1b245ea9eaa8` |
+| AppleAgxRenderAdmissionUmd.dll | 14848 | `8502d1f11eabdf218fe8da6cd443782792e57db8403123e6d5e19e64c09abc77` |
+| AppleAgxRenderAdmissionUmdArm64.dll | 13523456 | `b6bd3eb9652758151a4124476d86fd2f9bb3b9aed8b79ac8d3be74d60b26ab8f` |
+| AppleAgxRenderAdmissionUmdX64.dll | 14093312 | `d0bf3c00a2358699f3d15040971ae2c5471778a00c915852cfaca097450fad74` |
+| AppleAgxRenderAdmission.arm64x.inf | 4290 | `6f9d076ce411978aada5f7853db52b04bfe05a20071f3bccfc0432be5e823fb0` |
+| appleagxrenderadmission.cat | 4112 | `e747c36ab8797f213da0ed11fa23aeed0f6af1a3b9fd049501b24c8d33863023` |
