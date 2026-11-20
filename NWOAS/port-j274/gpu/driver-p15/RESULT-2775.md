@@ -700,3 +700,22 @@ VM 점검 값 [사실, VM · Parallels GPU, 13:05~13:08]:
 - 2779의 Edge 비교에 남아 있던 3칸(shot 0의 1칸, shot 3의 2칸)이 2780에서 사라졌습니다. 그 차이는 반 픽셀 누락에서 온 것으로 봅니다 [가설: 같은 자리 대조로만 판단].
 - 그림: `nwoas_scripts/gpucov/runs/k53d-export-20261120-1756/`.
 - 남은 것: 콘치님 눈 확인(바탕화면·글자·창 테두리·Edge), 2048 잔여(22장), K52 첫 실행의 캡처 위치 어긋남(원인 미상, 23장).
+
+## 31. 11-20 18:02 블루스크린 0x116 (2780, 평소 부팅 S268, 모니터 재연결 직후)
+
+**결론: 블루스크린은 "GPU 응답 없음 판정 → 어댑터 재설정 → 다시 시작(RestartFromTimeout)이 STATUS_DEVICE_NOT_READY로 실패"입니다 [사실: 덤프·기록]. 다시 시작이 실패한 까닭은 화면 출력 쪽 박자(Timeline.Running)가 재설정 시점에 이미 꺼져 있었기 때문입니다 [사실: NwResetDisplay]. 박자가 왜 꺼졌는지(화면 출력 고장 표시)와 애초의 응답 없음 판정 원인은 [가설]입니다. 2780(반 픽셀 보정)과의 관련은 확인되지 않았고, 기제상으로는 화면 출력·하이퍼바이저 쪽 문제로 보입니다 [가설].**
+
+| 근거 | 값 | 뜻 |
+|---|---|---|
+| 오류 검사 | 0x116 (…, AppleAgxRenderAdmission+0x2420, 0xc00000a3, 4) | VIDEO_TDR_FAILURE, 마지막 실패 상태 = DEVICE_NOT_READY |
+| 덤프 호출 순서 (`gpucov/runs/k60-tdr-20261120-1802/cdb-bugcheck-stack.txt`) | TdrResetFromTimeoutWorkItem → DXGADAPTER::Reset → ADAPTER_RENDER::Reset → TdrBugcheckOnTimeout | 재설정·다시 시작 단계에서 드라이버가 실패를 돌려줌 |
+| `NwResetDisplay[7]` | 0x4b9c0 = 309,696 ms (부팅 17:57 + 5분 10초 = 18:02) | 이번 사건의 기록. 이 값은 RestartFromTimeout이 고장 표시 검사를 지난 뒤에 써지므로 (가) 스케줄러 고장은 아님 |
+| `NwResetDisplay[2]` | 0x0101000001010101 | 대기 중인 표시 있음, 인터럽트 켜짐, vsync 알림 켜짐, **타이머 꺼짐, Timeline.Running = 0**, Enabled = 1, 패널 보임 |
+| `Wom1GpuFault` | 사건 1건: 종류 4(Timeout), fence 0x3347b, 프로세스 5152, 제출 뒤 4 ms, 다시 이어 줌(Resumed) | 펌웨어가 작업 하나에 시간 초과를 알림 |
+| HV 기록 | 모니터 끊김 → 다시 연결 → modeset 314,892 us → 약 10초 안에 SYSTEM_RESET | `logs/agxmed1g-s249-20261120-175654.Pcy14C.vuart` 1594~1605행 |
+
+- 코드 [사실]: `RestartFromTimeout`은 끝에서 `AdmissionScanoutSetTimelinePaused(FALSE)`를 부르고, 박자가 Running이 아니면 `STATUS_DEVICE_NOT_READY`를 돌려줍니다(`scanout_windows.c:2590-2594`). Running은 일시 정지·정지 중·**고장 표시(Faulted)** 중 하나면 0입니다(2562-2566행). Faulted는 화면 출력 인터럽트가 오류를 알릴 때 서고(2304행) 다시 내려가지 않습니다.
+- HV 쪽 [사실, 코드 읽기만]: 화면 장치(`m1n1-gpu-hv2/src/hv_agx_scanout_broker.c`)는 표시(PRESENT) 완료가 실패하면 오류 인터럽트를 올립니다(512·544행).
+- [가설] 모니터가 끊겼다 다시 붙는 동안 Windows가 보낸 표시 하나가 실패 → 드라이버가 화면 출력을 고장으로 표시(되돌아오지 않음) → vsync가 멈춰 응답 없음 판정 → 다시 시작이 고장 표시 때문에 거절 → 블루스크린. 표시가 그 순간에 겹치느냐에 따라 갈리므로 간헐적입니다.
+- 과거 [사실]: 모니터 재연결은 11-16~11-20에 12번 이상 있었고 재연결 직후 재시작은 이번이 처음입니다. 같은 0x116 (c00000a3, 4)은 11-18 04:44·04:57·05:06에도 있었습니다(2780 이전).
+- 다음: ① 콘치님과 재현 시험(2780 그대로 3번 → 죽으면 스위치 끄고 3번). ② 드라이버 쪽 고침 후보(설계 전): 다시 시작 때 화면 출력 고장 표시를 풀고 박자를 다시 켜기, 표시 실패 한 번을 영구 고장으로 다루지 않기. ③ HV 쪽(재연결 중 표시를 실패시키지 않기)은 실행기 담당 갈래.
