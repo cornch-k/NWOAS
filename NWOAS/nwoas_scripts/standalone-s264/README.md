@@ -499,5 +499,5 @@ bash /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/s264-dryru
 | (나)-기준 (QD·LOCAL·와이파이·소리 B·BT·전력 끔) | `logs/s264g-launch-20261121-004023.*`, `runs/launch-slot-s264g-*.txt` | 바탕화면. 계수기 14·1·39·2·14·7 = 기대값. 맥북으로 넘어온 것 197번 = 모두 `BRK #0xF002`(196)·`#0xF004`(1) — LOCAL을 끈 기준 실행이라 예상대로 |
 | (나)-기본 (스위치 없음) | `logs/s264g-launch-20261121-004627.*`, `runs/launch2-default-*.txt` | 바탕화면, 와이파이·소리 동작(콘치님 눈). 102 ops, 계수기 같음, POLICY pol=1, `S264C LOWER` 12줄, 맥북으로 넘어온 것 **0번** |
 
-- 두 C 실행 모두 진단 출력에 `DARTDIAG … MAPPED-WRONG-TARGET`(USB xHCI erstba/dcbaap/crcr)·`DARTERR STALE(FLAG=0,ignore)` 묶음이 8줄 있습니다. 같은 날 맥북 실행기 S268/S269 부팅(00:24, 00:38)에는 0줄입니다. 11-16 S247 부팅들에도 있던 줄입니다. 무해한지는 미확인 [가설: UEFI 단계 USB 초기화 때 C 실행기 쪽 DART 상태가 Python 쪽과 다름]. 리허설 전에 원인을 볼 것. 2회차에서 USB 키보드·마우스는 평소처럼 동작(콘치님 확인).
+- 두 C 실행 진단 출력의 `DARTDIAG … MAPPED-WRONG-TARGET`·`DARTERR STALE` 묶음(28줄)은 같은 날 맥북 실행기 S268/S269 부팅에도 똑같이 있습니다(처음 "0줄"이라 적은 것은 부팅마다 다른 `err=` 값으로 찾아 잘못 센 것). 두 실행기의 USB 상태가 같고 무해함 → `ANALYSIS-dartdiag-20261121.md`. USB 키보드·마우스 정상(콘치님 확인).
 - 끝내는 방법: 시작 메뉴 → 다시 시작 → 맥미니가 맥북 연결 대기(D4)로 돌아오고 감시 도구는 USB가 끊겨 rc=1로 끝남(정상).
