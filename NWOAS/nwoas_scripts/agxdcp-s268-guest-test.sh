@@ -94,8 +94,12 @@ export NWOAS_AGX_BASE_PSTATE=3
 export NWOAS_AGX_SCANOUT_INTID=889 NWOAS_AGX_POOL_IPA=0
 # S251: the HV answers the scanout window (DCP iBoot async swap), port-j274/gpu/hv/README-dcp-s251.md
 export NWOAS_AGX_DCP_SERVICE=1
-PAYLOAD="/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/fw-bt-s261/out/s261/m1n1-payload-s261-bt.bin"
-PAYLOAD_SHA=26428b579ba117ae3b26c8d914461cc125b07140de1c1bf3393ff1a62fd0ab92
+# 2026-11-20 daily payload S261 -> S280 (= S261 BT payload + MADT EfficiencyClass 1 on CPU4-7; only those 4 MADT
+# bytes differ, fw-btmadt-s280/verify_vs_s261.py PASS). Hardware 11-20 bench-cb26 chain: Cinebench single
+# 281 -> 381, multi 1,947 -> 1,948, Q2 PASS, QD ON, exceptions 0. Back to S261: fw-bt-s261/out/s261/
+# m1n1-payload-s261-bt.bin sha 26428b579ba117ae3b26c8d914461cc125b07140de1c1bf3393ff1a62fd0ab92
+PAYLOAD="/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/fw-btmadt-s280/out/s280/m1n1-payload-s280-btmadt.bin"
+PAYLOAD_SHA=8b0730fd6787306f4ada28bf858c5c60c846fe47b4777ccc05d318b5a84da158
 if [ "${NWOAS_S260_MADT:-0}" = 1 ]; then
     echo 'STOP: NWOAS_S260_MADT=1 is not available with the S261 payload (no BT SSDT in the S260 payload)'; exit 1
 fi
