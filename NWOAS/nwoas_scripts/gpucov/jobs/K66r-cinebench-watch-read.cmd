@@ -1,0 +1,7 @@
+@echo off
+echo GPUCOV K66r READ THE CINEBENCH WINDOW WATCHER (read-only): the lines where the left panel was not normal, the summary, the pictures kept; removes the watcher task.
+powershell -NoProfile -Command "'K66r done='+(Test-Path C:\NWOAS\gpucov\k66\k66-done.txt)+' task='+(Get-ScheduledTask -TaskName NWOAS-K66 -ErrorAction SilentlyContinue).State; Get-Content C:\NWOAS\gpucov\k66\k66.txt -ErrorAction SilentlyContinue | Select-Object -Last 2"
+powershell -NoProfile -Command "$l=@(Get-Content C:\NWOAS\gpucov\k66\k66.txt -ErrorAction SilentlyContinue); $l | Where-Object { $_ -notmatch 'panel_black=0 ' } | Select-Object -First 60; $v=@($l | Where-Object { $_ -match 'panel_black=([0-9.]+)' } | ForEach-Object { [double]($_ -replace '.*panel_black=([0-9.]+).*','$1') }); 'K66 SUMMARY samples='+$v.Count+' max_panel_black='+($v | Measure-Object -Maximum).Maximum+' over_0.3='+@($v | Where-Object { $_ -gt 0.3 }).Count+' pids='+((@($l | ForEach-Object { if($_ -match 'pid=(\d+)'){ $Matches[1] } }) | Select-Object -Unique) -join ','); Get-ChildItem C:\NWOAS\gpucov\k66\*.png -ErrorAction SilentlyContinue | ForEach-Object { 'K66 PNG '+$_.Name+' '+$_.Length }"
+powershell -NoProfile -Command "if(Test-Path C:\NWOAS\gpucov\k66\k66-done.txt){ Unregister-ScheduledTask -TaskName NWOAS-K66 -Confirm:$false -ErrorAction SilentlyContinue; 'K66r task removed' } else { 'K66r watcher still running - task kept' }"
+echo GPUCOV K66r DONE
+exit /b 0
