@@ -1,5 +1,6 @@
 #!/bin/bash
 # S264E (copy of run-s264d-compare-slot.sh; was: copy of run-s264c-compare-slot.sh): restart running Windows (W4) -> wait launcher exit -> S264C dry-run compare -> S268 daily boot (idle)
+# 2026-11-21: return boot is the daily S269 (bt-s268/run-s269.sh, GPU pool on), was run-s268.sh
 #   bash standalone-s264/run-s264g-compare-slot.sh <old .out> <old .link>
 # (copy of run-s264-compare-slot.sh; the return boot is the S268 daily stack bt-s268/run-s268.sh, not S259)
 set -u
@@ -14,10 +15,10 @@ for i in $(seq 1 90); do [ -e /dev/cu.usbmodemC07HL05SQ6NY1 ] && [ -e /dev/cu.us
 sleep 6
 caffeinate -i bash $ROOT/standalone-s264/s264g-dryrun-compare.sh >> $RES 2>&1; say "compare rc=$?"
 T=$R/boot-$(date +%H%M%S).txt
-(nohup bash $ROOT/bt-s268/run-s268.sh idle - > $T 2>&1 &)
-for i in $(seq 1 240); do grep -a -q -E "S268 DONE|ABORT" $T && break; sleep 5; done
+(nohup bash $ROOT/bt-s268/run-s269.sh idle - > $T 2>&1 &)
+for i in $(seq 1 240); do grep -a -q -E "S269 DONE|ABORT" $T && break; sleep 5; done
 cat $T >> $RES
-if ! grep -a -q "S268 DONE" $T; then say "retry idle boot"; T2=$R/boot2-$(date +%H%M%S).txt
-  (nohup bash $ROOT/bt-s268/run-s268.sh idle - > $T2 2>&1 &)
-  for i in $(seq 1 240); do grep -a -q -E "S268 DONE|ABORT" $T2 && break; sleep 5; done; cat $T2 >> $RES; T=$T2; fi
-say "SLOT DONE $(grep -a 'S268 DONE' $T | tail -1)"
+if ! grep -a -q "S269 DONE" $T; then say "retry idle boot"; T2=$R/boot2-$(date +%H%M%S).txt
+  (nohup bash $ROOT/bt-s268/run-s269.sh idle - > $T2 2>&1 &)
+  for i in $(seq 1 240); do grep -a -q -E "S269 DONE|ABORT" $T2 && break; sleep 5; done; cat $T2 >> $RES; T=$T2; fi
+say "SLOT DONE $(grep -a 'S269 DONE' $T | tail -1)"

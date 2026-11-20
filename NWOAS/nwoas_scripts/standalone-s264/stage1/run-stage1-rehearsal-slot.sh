@@ -7,7 +7,7 @@
 #        W4 restart -> run-stage1-rehearsal.sh main -> (PASS only) run-s268-after-stage1.sh on the SAME boot
 #        (S268 daily stack to "S268 DONE" with the NVMe QD engine, then Q1S / Q2 / chkdsk) -> Windows stays up
 #   bash run-stage1-rehearsal-slot.sh negative <old .out> <old .link>
-#        W4 restart -> run-stage1-rehearsal.sh missing -> fault -> run-s268.sh idle (reboot, normal daily boot)
+#        W4 restart -> run-stage1-rehearsal.sh missing -> fault -> run-s269.sh idle (reboot, normal daily boot)
 #   ... <mode> idle -   the Mac mini already waits in a FRESH D4 proxy (e.g. after the 4-2 rehearsal the user
 #        restarted Windows from the Start menu; that this returns to D4 under the C launcher is [가설]): no W4
 # (copy of run-s264d-compare-slot.sh with the rehearsal in the middle)
@@ -29,9 +29,9 @@ else
     sleep 6
 fi
 daily() { local T=$R/boot-$(date +%H%M%S).txt
-  (nohup bash $ROOT/bt-s268/run-s268.sh idle - > $T 2>&1 &)
-  for i in $(seq 1 240); do grep -a -q -E "S268 DONE|ABORT" $T && break; sleep 5; done
-  cat $T >> $RES; say "daily boot: $(grep -a -E 'S268 DONE|ABORT' $T | tail -1)"; }
+  (nohup bash $ROOT/bt-s268/run-s269.sh idle - > $T 2>&1 &)
+  for i in $(seq 1 240); do grep -a -q -E "S269 DONE|ABORT" $T && break; sleep 5; done
+  cat $T >> $RES; say "daily boot: $(grep -a -E 'S269 DONE|ABORT' $T | tail -1)"; }
 if [ "$MODE" = 42 ]; then
     caffeinate -i bash $S/run-stage1-42-rehearsal.sh >> $RES 2>&1; rc=$?; say "4-2 rehearsal rc=$rc"
     say "user: look at the Mac mini screen (Windows desktop = PASS), then restart Windows from the Start menu"
