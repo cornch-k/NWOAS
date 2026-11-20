@@ -1,0 +1,114 @@
+diff -ruN a/src/display.c b/src/display.c
+--- a/src/display.c	2026-11-16 19:59:20
++++ b/src/display.c	2026-11-20 18:22:23
+@@ -3,6 +3,7 @@
+ #include "../build/build_cfg.h"
+ 
+ #include "display.h"
++#include "nwoas_latch.h"
+ #include "adt.h"
+ #include "assert.h"
+ #include "dcp.h"
+@@ -1138,6 +1139,9 @@
+     u32 synthetic_id;
+     u32 applied_swap_id;
+     u64 applied_ticks;
++    /* NWOAS g262U: the applied id the last modeset replaced (nwoas_latch.h) */
++    u32 superseded_swap_id;
++    u64 superseded_latches, latch_mismatches;
+     u64 submit_ticks;
+     u64 latch_ticks;
+     bool clean;
+@@ -1458,6 +1462,10 @@
+             return 0;
+         if (r != DCP_IB_SWAP_ASYNC_APPLIED)
+             return nwsvc_fail("swap of the active surface", r);
++        /* NWOAS g262U: a present applied or retired before this modeset keeps a
++         * way to latch (it waited on the id replaced here). */
++        nwsvc.superseded_swap_id =
++            nwoas_latch_supersede(nwsvc.applied_swap_id, (u32)nwsvc.swap->swap_id);
+         nwsvc.applied_swap_id = nwsvc.swap->swap_id;
+         nwsvc.applied_ticks = get_ticks();
+         nwsvc.seq_us = ticks_to_usecs(get_ticks() - nwsvc.seq_start);
+@@ -1797,9 +1805,23 @@
+ /* Time-based LATCHED: APPLIED (SWAP_END reply) + the configured delay. */
+ int display_nwoas_svc_latch_poll(u32 expected_swap_id)
+ {
+-    if (!expected_swap_id || expected_swap_id != nwsvc.applied_swap_id)
+-        return -2;
+-    return get_ticks() - nwsvc.applied_ticks >= nwsvc.latch_ticks ? 1 : 0;
++    int r = nwoas_latch_decide(expected_swap_id, nwsvc.applied_swap_id, nwsvc.superseded_swap_id,
++                               get_ticks() - nwsvc.applied_ticks >= nwsvc.latch_ticks);
++    if (r == 1 && expected_swap_id != nwsvc.applied_swap_id) {
++        /* NWOAS g262U: latched by the modeset that replaced its id */
++        nwsvc.superseded_latches++;
++        if (nwsvc.superseded_latches <= 8 || !(nwsvc.superseded_latches & 0xff))
++            printf("display: NWOAS-DCP-G262U present %#x latched by modeset swap_id=%#x (#%lu)\n",
++                   expected_swap_id, nwsvc.applied_swap_id, nwsvc.superseded_latches);
++    } else if (r == -2) {
++        nwsvc.latch_mismatches++;
++        if (nwsvc.latch_mismatches <= 8 || !(nwsvc.latch_mismatches & 0xff))
++            printf("display: NWOAS-DCP-G262U latch MISMATCH expected=%#x applied=%#x superseded=%#x "
++                   "(#%lu)\n",
++                   expected_swap_id, nwsvc.applied_swap_id, nwsvc.superseded_swap_id,
++                   nwsvc.latch_mismatches);
++    }
++    return r;
+ }
+ 
+ /* RELEASE: put the POST framebuffer back before the pool is unmapped
+diff -ruN a/src/hv_agx_scanout_broker.c b/src/hv_agx_scanout_broker.c
+--- a/src/hv_agx_scanout_broker.c	2026-11-16 19:34:27
++++ b/src/hv_agx_scanout_broker.c	2026-11-20 18:22:23
+@@ -542,6 +542,11 @@
+         return false;
+     broker->result = HV_AGX_SCANOUT_RESULT_PRESENT_FAILED;
+     broker->irq_status |= HV_AGX_SCANOUT_IRQ_ERROR;
++    /* NWOAS g262U: the failure is reported once (RESULT + IRQ_ERROR, no
++     * IRQ_LATCHED).  Do not keep applied != latched afterwards: that refused
++     * every later PRESENT and SET_POWER as BUSY with nothing left to clear it
++     * (2026-11-20, bugcheck 0x116 after a monitor reconnect). */
++    broker->latched_sequence = sequence;
+     return true;
+ }
+ 
+diff -ruN a/src/nwoas_latch.h b/src/nwoas_latch.h
+--- a/src/nwoas_latch.h	1970-01-01 09:00:00
++++ b/src/nwoas_latch.h	2026-11-20 18:22:23
+@@ -0,0 +1,36 @@
++/* NWOAS g262U: the LATCHED decision of the DCP scanout service, kept free of
++ * hardware access so the host test (nwoas_scripts/hv-latch-g262U/hosttest)
++ * compiles the same code.
++ *
++ * Background (2026-11-20, bugcheck 0x116 after a monitor reconnect): a present
++ * retired during an S254 reconnect gets a synthetic id; the reconnect's modeset
++ * then swaps the active surface itself and replaces the applied id with its
++ * own.  The service asked "is <the present's id> latched" and got "wrong id",
++ * the broker raised IRQ_ERROR and kept applied != latched, so every later
++ * PRESENT was refused as BUSY and Windows' display driver stopped for good. */
++#ifndef NWOAS_LATCH_H
++#define NWOAS_LATCH_H
++
++/* The id a modeset replaces: remembered only when it differs from the new one. */
++static inline unsigned int nwoas_latch_supersede(unsigned int previous, unsigned int now)
++{
++    return previous && previous != now ? previous : 0u;
++}
++
++/* 1 = latched, 0 = not yet, -2 = not this present.
++ * `superseded` is the applied id the last modeset replaced: the modeset showed
++ * the active surface again, which is that present's surface, so the present
++ * counts as latched as soon as the modeset is applied. */
++static inline int nwoas_latch_decide(unsigned int expected, unsigned int applied,
++                                     unsigned int superseded, int delay_elapsed)
++{
++    if (!expected)
++        return -2;
++    if (expected == applied)
++        return delay_elapsed ? 1 : 0;
++    if (expected == superseded)
++        return 1;
++    return -2;
++}
++
++#endif
