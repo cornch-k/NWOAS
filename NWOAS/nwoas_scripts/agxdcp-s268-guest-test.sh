@@ -75,8 +75,12 @@ S262="$ROOT/nwoas_scripts/nvmeqd-s262"
 # an explicit NWOAS_S262_HV= (empty) or 0 keeps the old one-at-a-time g254L path.
 if [ -z "${NWOAS_S262_HV+x}" ]; then export NWOAS_S262_HV=1; [ -z "${NWOAS_NVME_QD+x}" ] && export NWOAS_NVME_QD=32; fi
 if [ "${NWOAS_S262_HV:-0}" = 1 ]; then
-    HV="/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/hv/out-hv2/m1n1-g262R-agx-hv2-nvmeqd.bin"
-    HV_SIZE=2326528 HV_SHA=83add623acbd7658449e84b20d664205ac085ae92e841bf0fab47c5554af89d5
+    # 2026-11-20 daily HV g262R -> g262U (= g262R + PMU cycle-counter filter fix g262T + scanout latch vs
+    # reconnect-modeset race fix; nwoas_scripts/pmu-cyc, nwoas_scripts/hv-latch-g262U). Hardware 11-20: Task
+    # Manager 2.95 GHz, Cinebench 1,960/278 (same as g262R), Edge 150 s 14,847 frames, presents failures 0.
+    # Back to g262R: HV=.../out-hv2/m1n1-g262R-agx-hv2-nvmeqd.bin HV_SHA=83add623acbd7658449e84b20d664205ac085ae92e841bf0fab47c5554af89d5
+    HV="/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/hv-latch-g262U/out/m1n1-g262U-agx-hv2-latch.bin"
+    HV_SIZE=2326528 HV_SHA=7ef111d7e0bcc1b2b769818354e860afd26e8773f233e9757f9461a529ce9d7a
     PWRMOD=(-m "$S260/power_module.py" -m "$S262/nvmeqd_module.py")
 elif [ -n "${NWOAS_NVME_QD:-}" ] && [ "${NWOAS_NVME_QD}" != 0 ]; then
     echo 'STOP: NWOAS_NVME_QD needs NWOAS_S262_HV=1 (the g260O/g254L HV has no concurrent NVMe path)'; exit 1
