@@ -25,3 +25,4 @@ cd $D && grep -rl -I -i -E 'home-ap|neighbour-ap' --exclude-dir=.git . 2>/dev/nu
 # S264C/S264D standalone launcher patches (out-* folders are excluded above)
 mkdir -p $D/nwoas_scripts/standalone-s264/patches
 for p in $S/nwoas_scripts/standalone-s264/out-s264*/hv2-*.patch; do [ -f "$p" ] && cp -p "$p" $D/nwoas_scripts/standalone-s264/patches/; done
+[ -f $S/HANDOFF-2026-11-20.md ] && cp -p $S/HANDOFF-2026-11-20.md $D/ || true

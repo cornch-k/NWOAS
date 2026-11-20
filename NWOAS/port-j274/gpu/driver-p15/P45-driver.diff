@@ -1,0 +1,123 @@
+--- a/drivers/apple-agx/mesa/scripts/build-native-asahi-state.py	2026-11-20 14:49:54
++++ drivers/apple-agx/mesa/scripts/build-native-asahi-state.py	2026-11-20 14:50:46
+@@ -3899,6 +3899,8 @@
+ /* NWOAS-J274 PATCH P25 (agx_d3d10_windows.cpp) */
+ extern "C" VOID AgxD3d10WindowsShaderRecord(UINT Type, UINT Ir, const UINT *Code, BOOL Ok,
+                                             UINT ErrorOpcode, UINT ErrorOffset);
++extern "C" BOOL AgxD3d10WindowsPixelCenter(VOID);
++extern "C" int agx_win32_d3d_pixel_center; /* P45, defined in agx_state.c */
+ 
+ /* D3D-H3: with APPLE_AGX_D3D_SHADER_NIR=1 in the process environment the
+  * pipe shader state comes from the DXBC -> NIR translator
+@@ -3975,11 +3977,20 @@
+          free(slots);
+       }
+       if (nir) {
++         /* NWOAS-J274 PATCH P45: SV_Position is the pixel centre (x + 0.5). Asahi
++          * hands out integer pixel coordinates (nir_lower_frag_coord_to_pixel_coord)
++          * and leaves the half pixel to the frontend; the D3D12 path adds it
++          * (agx_d3d12_windows.cpp), this one did not (2778 K54: frac() off by 16/255). */
++         if (shader->type == MESA_SHADER_FRAGMENT && AgxD3d10WindowsPixelCenter())
++            dxbc_nir_lower_fragment_position(nir);
+          state.type = PIPE_SHADER_IR_NIR;
+          state.tokens = NULL;
+          state.ir.nir = nir;
+       }
+    }
++   /* P45: the TGSI path becomes NIR inside agx_create_shader_state, which adds
++    * the half pixel when this process-wide flag is set (same value every time). */
++   agx_win32_d3d_pixel_center = AgxD3d10WindowsPixelCenter() ? 1 : 0;
+    if (state.type != PIPE_SHADER_IR_NIR && !state.tokens) {
+       /* NWOAS-J274 PATCH P25: a shader neither path could take */
+       AgxD3d10WindowsShaderRecord((UINT)shader->type, 2u, code, FALSE, error.opcode, error.offset);
+@@ -6402,6 +6413,11 @@
+ 
+    if (cso->type == PIPE_SHADER_IR_TGSI &&
+        nir->info.stage == MESA_SHADER_FRAGMENT) {
++      /* NWOAS-J274 PATCH P45: D3D10/11 SV_Position half pixel for the TGSI
++       * path (set by the D3D10 frontend; a shader that does not read the
++       * fragment coordinate is unchanged). */
++      if (agx_win32_d3d_pixel_center)
++         NIR_PASS(_, nir, nir_lower_wpos_center);
+       NIR_PASS(_, nir, nir_lower_io_vars_to_temporaries,
+                nir_shader_get_entrypoint(nir), nir_var_shader_out);
+       NIR_PASS(_, nir, nir_lower_global_vars_to_local);
+@@ -6414,7 +6430,9 @@
+         if state_text.count(scan_anchor)!=1 or state_text.count(create_anchor)!=1:
+             raise SystemExit('Ambiguous native stream-output helper anchor')
+         state_text=state_text.replace(scan_anchor,scan_anchor+
+-            '#include "gallium/auxiliary/tgsi/tgsi_scan.h"\n')
++            '#include "gallium/auxiliary/tgsi/tgsi_scan.h"\n'
++            '/* NWOAS-J274 PATCH P45: set by the D3D10/11 frontend (Shader.cpp) */\n'
++            'int agx_win32_d3d_pixel_center;\n')
+         state_text=state_text.replace(create_anchor,'''/* D3D-G8: the NIR slot tgsi_to_nir gives a TGSI output semantic, for the
+  * semantics the D3D10 frontend declares. */
+ static bool
+--- a/drivers/apple-agx/mesa/d3d11/agx_d3d11_ddi.cpp	2026-11-20 14:49:54
++++ drivers/apple-agx/mesa/d3d11/agx_d3d11_ddi.cpp	2026-11-20 14:50:46
+@@ -48,6 +48,7 @@
+ extern "C" VOID AgxD3d10WindowsDiagnostic(PCSTR Stage, HRESULT Status,
+                                           const UINT *Values, UINT Count);
+ extern "C" BOOL AgxD3d10WindowsDiagnosticSwitch(const char *Name);
++extern "C" BOOL AgxD3d10WindowsPixelCenter(VOID); /* P45 */
+ extern "C" VOID AgxD3d10WindowsShaderRecord(UINT Type, UINT Ir, const UINT *Code, BOOL Ok,
+                                             UINT ErrorOpcode, UINT ErrorOffset); /* P25 */
+ 
+@@ -1145,6 +1146,10 @@
+       return NULL;
+    }
+    dxbc_nir_finalize(gs);
++   /* NWOAS-J274 PATCH P45: SV_Position half pixel, as in AgxD3d10CreateShaderState
++    * (the coverage code of this variant uses floor(frag_coord), unchanged by it) */
++   if (AgxD3d10WindowsPixelCenter())
++      dxbc_nir_lower_fragment_position(fs);
+    struct pipe_shader_state state = {};
+    state.type = PIPE_SHADER_IR_NIR;
+    state.ir.nir = fs;
+--- a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp	2026-11-19 00:40:42
++++ drivers/apple-agx/mesa/winsys/agx_d3d10_windows.cpp	2026-11-20 14:50:46
+@@ -797,6 +797,34 @@
+     InterlockedExchange64(&due, now + 5000);
+   }
+   return value;
++}
++
++/* NWOAS-J274 PATCH P45: D3D10/11 pixel shaders get SV_Position at the pixel
++ * centre (default on). Off = the 2779 behaviour (integer coordinates):
++ *   APPLE_AGX_D3D_PIXEL_CENTER=0|1 (this process), else
++ *   HKLM\SOFTWARE\NWOAS\AgxD3d D3d11PixelCenter (REG_DWORD) 0 = off, for every
++ *   process including DWM. Read once per process: shaders made before and
++ *   after a change must not disagree. */
++BOOL AgxD3d10WindowsPixelCenter(VOID) {
++  static volatile LONG cached = -1;
++  LONG value = InterlockedCompareExchange(&cached, -1, -1);
++  if (value < 0) {
++    char text[4];
++    DWORD length = GetEnvironmentVariableA("APPLE_AGX_D3D_PIXEL_CENTER", text, sizeof(text));
++    if (length == 1 && (text[0] == '0' || text[0] == '1')) {
++      value = text[0] == '1' ? 1 : 0;
++    } else {
++      DWORD data = 1u, bytes = sizeof(data);
++      if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\NWOAS\\AgxD3d", L"D3d11PixelCenter",
++                       RRF_RT_REG_DWORD, NULL, &data, &bytes) != ERROR_SUCCESS)
++        data = 1u;
++      value = data != 0u ? 1 : 0;
++    }
++    InterlockedExchange(&cached, value);
++    const UINT values[2] = {(UINT)value, length};
++    AgxD3d10WindowsDiagnostic("measure-d3d11-pixel-center", S_OK, values, 2u);
++  }
++  return value ? TRUE : FALSE;
+ }
+ 
+ UINT AgxD3d10WindowsMsaaProbe(VOID) {
+--- a/drivers/apple-agx/mesa/winsys/agx_d3d10_windows.h	2026-11-19 00:40:36
++++ drivers/apple-agx/mesa/winsys/agx_d3d10_windows.h	2026-11-20 14:51:02
+@@ -88,6 +88,7 @@
+  * Check* answer is receipted (measure-msaa-check: kind 1 caps / 2 levels,
+  * format, sample count, answer). MsaaFormat: the format answers 2x/4x
+  * levels; MsaaRenderTarget: it answers MULTISAMPLE_RENDERTARGET. */
++BOOL AgxD3d10WindowsPixelCenter(VOID); /* P45 */
+ UINT AgxD3d10WindowsMsaaProbe(VOID);
+ BOOL AgxD3d10WindowsMsaaFormat(DXGI_FORMAT Format, UINT Probe);
+ BOOL AgxD3d10WindowsMsaaRenderTarget(DXGI_FORMAT Format, UINT Probe);
