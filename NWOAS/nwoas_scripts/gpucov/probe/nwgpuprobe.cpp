@@ -812,6 +812,7 @@ static void TestPresent12(HWND w) {
 #include "nwgpuprobe_x64umd.inc"
 #include "nwgpuprobe_mem.inc"
 #include "nwgpuprobe_mem2.inc"  // probe12 (P38): memladder2, fill3, rcpt
+#include "nwgpuprobe_psmath.inc"  // probe16: psmath (pixel-shader arithmetic against CPU values)
 
 static void TestPresent() {
   DWORD session = 0;
@@ -868,6 +869,7 @@ int main(int argc, char **argv) {
   if (want("layered")) { Layered(false); Layered(true); }
   if (want("umd") && !all) TestUmdModules();
   if (want("draw11") && !all) TestDraw11();
+  if (want("psmath") && !all) TestPsMath();
   if (want("fill")) TestFill();
   if (want("pool") && !all) TestPoolReceipt();
   if (want("memladder") && !all) TestMemLadder();

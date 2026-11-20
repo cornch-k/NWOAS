@@ -9,7 +9,7 @@ EX=(--exclude='out/' --exclude='out-*/' --exclude='runs/' --exclude='runs-*' --e
  --exclude='*.jsonl' --exclude='.venv*/' --exclude='build/' --exclude='x64/' --exclude='ARM64/' --exclude='*.tlog' --exclude='*.ilk'
  --exclude='*.pch' --exclude='*.idb' --exclude='*.ipch' --exclude='Debug/' --exclude='Release/')
 r() { mkdir -p "$D/$1"; rsync -a "${EX[@]}" "$S/$1/" "$D/$1/"; }
-for d in nwoas_scripts/gpupool-s275 nwoas_scripts/gpupool-s273 nwoas_scripts/gpupool-s265 nwoas_scripts/gpupool-s266 nwoas_scripts/gpupool-s267 nwoas_scripts/gpupool-s269 nwoas_scripts/gpupool-s272 nwoas_scripts/wifi-s258 nwoas_scripts/standalone-s264 nwoas_scripts/diag-s264 nwoas_scripts/gpucov nwoas_scripts/bench-cb26 nwoas_scripts/bt-s261 nwoas_scripts/bt-s268 nwoas_scripts/power-s260 nwoas_scripts/nvmeqd-s262 \
+for d in nwoas_scripts/gpupool-s276 nwoas_scripts/gpupool-s275 nwoas_scripts/gpupool-s273 nwoas_scripts/gpupool-s265 nwoas_scripts/gpupool-s266 nwoas_scripts/gpupool-s267 nwoas_scripts/gpupool-s269 nwoas_scripts/gpupool-s272 nwoas_scripts/wifi-s258 nwoas_scripts/standalone-s264 nwoas_scripts/diag-s264 nwoas_scripts/gpucov nwoas_scripts/bench-cb26 nwoas_scripts/bt-s261 nwoas_scripts/bt-s268 nwoas_scripts/power-s260 nwoas_scripts/nvmeqd-s262 \
   nwoas_scripts/net-diag nwoas_scripts/agx-s248 nwoas_scripts/file-delivery-s243/jobs nwoas_scripts/file-delivery-s243/manifests \
   nwoas_scripts/wifi-s258/jobs nwoas_scripts/wifi-s259 nwoas_scripts/sound-s256 nwoas_scripts/fw-power-s260 nwoas_scripts/fw-bt-s261 nwoas_scripts/fw-smbios-s262 nwoas_scripts/smbios-s262 nwoas_scripts/publish-s263 \
   port-j274/gpu/hv port-j274/wifi/bcm4378-wificx port-j274/bt/bcm4378-bthx port-j274/sound/nwoas-audio/Source research-20261118; do r $d; done
