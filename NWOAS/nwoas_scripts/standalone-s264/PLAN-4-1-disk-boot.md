@@ -178,7 +178,7 @@ iBoot → 스텁 → 1단계 m1n1 (stage1.bin, 2,097,152 B; 화면 안 건드림
 | 2 | (나)-기준: `S264C_NO_QD=1 S264C_NO_LOCAL=1 S264D_NO_WIFI=1 S264D_NO_AUDIO_B=1 S264E_NO_BT=1 S264F_NO_PWR=1 bash standalone-s264/run-s264g-launch-slot.sh <옛 .out> <옛 .link>` | 화면 보기 | 바탕화면 | 맥북 방식으로 돌아가 원인부터 찾음(그 아래는 안 함) |
 | 3 | (나)-기본: 스위치 없이 같은 명령 | 화면 보기 | 바탕화면 | 그때만 반씩 나눔: 소리·Wi-Fi·전력을 켜고 블루투스·QD·LOCAL은 끔 → 실패한 쪽을 다시 반씩 |
 | 4 | ESP 준비: 평소 실행기를 `NWOAS_DELIVER_MANIFEST=…/file-delivery-s243/manifests/esp-4-1.json`으로 켜고 `esp-4-1-deliver.cmd` → `S/J-esp-4-1-copy.cmd` (파일 6개) | 없음 | `NWOAS ESP-4-1 COPY COMPLETE`(ESP에서 SHA-256 되읽기 6개 일치) | `MOUNT FAIL`/`MISMATCH` → 멈춤. 원래 있던 같은 이름 파일은 `C:\NWOAS\drop\esp-4-1\before\` |
-| 5 | **4-2 리허설**: `bash S/run-stage1-rehearsal-slot.sh 42 <옛 .out> <옛 .link>`. 3번 통과가 조건 | 화면 보기, 끝나면 시작 → 다시 시작 | rc 0 + 바탕화면 | rc 2(줄이 안 잡힘) → **화면 먼저**: Windows가 떠 있으면 줄만 못 잡은 것 → 시작 → 다시 시작. 화면이 죽어 있을 때만 전원 길게. rc 3 → 맥북이 쓴 바이트를 찾음 |
+| 5 | **4-2 리허설**: `bash S/run-stage1-rehearsal-slot.sh 42 <옛 .out> <옛 .link>`. 6장 3번 행((나)-기본) 통과가 조건 | 화면 보기, 끝나면 시작 → 다시 시작 | rc 0 + 바탕화면 | rc 2(줄이 안 잡힘) → **화면 먼저**: Windows가 떠 있으면 줄만 못 잡은 것 → 시작 → 다시 시작. 화면이 죽어 있을 때만 전원 길게. rc 3 → 맥북이 쓴 바이트를 찾음 |
 | 6 | **1단계 + S268 + SSD**: `bash S/run-stage1-rehearsal-slot.sh main idle -` | 없음 | `ST1-S268 DONE … VERDICT=PASS` | rc 3·4 또는 VERDICT=CHECK → **1TR로 가지 않음** |
 | 7 | **일부러 실패**: `bash S/run-stage1-rehearsal-slot.sh negative <옛 .out> <옛 .link>` | 없음 | missing·fault 둘 다 `NEGATIVE PASS`, 끝에 평소 부팅 | rc 5 → 1단계가 재부팅함 = **1TR로 가지 않음** |
 | 8 | `gh issue view 441 404 425 255 -R AsahiLinux/asahi-installer` | 없음 | 5장과 다른 새 실패 보고 없음 | 겹치면 멈춤 |
@@ -209,6 +209,8 @@ iBoot → 스텁 → 1단계 m1n1 (stage1.bin, 2,097,152 B; 화면 안 건드림
 
 ## 8. 콘치님 1TR 카드 (한 화면)
 
+11-21 01:3x 명령 대조 반영(막다른 줄 3곳 + 스텁 step2.sh 확인 1줄). 대조 표는 `ANALYSIS-1tr-card-20261121.md`.
+
 ```
 [맥북] 6장 4~8 통과 확인.   [맥미니] Windows: 시작 → 전원 → 종료, 10초 기다림.
 1) 전원 버튼을 떼지 말고 길게 → "시동 옵션 로드 중" → [옵션] → 계속 → 관리자 암호
@@ -216,9 +218,14 @@ iBoot → 스텁 → 1단계 m1n1 (stage1.bin, 2,097,152 B; 화면 안 건드림
 2) 메뉴 [유틸리티] → [터미널]
 3) diskutil info disk0s4 | grep -E "Device Node|Partition UUID|File System"
      → Partition UUID 가 A3E73003-C14A-487B-9F2E-8854FE119192 인지 봄
-     ✗ 다르거나 "Could not find" → diskutil list internal  사진 (바뀐 것 없음)
+     ✗ 다르거나 "Could not find" → diskutil info A3E73003-C14A-487B-9F2E-8854FE119192 | grep "Device Node"
+          → 나온 diskXsY로 3)·4)를 다시.  그것도 안 되면 diskutil list (거르기 없이) 사진, 바뀐 것 없음
 4) diskutil mount readOnly disk0s4  →  diskutil info disk0s4 | grep "Mount Point"   (나온 경로 = P)
      ✗ 연결 실패 → mkdir -p /tmp/esp && mount_msdos -o rdonly /dev/disk0s4 /tmp/esp   (P = /tmp/esp)
+     ✗ mount_msdos도 실패 → 바뀐 것 없음. shutdown -h now (안 되면 Apple 메뉴 → 시스템 종료), 사진
+4-1) grep -c shasum "/Volumes/<스텁>/Finish Installation.app/Contents/Resources/step2.sh"   (스텁 이름은 ls /Volumes)
+     → 0 이어야 함 (되돌리기 R2를 믿을 수 있음)
+     ✗ 0이 아님 → 5)로 가지 않음. shutdown -h now, 사진 (바뀐 것 없음)
 5) sh "P/m1n1/go1.sh"
      CHECK 줄들 → "ROLLBACK LINE" 두 줄이 나오면 사진 → Enter → 암호 → GO1-DONE
      ✗ STOP: ...       → 바뀐 것 없음. shutdown -h now, 사진
@@ -238,8 +245,11 @@ R2) 사진의 ROLLBACK LINE 입력:  sh "/Volumes/<스텁>/Finish Installation.a
      CHECK boot.bin = D4 → CHECK paired 1TR → Enter → 암호(bputil) → 암호(kmutil) → STEP2-DONE
      ✗ NOT-PAIRED → Enter 누르지 말고 Ctrl-C (Enter는 bless = 인터넷 필요) → shutdown -h now → R1
      ✗ bputil이 암호가 아닌 오류로 계속 실패 → Ctrl-C → 3)~4) → sh "P/m1n1/go1.sh" --d4 → GO1-DONE
+     ✗ kmutil이 두 번 이상 암호가 아닌 오류 → Ctrl-C → shutdown -h now → 전원 길게 → 시동 옵션에서 Macintosh HD
+          (그곳의 D4, Tahoe 펌웨어) → 맥북이 S243 계열로 상태 확인 (watch --rollback은 13.5 검사에서 실패하는 것이 정상)
 R3) 맥북에 알리고 Enter → 맥북 watch --rollback 마지막 줄 "GO1-WATCH D4-BACK" = 오늘 방식으로 돌아옴
-     ✗ D4-BACK이 아님 → 시동 옵션에서 Macintosh HD(그곳에도 D4) → 맥북이 상태를 봄. DFU는 콘치님 결정
+     ✗ D4-BACK이 아님 → 시동 옵션에서 Macintosh HD(그곳에도 D4, Tahoe 펌웨어) → 맥북이 S243 계열로 상태를 봄
+          (13.5용 실행기의 탐침은 실패하는 것이 정상). DFU는 콘치님 결정
 ```
 - 스텁 이름은 1TR마다 `Windows` 또는 `Windows 1`로 보였습니다. go1.sh는 이름이 아니라 설치본 `step2.sh` 안의 VGID로 찾고, 찾은 경로로 ROLLBACK LINE을 만들어 보여 줍니다.
 - 디스크 이름 `disk0`(내장)과 4번 칸은 GPT 계획 기록에서 온 것입니다 [가설]. 3)에서 UUID로 확인하고, 다르면 아무것도 바꾸지 않습니다.

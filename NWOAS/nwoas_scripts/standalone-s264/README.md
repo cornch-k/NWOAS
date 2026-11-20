@@ -516,3 +516,9 @@ bash /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/s264-dryru
 
 - 처음 만든 `esp41/run-esp41-copy.sh`는 평소 래퍼가 끝나기를 기다려 멈췄습니다(래퍼는 Windows가 도는 동안 안 끝남). 래퍼는 그대로 두고 제 스크립트만 끈 뒤, 래퍼를 떼어 띄우고 `DONE` 줄로 판정하도록 고쳤습니다.
 - 맥북 없이 켜는 실행기(s264G)·ESP 페이로드(S261)는 평소 구성(g262U·S280·GPU 풀·WFI/틱)보다 이전 판입니다. 1TR은 1단계만 등록하고 1단계가 읽는 ESP 파일은 나중에 바꿀 수 있으므로, 새 판은 10번(4-2 배치) 전에 맞춥니다.
+
+## 18. 1TR 카드 점검·감시 스크립트 손 없는 시험 (2026-11-21 01:2x~01:30) [사실]
+
+- 카드 명령 대조(`ANALYSIS-1tr-card-20261121.md`) → 막다른 줄 3곳 + 스텁 `step2.sh` 확인 1줄을 PLAN 8장에 반영.
+- `watch-after-go1.sh` 손 없는 시험(`runs/watchtest-*.txt`): W4 뒤 D4 대기에서 `--rollback` → `GO1-WATCH D4-BACK`(rc 0), 이어서 그냥 실행 → `ST1-S268 DONE … VERDICT=PASS` → `GO1-WATCH KEEP`(rc 0). 1TR 뒤 판정 경로 전체가 실기에서 돎(1단계 표시 검사는 D4라서 통과하는 쪽만 확인).
+- 시험 뒤 맥미니는 S268(풀 끔)로 켜져 있음.
