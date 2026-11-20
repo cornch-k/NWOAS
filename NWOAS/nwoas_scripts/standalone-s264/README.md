@@ -488,3 +488,16 @@ bash /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/s264-dryru
   - `stage1/watch-after-go1.sh [--rollback]`(KEEP / HOLD / ROLLBACK)
   - `stage1/go1.sh [--d4]`: ESP에 쓰지 않고, 되돌리기 줄을 화면에 보여 줌
 - ESP 묶음 `esp-4-1`은 이제 파일 6개입니다: boot.bin(D4), stage1.bin, go1.sh, cleanbp-local.sh, nwoas-s264g.bin, nwoas-payload.bin. 지문은 `stage1/SHA256SUMS`(35개 OK)에 있습니다.
+
+## 16. s264G 실기 (2026-11-21 00:37~00:5x) [사실]
+
+결론: 맥북 연결 상태에서 (가) 미리보기 비교 통과, (나) C 실행기로 Windows 켜기 2번 모두 바탕화면까지 갔습니다. 기본값(와이파이·소리·블루투스·전력·QD·예외 정책 LOCAL 모두 켬)에서는 맥북으로 넘어온 사건이 0번이고, 콘치님이 와이파이·소리 동작을 확인했습니다. 다음은 PLAN-4-1 6장 4번(ESP 준비) → 5~7번 맥북 리허설입니다.
+
+| 단계 | 기록 | 결과 |
+|---|---|---|
+| (가) 미리보기 비교 | `runs/slot-s264g-20261121-003733.txt`, `logs/s264g-compare-20261121-003755.log` | `DRY-RUN COMPARE: PASS (every item SAME)` |
+| (나)-기준 (QD·LOCAL·와이파이·소리 B·BT·전력 끔) | `logs/s264g-launch-20261121-004023.*`, `runs/launch-slot-s264g-*.txt` | 바탕화면. 계수기 14·1·39·2·14·7 = 기대값. 맥북으로 넘어온 것 197번 = 모두 `BRK #0xF002`(196)·`#0xF004`(1) — LOCAL을 끈 기준 실행이라 예상대로 |
+| (나)-기본 (스위치 없음) | `logs/s264g-launch-20261121-004627.*`, `runs/launch2-default-*.txt` | 바탕화면, 와이파이·소리 동작(콘치님 눈). 102 ops, 계수기 같음, POLICY pol=1, `S264C LOWER` 12줄, 맥북으로 넘어온 것 **0번** |
+
+- 두 C 실행 모두 진단 출력에 `DARTDIAG … MAPPED-WRONG-TARGET`(USB xHCI erstba/dcbaap/crcr)·`DARTERR STALE(FLAG=0,ignore)` 묶음이 8줄 있습니다. 같은 날 맥북 실행기 S268/S269 부팅(00:24, 00:38)에는 0줄입니다. 11-16 S247 부팅들에도 있던 줄입니다. 무해한지는 미확인 [가설: UEFI 단계 USB 초기화 때 C 실행기 쪽 DART 상태가 Python 쪽과 다름]. 리허설 전에 원인을 볼 것. 2회차에서 USB 키보드·마우스는 평소처럼 동작(콘치님 확인).
+- 끝내는 방법: 시작 메뉴 → 다시 시작 → 맥미니가 맥북 연결 대기(D4)로 돌아오고 감시 도구는 USB가 끊겨 rc=1로 끝남(정상).
