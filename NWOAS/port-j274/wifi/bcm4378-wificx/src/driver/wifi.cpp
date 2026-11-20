@@ -1942,6 +1942,18 @@ static void JobKeys(PNWOA_DEVICE Dev)
                               nb_wsec_for_cipher(Dev->Conn.Pairwise));
         }
     }
+    // s278: the OS supplicant finished its handshake and gave us keys -> the AP's scb is AUTHORIZED for the firmware
+    // too (brcmfmac / bcmdhd: WLC_SCB_AUTHORIZE when the supplicant authorizes the port).  Sent after every key set
+    // that installed a key while connected; NwoaScbAuthorize = status of the last one, NwoaCntScbAuthorize = how many.
+    if (NT_SUCCESS(st) && Dev->Cfg.ScbAuthorize && Dev->Connected && Dev->PtkInstalled) {
+        UCHAR peer[8];
+        RtlZeroMemory(peer, sizeof(peer));
+        RtlCopyMemory(peer, Dev->CurBssid, 6);
+        NTSTATUS sa = NwoaIoctl(Dev, 121 /* WLC_SCB_AUTHORIZE */, peer, 6, 0, NULL, NULL);
+        RtlSecureZeroMemory(peer, sizeof(peer));
+        NwoaDiagDword(Dev, L"NwoaScbAuthorize", (ULONG)sa);
+        NwoaDiagDword(Dev, L"NwoaCntScbAuthorize", (ULONG)InterlockedIncrement(&Dev->CntScbAuthorize));
+    }
     RtlSecureZeroMemory(Dev->Keys, sizeof(Dev->Keys));
     Dev->NumKeys = 0;
     Dev->KeyRequest = NULL;

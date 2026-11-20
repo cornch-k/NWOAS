@@ -28,8 +28,8 @@ for f in $MANF $PKGJ $INST $ROOT/agx-s248/jobs/D28-rearm.cmd $ROOT/agx-s248/jobs
   n=$(python3 -I -c "import sys;s=open(sys.argv[1],encoding='ascii').read().replace('\r\n','\n').replace('\n','\r\n');print(len(s.encode('ascii')))" $f) || { echo "STOP: not ASCII $f"; exit 1; }
   [ "$n" -le 4032 ] || { echo "STOP: $f is $n B > 4032"; exit 1; }; done
 [ $(echo $KIT $KIT2 | wc -w) -eq $(for k in $KIT $KIT2; do ls $ROOT/gpucov/jobs/$k-*.cmd 2>/dev/null | head -1; done | wc -l) ] || { echo "STOP: a KIT job file is missing"; exit 1; }
-waitline() { for i in $(seq 1 $3); do grep -a -q -E "$2" $1 && return 0; sleep 5; done; return 1; }
-job() { local L=$1 LOG=$2 OUT=$3 f=$4 j
+waitline() { local i; for i in $(seq 1 $3); do grep -a -q -E "$2" $1 && return 0; sleep 5; done; return 1; }
+job() { local L=$1 LOG=$2 OUT=$3 f=$4 j i
   say "== $(basename $f)"
   python3 -I $ROOT/transport-s123/queue_job.py $L $f >/dev/null || { say "ABORT queue $(basename $f)"; return 3; }
   j=$(python3 -I -c "import json,sys;print(json.load(open(sys.argv[1]))['id'])" $L/job.json)
@@ -54,18 +54,28 @@ say "START T alternating-boot chain (2776 stays installed) old=$2 SEQ=$SEQ"
 # 01:37 and nothing set it since); every later value is written at the end of the boot before it.
 first=$(echo $SEQ | awk '{print $1}')
 [ "$first" = 0 ] || { say "STOP: SEQ must start with 0 (registry is cleared now)"; exit 1; }
-n=$(echo $SEQ | wc -w); i=0; lastT1=0
-for t in $SEQ; do i=$((i+1)); [ $t = 1 ] && lastT1=$i; done
-OUT=$1; L=$2; i=0
-for t in $SEQ; do i=$((i+1))
+n=$(echo $SEQ | wc -w); bi=0; lastT1=0
+for t in $SEQ; do bi=$((bi+1)); [ $t = 1 ] && lastT1=$bi; done
+OUT=$1; L=$2; bi=0
+# 11-20 fix: the boot counter was 'i', which waitline/job overwrote (no 'local i'), so 'next' was always empty
+# -> every boot ended in K47z and no boot ever ran with T=1 (09:18-09:56 run). Counter is now 'bi', helpers use local i,
+# and the chain stops if the value K48 reads at a boot differs from the expected one, or K47t did not write 1.
+for t in $SEQ; do bi=$((bi+1))
   boot $OUT $L "" "" 1
   [ "$POOL" = 1 ] || { say "POOL NOT ARMED (hypervisor lines above); stop here"; exit 8; }
-  say "BOOT $i of $n: expected TopDown=$t at this KMD start"
+  say "BOOT $bi of $n: expected TopDown=$t at this KMD start"
   sleep 60
-  kit $L $LOG $OUT K48 K45t || exit $?
-  if [ $i = $lastT1 ]; then say "regressions in the last T=1 boot"; kit $L $LOG $OUT $REG || exit $?; fi
-  next=$(echo $SEQ | awk -v k=$((i+1)) '{print $k}')
-  if [ "$next" = 1 ]; then kit $L $LOG $OUT K47t || exit $?; else kit $L $LOG $OUT K47z || exit $?; fi
+  kit $L $LOG $OUT K48 || exit $?
+  got=$(iconv -c -f CP949 -t UTF-8 $JOBLOG | tr -d '\r' | sed -n 's/^K48 TopDown=\([0-9]*\) .*/\1/p' | tail -1); [ -n "$got" ] || got=0
+  [ "$got" = "$t" ] || { say "STOP: boot $bi expected TopDown=$t but K48 read '$got' (registry); results of this boot are not T=$t evidence"; kit $L $LOG $OUT K47z; exit 9; }
+  say "BOOT $bi CHECK TopDown read=$got expected=$t OK"
+  kit $L $LOG $OUT K45t || exit $?
+  if [ $bi = $lastT1 ]; then say "regressions in the last T=1 boot"; kit $L $LOG $OUT $REG || exit $?; fi
+  next=$(echo $SEQ | awk -v k=$((bi+1)) '{print $k}')
+  if [ "$next" = 1 ]; then kit $L $LOG $OUT K47t || exit $?
+    iconv -c -f CP949 -t UTF-8 $JOBLOG | tr -d '\r' | grep -q '^K47t TopDown=1$' || { say "STOP: K47t did not write TopDown=1"; kit $L $LOG $OUT K47z; exit 9; }
+    say "BOOT $bi -> next boot TopDown=1 written"
+  else kit $L $LOG $OUT K47z || exit $?; say "BOOT $bi -> next boot TopDown cleared"; fi
   kit $L $LOG $OUT K41 || exit $?
 done
 say "HV EL2 exceptions in the last boot: $(grep -a -c 'Exception taken from EL2' "$LOG.vuart")"

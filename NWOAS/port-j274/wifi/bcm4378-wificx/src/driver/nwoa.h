@@ -346,6 +346,12 @@ typedef struct _NWOA_CONFIG {
                                 //     legacy PCIe2 H2D_MAILBOX_0/1 (0x140/0x144), not the DAR 0xA20/0xA24 that s258r
                                 //     uses on PCIe2 rev >= 64.  1 = H2D ring doorbell, 2 = hostready (DB1)
     // ---- s272 (0 = s271 behaviour)
+    ULONG  ScbAuthorize;        // s278, 1 (default) = after the OS supplicant's keys are installed send WLC_SCB_AUTHORIZE
+                                //     (ioctl 121, peer = connected BSSID) as brcmfmac does when wpa_supplicant sets the
+                                //     station AUTHORIZED (cfg80211.c brcmf_cfg80211_change_station) and bcmdhd does
+                                //     (wl_cfg80211.c).  The firmware (18.20.383 RAM 0x400a4c) turns the INTERFACE_OPEN
+                                //     after an off-channel scan into INTERFACE_CLOSE while the AP's scb is not
+                                //     AUTHORIZED.  0 = never sent (s277 and before)
     ULONG  RomDump;             // s276, 1 = once per device start copy the chip ROM (TCM offsets 0 .. 0x170000) to NwoaRom0..1; the driver
                                 //     removes the switch from the registry before reading (acts once; s276 hung, see fw.cpp)
     ULONG  FwSnap;              // s273, 1 = for the first NWOA_SNAP_SCANS scans made while connected copy the firmware
@@ -458,6 +464,7 @@ typedef struct _NWOA_DEVICE {
     volatile LONG   CntMbAck;
     ULONG           MbAckLast;
     volatile LONG   CntDbRd;            // s272: DbMagic bit 2 read-index doorbells
+    volatile LONG   CntScbAuthorize;    // s278
     ULONG           DbLastVal;          // s272: value of the last doorbell
 
     // tx slots

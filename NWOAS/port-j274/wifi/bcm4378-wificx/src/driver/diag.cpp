@@ -146,6 +146,7 @@ void NwoaReadConfig(PNWOA_DEVICE Dev)
     c->DbMagic       = QueryUlong(key, L"DbMagic", 0) & 3;            // s272
     c->FwSnap        = QueryUlong(key, L"FwSnap", 0) ? 1 : 0;         // s273
     c->RomDump       = QueryUlong(key, L"RomDump", 0) ? 1 : 0;        // s276
+    c->ScbAuthorize  = QueryUlong(key, L"ScbAuthorize", 1) ? 1 : 0;   // s278
     if (c->SettleMs > 10000)
         c->SettleMs = 10000;
     if (key)
@@ -591,11 +592,11 @@ void NwoaDiagS258o(PNWOA_DEVICE Dev, PCHAR b, SIZE_T cap)
     NWOA_SFREC sf[NWOA_SF_N];
     ULONG n;
     RtlStringCchPrintfA(b, cap, "ConnectedScan=%lu ScanFlowCheck=%lu ScanFlowProbeMs=%lu ScanTxHold=%lu TestConnScanSec=%lu "
-        "FlowTid=%lu(tid%u) MbAck=%lu FlowSpare=%lu DbLegacy=%lu dar=%d db=%lx hr=%lx DbMagic=%lu dbrd=%ld dblast=%lx FwSnap=%lu/%lu",
+        "FlowTid=%lu(tid%u) MbAck=%lu FlowSpare=%lu DbLegacy=%lu dar=%d db=%lx hr=%lx DbMagic=%lu dbrd=%ld dblast=%lx FwSnap=%lu/%lu ScbAuthorize=%lu",
         Dev->Cfg.ConnectedScan, Dev->Cfg.ScanFlowCheck, Dev->Cfg.ScanFlowProbeMs, Dev->Cfg.ScanTxHold,
         Dev->Cfg.TestConnScanSec, Dev->Cfg.FlowTid, (unsigned)NwoaFlowTidFifo(Dev->Cfg.FlowTid), Dev->Cfg.MbAck,
         Dev->Cfg.FlowSpare, Dev->Cfg.DbLegacy, Dev->Sh.shared_dar, NwoaDbellReg(Dev, FALSE), NwoaDbellReg(Dev, TRUE),
-        Dev->Cfg.DbMagic, Dev->CntDbRd, Dev->DbLastVal, Dev->Cfg.FwSnap, Dev->SnapN);
+        Dev->Cfg.DbMagic, Dev->CntDbRd, Dev->DbLastVal, Dev->Cfg.FwSnap, Dev->SnapN, Dev->Cfg.ScbAuthorize);
     NwoaDiagSz(Dev, L"NwoaCfgS258o", b);
     // s270: spare flowring probe and MAILBOXINT ack counters
     RtlStringCchPrintfA(b, cap, "spare=%ld sparetx=%ld alive=%ld stuck=%ld noframe=%ld openfail=%ld last=%ld "

@@ -684,3 +684,26 @@ UMD 기록 풀이 (2758, Cinebench 프로세스, 시각 순서) [사실, 소스 
 | AppleAgxRenderAdmissionUmd32.dll (x86) | 13739520 | `5601111d01fdf721a3165668eb155667d4af9e1919e758641c273e53556b2a9a` |
 | AppleAgxRenderAdmission.arm64xwow.inf | 5248 | `2ea86858e37a3d6a86c129604e324a8d129e042cd6f161927e252ed27a74d193` |
 | appleagxrenderadmission.cat | 4637 | `bce86a72e4c9179c6d346d56d04cbba37f2807f7bcf892882c4360292fe844cf` |
+
+## P43 (NWOAS-J274, 2026-11-20) — CPU가 보는 버퍼를 풀 위쪽부터 놓기를 기본으로 (판 2778)
+
+결론: **판 2778 = 2777(P42) + `Wom1PoolCpuVisibleTopDown` 기본 켜짐(값 없음 = 켜짐, 0 = 2775~2777 배치)** [빌드만].
+근거: 11-20 교대 부팅 시험(고친 연쇄, 2777 위)과 01:15 시험을 합쳐 T=1 3부팅 24/24 갈래 통과, T=0 6부팅 모두 실패 있음(RESULT-2775.md 17장).
+
+| 바뀐 것 | 내용 |
+|---|---|
+| `src/pool_windows.c` AdmissionPoolReadCpuVisibleTopDown | 키를 못 열거나 값이 없으면 1, 값이 0일 때만 0 (P41 초안과 같은 동작) |
+| `src/allocation_windows.c`, `include/render_admission.h` | 주석만 |
+| `build-p43.sh` | build-p42.sh 복사, PACKAGE_BUILD 2778, 실행 이름 j274g4u |
+- 빌드(`build-p43.sh`, 실행 이름 j274g4u, 12:21~12:30): 한 번에 성공, DriverVer 30.0.2778.0, STAMPINF/INF2CAT/SIGN 0, INFVERIF_RC 1627(2777과 같음).
+  차이 파일 `P43-driver.diff` sha256 `0dfad6d57bc7acc7d149d78bc12df131d971d1fa57e523e1bb749c6e307ca0d8`. 결과물 `out/j274-full-20261120-1221-p43`.
+
+| 파일 | 바이트 | sha256 |
+|---|---|---|
+| AppleAgxRenderAdmission.sys | 654096 | `c06de374e1dfd20c05d8719b076ce197e5386abd81ef7444f789fc1bf7bc1cb0` |
+| AppleAgxRenderAdmissionUmd.dll (ARM64X 전달) | 14848 | `77ae9e45fb5d06a5aed8ebe8e06f9a1d5e290db72f151ed09b085ae08261388d` |
+| AppleAgxRenderAdmissionUmdArm64.dll | 13523456 | `e5e4f27b6c5e433a124803e3bdcf7eedc9ca1e878f3929f2b2674891f116629e` |
+| AppleAgxRenderAdmissionUmdX64.dll | 14093312 | `529d46c272c016a83cef5305820350023dc2e484ed03b2f56340d06517702c96` |
+| AppleAgxRenderAdmissionUmd32.dll (x86) | 13739520 | `8c59885bf15c951601be4de77930a238e2352ca10ead1560e1ce28f0a2372fd4` |
+| AppleAgxRenderAdmission.arm64xwow.inf | 5248 | `e57fa00fcfe18fae9575db96bde8be74efba2aa56f72f68860209c245e18844d` |
+| appleagxrenderadmission.cat | 4637 | `edbb8708cd227f5b7748065fc3887101d54ef0434d37c5a930ae27946e4663de` |

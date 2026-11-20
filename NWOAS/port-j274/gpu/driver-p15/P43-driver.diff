@@ -1,0 +1,63 @@
+--- a/drivers/apple-agx/render-admission/src/pool_windows.c
++++ b/drivers/apple-agx/render-admission/src/pool_windows.c
+@@ -289,7 +289,7 @@
+   ULONGLONG NeutralHeadroomGranules;
+   /* P38: promises past AdmitGranules are refused (0: no cap). */
+   ULONGLONG AdmitGranules, SegmentRefusals;
+-  /* P40: REG_DWORD Wom1PoolCpuVisibleTopDown at start (test switch). */
++  /* P40/P43: REG_DWORD Wom1PoolCpuVisibleTopDown at start (default on since 2778). */
+   ULONG CpuVisibleTopDown;
+ } ADMISSION_POOL_RUNTIME;
+ 
+@@ -1597,21 +1597,22 @@
+   return mib;
+ }
+ 
+-/* P40 (2776, test switch, default 0 = 2775): REG_DWORD Wom1PoolCpuVisibleTopDown
+- * (device key) = 1 asks VidMm to place CPU-visible segment-3 allocations
++/* P40 (2776) switch, P43 (2778) default ON: REG_DWORD Wom1PoolCpuVisibleTopDown
++ * (device key) asks VidMm to place CPU-visible segment-3 allocations
+  * top-down (D3DDDI_SEGMENTPREFERENCE.Direction0), away from the bottom-up
+- * large GPU-only buffers. Read when the pool starts (device restart). */
++ * large GPU-only buffers.  P43: on unless the value is 0 (absent = on;
++ * 0 = the 2775..2777 bottom-up placement).  Read when the pool starts. */
+ static ULONG AdmissionPoolReadCpuVisibleTopDown(ADMISSION_CONTEXT *Context) {
+   HANDLE key = NULL;
+-  ULONG value = 0u;
++  ULONG value = 1u;
+   if (Context->PhysicalDeviceObject == NULL ||
+       !NT_SUCCESS(IoOpenDeviceRegistryKey(Context->PhysicalDeviceObject,
+           PLUGPLAY_REGKEY_DEVICE, KEY_QUERY_VALUE, &key)))
+-    return 0u;
++    return 1u; /* P43: default on */
+   if (!AdmissionPoolReadDword(key, L"Wom1PoolCpuVisibleTopDown", &value))
+-    value = 0u;
++    value = 1u; /* P43: absent = on */
+   ZwClose(key);
+-  return value == 1u ? 1u : 0u;
++  return value == 0u ? 0u : 1u;
+ }
+ 
+ _Use_decl_annotations_ BOOLEAN AdmissionMemoryPoolCpuVisibleTopDown(
+--- a/drivers/apple-agx/render-admission/src/allocation_windows.c
++++ b/drivers/apple-agx/render-admission/src/allocation_windows.c
+@@ -628,7 +628,7 @@
+     if (description->CpuVisible != 0u) {
+       info->PreferredSegment.SegmentId1 = ADMISSION_MEMORY_APERTURE_SEGMENT;
+       info->SupportedReadSegmentSet |= ADMISSION_APERTURE_SEGMENT_SET;
+-      /* P40 test switch (default off): top-down in segment 3. */
++      /* P40 switch, P43 default on (registry 0 = off): top-down in segment 3. */
+       if (AdmissionMemoryPoolCpuVisibleTopDown(context))
+         info->PreferredSegment.Direction0 = 1u;
+     }
+--- a/drivers/apple-agx/render-admission/include/render_admission.h
++++ b/drivers/apple-agx/render-admission/include/render_admission.h
+@@ -1548,7 +1548,7 @@
+ _IRQL_requires_(PASSIVE_LEVEL)
+ VOID AdmissionMemoryPoolExecuted(_In_opt_ ADMISSION_CONTEXT *Context,
+                                  ULONGLONG Seq);
+-/* P40 test switch Wom1PoolCpuVisibleTopDown (pool_windows.c); FALSE without a pool. */
++/* Wom1PoolCpuVisibleTopDown (pool_windows.c; P43: on unless the value is 0); FALSE without a pool. */
+ BOOLEAN AdmissionMemoryPoolCpuVisibleTopDown(_In_opt_ const ADMISSION_CONTEXT *Context);
+ /* DestroyAllocation: the placement ends. */
+ VOID AdmissionMemoryPoolForget(_In_opt_ ADMISSION_CONTEXT *Context,

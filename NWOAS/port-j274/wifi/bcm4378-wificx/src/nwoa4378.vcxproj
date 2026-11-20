@@ -60,7 +60,7 @@
       <GenerateMapFile>true</GenerateMapFile>
     </Link>
     <Inf>
-      <TimeStamp>1.0.1.17</TimeStamp>
+      <TimeStamp>1.0.1.18</TimeStamp>
     </Inf>
   </ItemDefinitionGroup>
   <ItemGroup>

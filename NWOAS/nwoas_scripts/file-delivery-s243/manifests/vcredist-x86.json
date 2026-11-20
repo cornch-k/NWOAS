@@ -1,0 +1,11 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "vc_redist.x86.exe",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/third-party/vc_redist.x86.exe",
+   "bytes": 13953392,
+   "sha256": "0c09f2611660441084ce0df425c51c11e147e6447963c3690f97e0b25c55ed64"
+  }
+ ]
+}

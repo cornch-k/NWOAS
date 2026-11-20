@@ -5,7 +5,7 @@ icacls %D% /grant *S-1-5-32-545:(OI)(CI)M /T >nul
 > %D%\k50.cmd echo @echo off
 >> %D%\k50.cmd echo %D%\nwgpuprobe15-x86.exe umd draw11 d3d11 d3d12 ^> %D%\k50-x86.txt 2^>^&1
 >> %D%\k50.cmd echo %D%\nwgpuprobe15-x64.exe umd draw11 d3d11 ^> %D%\k50-x64.txt 2^>^&1
->> %D%\k50.cmd echo %D%\nwgpuprobe15-arm64.exe umd draw11 ^> %D%\k50-arm64.txt 2^>^&1
+>> %D%\k50.cmd echo %D%\nwgpuprobe15-arm64.exe umd draw11 d3d11 ^> %D%\k50-arm64.txt 2^>^&1
 >> %D%\k50.cmd echo echo done^> %D%\k50-done.txt
 del /q %D%\k50-done.txt %D%\k50-x86.txt %D%\k50-x64.txt %D%\k50-arm64.txt 2>nul
 powershell -NoProfile -Command "$t0=Get-Date; while(-not (Get-Process explorer -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -gt 0 }) -and ((Get-Date)-$t0).TotalSeconds -lt 240){ Start-Sleep 5 }; 'WAIT explorer_after_s='+[int]((Get-Date)-$t0).TotalSeconds"

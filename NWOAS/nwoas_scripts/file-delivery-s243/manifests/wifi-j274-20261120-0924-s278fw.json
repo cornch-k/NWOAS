@@ -1,0 +1,77 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "P-atlantisb_M-RASP_V-m.txt",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/wifi/bcm4378-wificx/out/20261120-0924-s278fw/package/P-atlantisb_M-RASP_V-m.txt",
+   "bytes": 7784,
+   "sha256": "5e8c0449664fa47d57f220aa75dd04ad6d5558adf157ddf20f447a9f4f5fb19e"
+  },
+  {
+   "name": "P-atlantisb_M-RASP_V-u.txt",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/wifi/bcm4378-wificx/out/20261120-0924-s278fw/package/P-atlantisb_M-RASP_V-u.txt",
+   "bytes": 7723,
+   "sha256": "417a6014f4dad80d92f160748f43d2c50314ba67eefc15fa5eace378d82d943e"
+  },
+  {
+   "name": "atlantisb-X3.clmb",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/wifi/bcm4378-wificx/out/20261120-0924-s278fw/package/atlantisb-X3.clmb",
+   "bytes": 33493,
+   "sha256": "322fbc347d7ee69d8db0bb8483c9e7e8ac711390b1f4dd951c12c5ec153f4ab8"
+  },
+  {
+   "name": "atlantisb-X3.trx",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/wifi/bcm4378-wificx/out/20261120-0924-s278fw/package/atlantisb-X3.trx",
+   "bytes": 1377067,
+   "sha256": "c1c8e9ac706099da73b3657ccc2c44d5f3e42505979e0328923cc28940b90091"
+  },
+  {
+   "name": "atlantisb-X3.txcb",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/wifi/bcm4378-wificx/out/20261120-0924-s278fw/package/atlantisb-X3.txcb",
+   "bytes": 304,
+   "sha256": "6b517281b2b87a57bb9489c55fd25eec8ea9ec6ef451b1f3da0a3ed0834da112"
+  },
+  {
+   "name": "nwoa4378.cat",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/wifi/bcm4378-wificx/out/20261120-0924-s278fw/package/nwoa4378.cat",
+   "bytes": 5413,
+   "sha256": "fad06400ee18156a8c93292857c4507e96f604e874198aa3e04c4a84436a3424"
+  },
+  {
+   "name": "nwoa4378.inf",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/wifi/bcm4378-wificx/out/20261120-0924-s278fw/package/nwoa4378.inf",
+   "bytes": 3121,
+   "sha256": "2b0be1116572ca527123ce596c63fc9e5dd42152cf43cb8e4a965475055f699d"
+  },
+  {
+   "name": "nwoa4378.sys",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/wifi/bcm4378-wificx/out/20261120-0924-s278fw/package/nwoa4378.sys",
+   "bytes": 185240,
+   "sha256": "a6daf75497cfd4d039bfef54f5f28b329920b83e71c510037cfdbea097ab07a2"
+  },
+  {
+   "name": "nwoas-bcm4378-board.bin",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/wifi/bcm4378-wificx/out/20261120-0924-s278fw/package/nwoas-bcm4378-board.bin",
+   "bytes": 2124,
+   "sha256": "ac4e8367745f428ff68a627da2a660afd0298fc51e88c69a2c34e8129853b446"
+  },
+  {
+   "name": "W17-etw-wlan-start.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/wifi-s258/jobs/src/W17-etw-wlan-start.ps1",
+   "bytes": 3260,
+   "sha256": "a474a523b140584148d6bed5456b8b82a8a05f53fffe082b7f1ea0e8f977d7fb"
+  },
+  {
+   "name": "W18-etw-wlan-stop.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/wifi-s258/jobs/src/W18-etw-wlan-stop.ps1",
+   "bytes": 4417,
+   "sha256": "9ef57c270426aaf37a65a254397324669c2100c4496e3c5c35796a5f57608376"
+  },
+  {
+   "name": "W19-ping.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/wifi-s258/jobs/src/W19-ping.ps1",
+   "bytes": 2713,
+   "sha256": "6a92e842915a27eef1e0865cf436ca2b65085d3387df9271ee469667d9e4f6b9"
+  }
+ ]
+}

@@ -447,3 +447,27 @@ nohup bash gpupool-s267/run-k43d-chain.sh <지금 실행기 .out> <지금 .link>
 - Windows 작업: `agx-s248/jobs/I39-install-2777.cmd`, `R39-rollback-2776.cmd`, `gpucov/jobs/K50-x86-umd-p15.cmd`; 시험 도구 probe15(x86 판 + `AppleAgxRenderAdmissionUmd32.dll` 확인 줄, `gpucov/probe/build-probe15.cmd`); 전달 `file-delivery-s243/make-2777.py`; 연쇄 `gpupool-s273/run-2777-chain.sh`
 
 위험 [가설]: J274 소스(P15~P40)는 x86으로 한 번도 컴파일된 적이 없어 빌드 오류가 날 수 있음. x86 Mesa 구성·빌드와 dxil-spirv x86은 처음이라 오래 걸림. VM에 `vcvarsarm64_x86.bat`가 있는지 모름. 되돌릴 때 SysWOW64 파일은 이름만 바꿔 둠(R39).
+
+## 17. 11-20 09:18-09:56 T 교대 부팅 시험 — T=1 부팅이 한 번도 없었음 (스크립트 버그)
+- [사실] run-t-alternate.sh 의 부팅 순번 변수 `i` 를 waitline()/job() 의 반복문이 `local` 없이 덮어써서
+  (`BOOT 23 of 4`, `BOOT 24 of 4` 로 찍힘) 다음 부팅 값 `next` 가 늘 비었고, 네 부팅 모두 끝에 K47z(지우기)만 실행됨.
+  K47t(쓰기)는 한 번도 실행되지 않았고, 마지막 T=1 부팅에서 돌릴 회귀 시험도 실행되지 않음.
+- [사실] 네 부팅 모두 K48 이 읽은 값이 비어 있음(값 없음 = 드라이버는 0으로 읽음).
+  배치 기록에서도 CPU가 보는 버퍼 267건이 전부 풀 아래쪽(2,000 MiB 이하)에 놓임. 01:15 시험의 T=1 부팅에서는 42건이 위쪽(3,866~3,930 MiB)에 놓였음.
+- 그래서 이번 결과는 T=0 대조 4부팅으로만 쓸 수 있음. 부팅별 실패 갈래: 2/8, 1/8, 6/8, 2/8 (8갈래 × 4부팅 중 11갈래 실패).
+  T가 고침인지 여부는 여전히 판정 전.
+- 수정: 순번을 `bi` 로 바꾸고 waitline/job 에 `local i`. K48 이 읽은 값이 기대값과 다르거나 K47t 가 1을 쓰지 못하면
+  K47z 로 지운 뒤 멈춤(exit 9). 하드웨어 없이 가짜 함수로 흐름만 모의 실행해 0→1→0→1 순서와 회귀 위치를 확인함 [빌드만].
+  run-t-alternate.sh sha256 27318b10cc14b18e7f68d3198ca903c60563f158b4ba66eee42e969521f7664b (6,611 B).
+
+## 18. 11-20 10:26-10:43 2777 연쇄 결과와 후속
+- [사실] K50 arm64 의 device=0 은 판정 작업의 실수: arm64 줄만 `umd draw11` 로 돌려 `d3d11 device` 줄이 나올 수 없었음.
+  같은 실행에서 arm64 `umd d3d11 … hr=0x00000000 feature_level=0xb000`, `draw11 result=PASS bad_pixels=0`, removed_reason=0.
+  2776 대비 퇴행 아님. K50 arm64 줄에 d3d11 추가(K50 sha ce0745d0…31b9).
+- [사실] x86: SysWOW64 에 vcruntime140/msvcp140 없음(err=126) → Umd32 가 올라가지 못해 d3d11/d3d12 hr=0x887a0004.
+- 준비 [빌드만]: make-vcredist-x86.py + I40-vcredist-x86.template(→ agx-s248/jobs/I40-vcredist-x86.cmd),
+  K51-crt32-find.cmd(읽기 전용), gpupool-s273/run-vcredist-x86.sh.
+
+## 19. 11-20 2778(P43, TopDown 기본 켜짐) 빌드와 시험 준비
+- [사실] 고친 교대 시험(11:35~12:19, 2777 위): 네 부팅 모두 읽은 값 확인 통과. T=0 1/8·6/8 실패, T=1 0/8·0/8. 01:15 T=1 0/8 포함 T=1 3부팅 24/24 통과, T=0 6부팅 모두 실패 있음 → 기준 충족(지휘자 판정).
+- [빌드만] 2778 빌드 성공(PATCHES.md P43). 준비: make-2778.py, I41-install-2778.cmd, R40-rollback-2777.cmd, gpupool-s274/run-2778-chain.sh(모의 실행으로 흐름·판정 줄만 확인).
