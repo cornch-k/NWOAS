@@ -593,3 +593,34 @@ VM 점검 값 [사실, VM · Parallels GPU, 13:05~13:08]:
 - 코드에서 본 것 [사실, 코드]: 반 픽셀을 더하는 `dxbc_nir_lower_fragment_position`(= `nir_lower_wpos_center`)은 D3D12 경로(`mesa/winsys/agx_d3d12_windows.cpp:3929`)와 `mesa/dxil/agx_owned_program_nir_native.c:26`에서만 불립니다. D3D11 경로가 왜 빠지는지는 추적 중 [가설 단계].
 - 영향 [가설]: SV_Position을 쓰는 셰이더(화면 좌표로 무늬·디더·클립을 계산하는 것, 텍스처를 화면 좌표로 Load하는 것)가 반 픽셀 어긋납니다. 대부분의 그리기는 정점에서 넘긴 좌표를 쓰므로 눈에 띄지 않았을 수 있습니다.
 - 원뿔 그러데이션: 계산이 맞으므로 원인은 다른 곳입니다. 다음은 GPU 그리기를 켠 Edge가 실제로 쓰는 셰이더를 꺼내(드라이버의 `APPLE_AGX_D3D_SHADER_DUMP`, GPU 샌드박스를 꺼야 파일이 써짐) 그 셰이더를 그대로 시험 프로그램에서 돌려 보는 것입니다.
+
+## 25. 11-20 14시대: 반 픽셀 누락 자리(코드), K55 셰이더, K56 정점→픽셀 값 시험
+
+**결론: (가) 반 픽셀 보정은 D3D11 경로의 셰이더 준비 단계 세 갈래 모두에 없습니다 [사실, 코드 추적]. (나) 원뿔 그러데이션은 "정점에서 넘어온 입력(v#)을 뒤집어(-) atan2에 넣는 식"에서만 틀립니다 [사실, 측정]. 같은 atan2를 임시값(r#)으로 하면 맞습니다(K54). 어느 명령이 틀리는지는 K57로 가르는 중입니다.**
+
+### 25.1 반 픽셀 누락 자리 (보조 에이전트 읽기 전용 추적, Mesa 고정 커밋 `9aa1215f` 기준)
+- asahi 컴파일러는 `load_frag_coord`를 0.5 없이 정수 픽셀 좌표로 바꿉니다(`nir_lower_frag_coord_to_pixel_coord`, `agx_compile.c:3700`에서 조건 없이 호출). 0.5는 앞단 책임입니다.
+- D3D12 경로만 `dxbc_nir_lower_fragment_position`을 부릅니다(`mesa/winsys/agx_d3d12_windows.cpp:3926-3929`).
+- D3D11 픽셀 셰이더 생성 `AgxD3d10CreateShaderState`(`mesa/scripts/build-native-asahi-state.py:3958-4018`의 패치 안)의 세 갈래 — ① DXBC→NIR 변환기(ps_5_0 등), ② TGSI(단순 ps_4_0), ③ 강제 표본 수 변형(`mesa/d3d11/agx_d3d11_ddi.cpp:1134-1151`) — 어디에도 그 단계가 없습니다.
+- 고칠 자리 후보: ① `build-native-asahi-state.py:3976-3981`의 `if (nir) {…}` 안에 픽셀 셰이더일 때 `dxbc_nir_lower_fragment_position(nir)`, ③ `agx_d3d11_ddi.cpp:1134` 뒤, ② TGSI 갈래는 `tgsi_to_nir` 뒤에 같은 단계(넣는 자리 두 후보, 내부 TGSI 셰이더 영향 확인 필요). 빌드 스크립트의 결과 해시 고정 여부는 미확인. **아직 고치지 않았습니다.**
+- 같은 종류로 D3D12에만 있는 단계(깊이 보지 않음): 표본 추출기 최소·최대 필터 감싸기, 슬롯 차원 수집, 보수적 래스터화 변형.
+
+### 25.2 K55: Edge가 쓰는 셰이더 (`nwoas_scripts/gpucov/runs/k55-conic-dxbc-20261120-1402/`, 35개, `disasm.txt`)
+- 원뿔 그러데이션 픽셀 셰이더 `4-6d91a6dc`: 입력은 v0(위치)와 v4.xy(noperspective)뿐, 짝 정점 셰이더 `0-73be0e55`는 o1~o4를 씀. 각도는 `min/max |r1.x|,|v4.y|` → 다항식 → `min/max r1.x,-v4.y` 등 fxc의 atan2 전개.
+- 푸는 도구: `nwoas_scripts/gpucov/tools/dxbc_tokens_dis.py`.
+
+### 25.3 K56 (14:05~14:07, 2778, S268, `nwoas_scripts/gpupool-s277/runs/psvary-20261120-140450.txt`)
+
+| 경우 (크기 1·100 × linear·noperspective) | AGX arm64 | AGX x64 | WARP |
+|---|---|---|---|
+| 값 그대로 넘기기, 입력 전부 읽음 (4개) | PASS | PASS | PASS |
+| 값 그대로 넘기기, 마지막 입력만 읽음 (4개) | PASS | PASS | PASS |
+| 각도식 atan2(-uv.y, -uv.x) (4개) | **FAIL, 1,994 / 4,096 픽셀, 최대 오차 127** | 같음 | PASS |
+
+- 그러므로 "넘어오는 값이 잘린다"는 가설은 기각 [사실].
+- 각도식 지도: 왼쪽 위·오른쪽 아래 사분면은 기대와 같고, 오른쪽 위는 대각선 기준으로 뒤집혀 있으며, 왼쪽 아래는 0으로 나옵니다 [사실].
+- fxc 출력 비교(`gpucov/runs/vm-fxc-atan2-20261120-1412/`): 실패한 식과 K54에서 통과한 식은 명령 순서가 같고, 다른 점은 피연산자가 입력 레지스터(`-v4.x`, `|v4.y|`)냐 임시 레지스터(`-r0.y`)냐뿐입니다 [사실]. 변환기의 피연산자 읽기(`dxbc_to_nir.c:467-476`)는 둘을 같게 다루므로 [사실, 코드], 그 뒤 단계(NIR 최적화나 AGX 백엔드)가 의심됩니다 [가설].
+
+### 25.4 다음: K57 [실기 전]
+- probe18 `psfile=<파일>`: 식을 글 파일로 받아 같은 프로세스에서 AGX와 WARP로 그려 픽셀끼리 비교. 식 파일은 작업이 직접 쓰므로 다음부터는 재부팅 없이 식만 바꿔 돌릴 수 있습니다.
+- `gpucov/jobs/K57-psfile-neg-inputs.cmd`(18개 식: 뒤집기, 절댓값, min/max, 비교, atan2 변형). VM(Parallels 대 WARP)에서는 17/18 같고 `lt_abs`만 10픽셀(|x|=|y| 대각선의 동률) 차이 — 이 10픽셀은 맥미니 판정에서 빼고 봅니다. 기록 `gpucov/runs/vm-psfile-20261120-1425/`.

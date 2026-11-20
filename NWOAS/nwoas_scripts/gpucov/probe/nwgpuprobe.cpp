@@ -814,6 +814,7 @@ static void TestPresent12(HWND w) {
 #include "nwgpuprobe_mem2.inc"  // probe12 (P38): memladder2, fill3, rcpt
 #include "nwgpuprobe_psmath.inc"  // probe16: psmath (pixel-shader arithmetic against CPU values)
 #include "nwgpuprobe_psvary.inc"  // probe17: psvary (vertex-to-pixel values, the conic gradient input)
+#include "nwgpuprobe_psfile.inc"  // probe18: psfile=<path> (expressions from a text file, hardware against WARP)
 
 static void TestPresent() {
   DWORD session = 0;
@@ -872,6 +873,7 @@ int main(int argc, char **argv) {
   if (want("draw11") && !all) TestDraw11();
   if (want("psmath") && !all) TestPsMath();
   if (want("psvary") && !all) TestPsVary();
+  for (int i = 1; i < argc; ++i) if (!_strnicmp(argv[i], "psfile=", 7)) { strcpy_s(g_psFile, argv[i] + 7); TestPsFile(); }
   if (want("fill")) TestFill();
   if (want("pool") && !all) TestPoolReceipt();
   if (want("memladder") && !all) TestMemLadder();
