@@ -74,6 +74,11 @@ S262="$ROOT/nwoas_scripts/nvmeqd-s262"
 # 2026-11-19 S262 default ON (user decision: concurrent NVMe is the normal PC default). Unset -> g262R + QD=32;
 # an explicit NWOAS_S262_HV= (empty) or 0 keeps the old one-at-a-time g254L path.
 if [ -z "${NWOAS_S262_HV+x}" ]; then export NWOAS_S262_HV=1; [ -z "${NWOAS_NVME_QD+x}" ] && export NWOAS_NVME_QD=32; fi
+# 2026-11-20 daily power defaults: idle guest CPUs really sleep (WFI) and secondary-CPU HV tick 100 Hz.
+# Hardware 11-20 23:15 (S268 g262U + S280): Cinebench 1,976 / 386 (vs 1,948 / 381 without), Q2 PASS, QD ON,
+# exceptions 0, Wi-Fi OK. An explicit NWOAS_PWR_WFI=0 / NWOAS_PWR_SECTICK= (empty) keeps the old behaviour.
+[ -z "${NWOAS_PWR_WFI+x}" ] && export NWOAS_PWR_WFI=1
+[ -z "${NWOAS_PWR_SECTICK+x}" ] && export NWOAS_PWR_SECTICK=100
 if [ "${NWOAS_S262_HV:-0}" = 1 ]; then
     # 2026-11-20 daily HV g262R -> g262U (= g262R + PMU cycle-counter filter fix g262T + scanout latch vs
     # reconnect-modeset race fix; nwoas_scripts/pmu-cyc, nwoas_scripts/hv-latch-g262U). Hardware 11-20: Task
