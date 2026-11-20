@@ -1,0 +1,17 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "nwgpuprobe17-arm64.exe",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/bin/nwgpuprobe17-arm64.exe",
+   "bytes": 328704,
+   "sha256": "bdb5438dd2075b9089d3329fc122a3426dd9908c86f3baaf3d18905d980e4acf"
+  },
+  {
+   "name": "nwgpuprobe17-x64.exe",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/bin/nwgpuprobe17-x64.exe",
+   "bytes": 372224,
+   "sha256": "c761b176efa54b17bb732c78f46ca2049073239f93c5c1c75cf494e4de192ceb"
+  }
+ ]
+}

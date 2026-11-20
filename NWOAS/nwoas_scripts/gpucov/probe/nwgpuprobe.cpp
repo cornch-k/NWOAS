@@ -813,6 +813,7 @@ static void TestPresent12(HWND w) {
 #include "nwgpuprobe_mem.inc"
 #include "nwgpuprobe_mem2.inc"  // probe12 (P38): memladder2, fill3, rcpt
 #include "nwgpuprobe_psmath.inc"  // probe16: psmath (pixel-shader arithmetic against CPU values)
+#include "nwgpuprobe_psvary.inc"  // probe17: psvary (vertex-to-pixel values, the conic gradient input)
 
 static void TestPresent() {
   DWORD session = 0;
@@ -870,6 +871,7 @@ int main(int argc, char **argv) {
   if (want("umd") && !all) TestUmdModules();
   if (want("draw11") && !all) TestDraw11();
   if (want("psmath") && !all) TestPsMath();
+  if (want("psvary") && !all) TestPsVary();
   if (want("fill")) TestFill();
   if (want("pool") && !all) TestPoolReceipt();
   if (want("memladder") && !all) TestMemLadder();
