@@ -1,0 +1,110 @@
+--- a/src/hv_exc.c
++++ b/src/hv_exc.c
+@@ -1,6 +1,7 @@
+ /* SPDX-License-Identifier: MIT */
+ 
+ #include "hv.h"
++#include "nwoas_pmu.h" /* NWOAS PMU cycle counter */
+ #include "assert.h"
+ #include "cpu_regs.h"
+ #include "exception.h"
+@@ -1378,49 +1379,19 @@
+             return true;
+         }
+         case SYSREG_ISS(SYS_PMCCFILTR_EL0):
++            /* NWOAS PMU: the guest's filter is PMCR1_EL12 (see nwoas_pmu.h); the old code programmed the
++             * host's PMCR1, so PMC0 never counted Windows' EL0/EL1 cycles. */
+             if(is_read) {
+-                u64 pmcr1_value = mrs(SYS_IMP_APL_PMCR1);
+-                u64 calculated_value = 0;
+-                //
+-                // If EL0/EL1 counting is disabled, set bit 30 of PMCCFILTR to 1.
+-                // (This is backwards from how I would've done it but okay I suppose...)
+-                //
+-                if((pmcr1_value & BIT(8)) == 0) {
+-                    calculated_value |= BIT(30);
+-                }
+-                if((pmcr1_value & BIT(16)) == 0) {
+-                    calculated_value |= BIT(31);
+-                }
+-                //
+-                // EL2 counting always happens as far as is known, so bit 27 is always set to 1
+-                // (bit set to 1 in this case means disable filtering...not sure why it's backwards.)
+-                //
+-                calculated_value |= BIT(27);
+-                printf("HV PMUv3 Redirect: mrs x%ld, PMCCFILTR_EL0 = 0x%lx\n", rt, calculated_value);
+-                regs[rt] = calculated_value;
++                regs[rt] = nwoas_pmcr1_to_pmccfiltr(mrs(NWOAS_SYS_IMP_APL_PMCR1_EL12));
++                printf("HV PMUv3 Redirect: mrs x%ld, PMCCFILTR_EL0 = 0x%lx (PMCR1_EL12)\n", rt, regs[rt]);
+             }
+             else {
+-                u64 pmcr1_value = mrs(SYS_IMP_APL_PMCR1);
+-                //
+-                // If we're being asked to disable counting cycles for a given EL, set the appropriate bit for
+-                // PMCR1 respectively.
+-                //
+-                if((regs[rt] & PMCCFILTR_P) == 0) {
+-                    pmcr1_value |= BIT(16);
+-                }
+-                else {
+-                    pmcr1_value &= ~(BIT(16));
+-                }
+-                if((regs[rt] & PMCCFILTR_U) == 0) {
+-                    pmcr1_value |= BIT(8);
+-                }
+-                else {
+-                    pmcr1_value &= ~(BIT(16));
+-                }
++                u64 v = nwoas_pmccfiltr_to_pmcr1(mrs(NWOAS_SYS_IMP_APL_PMCR1_EL12), regs[rt]);
+                 sysop("isb");
+-                msr(SYS_IMP_APL_PMCR1, pmcr1_value);
++                msr(NWOAS_SYS_IMP_APL_PMCR1_EL12, v);
+                 sysop("isb");
+-                printf("HV PMUv3 Redirect (OK): msr PMCCFILTR_EL0, x%ld = 0x%lx\n", rt, regs[rt]);
++                printf("HV PMUv3 Redirect (OK): msr PMCCFILTR_EL0, x%ld = 0x%lx -> PMCR1_EL12 0x%lx\n", rt,
++                       regs[rt], (u64)mrs(NWOAS_SYS_IMP_APL_PMCR1_EL12));
+             }
+             return true;
+         case SYSREG_ISS(SYS_PMCEID0_EL0):
+--- a/src/nwoas_pmu.h
++++ b/src/nwoas_pmu.h
+@@ -0,0 +1,39 @@
++/* SPDX-License-Identifier: MIT */
++/* NWOAS PMU: PMUv3 PMCCFILTR_EL0 <-> Apple PMCR1 counter-0 filter bits (PMC0 = the cycle counter that
++ * hv_exc.c returns for PMCCNTR_EL0).  With HCR_EL2.E2H=1 the GUEST filter (EL1, EL0 not in host) is the
++ * PMCR1_EL12 alias; the PMCR1_EL1 encoding at EL2 is the host's (Linux 46573d944f00,
++ * arch/arm64/include/asm/apple_m1_pmu.h).  Bits: PMCR1[8+n] = count EL0 (A64), PMCR1[16+n] = count EL1. */
++#ifndef NWOAS_PMU_H
++#define NWOAS_PMU_H
++
++#define NWOAS_SYS_IMP_APL_PMCR1_EL12 sys_reg(3, 1, 15, 7, 2)
++#define NWOAS_PMCR1_C0_EL0 (1ULL << 8)
++#define NWOAS_PMCR1_C0_EL1 (1ULL << 16)
++#define NWOAS_PMCCFILTR_P (1ULL << 31) /* 1 = do not count EL1 */
++#define NWOAS_PMCCFILTR_U (1ULL << 30) /* 1 = do not count EL0 */
++#define NWOAS_PMCCFILTR_NSH (1ULL << 27)
++
++static inline unsigned long long nwoas_pmccfiltr_to_pmcr1(unsigned long long pmcr1, unsigned long long f)
++{
++    if (f & NWOAS_PMCCFILTR_P)
++        pmcr1 &= ~NWOAS_PMCR1_C0_EL1;
++    else
++        pmcr1 |= NWOAS_PMCR1_C0_EL1;
++    if (f & NWOAS_PMCCFILTR_U)
++        pmcr1 &= ~NWOAS_PMCR1_C0_EL0;
++    else
++        pmcr1 |= NWOAS_PMCR1_C0_EL0;
++    return pmcr1;
++}
++
++static inline unsigned long long nwoas_pmcr1_to_pmccfiltr(unsigned long long pmcr1)
++{
++    unsigned long long v = NWOAS_PMCCFILTR_NSH; /* as before: EL2 always reported as counted */
++    if (!(pmcr1 & NWOAS_PMCR1_C0_EL0))
++        v |= NWOAS_PMCCFILTR_U;
++    if (!(pmcr1 & NWOAS_PMCR1_C0_EL1))
++        v |= NWOAS_PMCCFILTR_P;
++    return v;
++}
++
++#endif
