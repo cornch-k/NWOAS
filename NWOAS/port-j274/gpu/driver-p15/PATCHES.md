@@ -733,3 +733,31 @@ UMD 기록 풀이 (2758, Cinebench 프로세스, 시각 순서) [사실, 소스 
 | AppleAgxRenderAdmissionUmd32.dll (x86) | 13739520 | `0be8462d2156ec52a728f7a4f96e627caca68d6d252ac2d72f85981a4e829221` |
 | AppleAgxRenderAdmission.arm64xwow.inf | 5248 | `eb55bdeb761e86c20b8252328e21ad29738a65a18a1c00ac8e6162b6d58d304f` |
 | appleagxrenderadmission.cat | 4637 | `3b316ba49a2bb7474893a569d1d6cbc8e726e623f4a939935f2eb75800adde8e` |
+
+## P45 (NWOAS-J274, 2026-11-20) — D3D10/11 픽셀 셰이더의 SV_Position을 픽셀 중심(+0.5)으로 (판 2780)
+
+결론: **판 2780 = 2779(P44) + D3D10/11 픽셀 셰이더 준비 세 갈래에 반 픽셀 보정. UMD(ARM64·x64·x86)만 바뀌고 KMD 소스는 그대로입니다. 스위치를 끄면 2779와 같게 동작합니다** [빌드만, 실기 전].
+근거: 2778·2779 실기에서 SV_Position.xy가 x+0.5가 아니라 x로 들어옴(K54: `frac` 전 픽셀 16/255 어긋남, `RESULT-2775.md` 24장). asahi는 정수 픽셀 좌표를 내주고 0.5는 앞단 몫인데 D3D12 경로만 더하고 있었음(25.1장).
+
+| 바뀐 것 | 내용 |
+|---|---|
+| `mesa/scripts/build-native-asahi-state.py` (Shader.cpp 패치, `AgxD3d10CreateShaderState`) | ① DXBC→NIR 변환기 갈래: 픽셀 셰이더면 `dxbc_nir_lower_fragment_position(nir)`. ② TGSI 갈래용으로 `agx_win32_d3d_pixel_center`에 스위치 값을 적음 |
+| 같은 스크립트 (asahi `agx_state.c` 패치) | 전역 `int agx_win32_d3d_pixel_center;` 정의. TGSI로 들어온 픽셀 셰이더 블록에서 그 값이 1이면 `nir_lower_wpos_center` |
+| `mesa/d3d11/agx_d3d11_ddi.cpp` | ③ 강제 표본 수 변형: `create_fs_state` 전에 같은 보정 |
+| `mesa/winsys/agx_d3d10_windows.cpp`·`.h` | 스위치 `AgxD3d10WindowsPixelCenter()` |
+| `build-p45.sh` | build-p44.sh 복사, PACKAGE_BUILD 2780, 실행 이름 j274g4w |
+
+- 스위치(기본 켜짐, 프로세스마다 한 번만 읽음): 환경 변수 `APPLE_AGX_D3D_PIXEL_CENTER=0|1`(그 프로세스), 없으면 `HKLM\SOFTWARE\NWOAS\AgxD3d` `D3d11PixelCenter`(REG_DWORD, 0 = 끔, DWM 포함 모든 프로세스). UMD 추적이 켜져 있으면 `measure-d3d11-pixel-center {값, 환경 변수 길이}` 한 줄.
+- D3D12 경로는 건드리지 않았습니다(이미 더하고 있음, 두 번 더해지지 않음). gallium 내부의 TGSI 픽셀 셰이더도 같은 블록을 지나지만 위치를 읽지 않는 셰이더는 달라지지 않습니다 [코드상, 실기 확인 전].
+- 빌드(`build-p45.sh`, 실행 이름 j274g4w, 14:51~14:58): 한 번에 성공, DriverVer 30.0.2780.0, 경고 46 · 오류 0, STAMPINF/INF2CAT/SIGN 0, INFVERIF_RC 1627. 세 UMD 파일에 스위치 문자열(`measure-d3d11-pixel-center`, `APPLE_AGX_D3D_PIXEL_CENTER`)이 들어 있는 것 확인.
+  차이 파일 `P45-driver.diff`. 결과물 `out/j274-full-20261120-1451-p45`.
+
+| 파일 | 바이트 | sha256 |
+|---|---|---|
+| AppleAgxRenderAdmission.sys | 654096 | `14b690c91cce55f3bdd7bb97095fcca8aac44bee0a01eac2477a63b739bf6c93` |
+| AppleAgxRenderAdmissionUmd.dll (ARM64X 전달) | 14848 | `6ebfbf12cd56c9664068af80a25227188bce5c6322210e3a9118b8534550d59f` |
+| AppleAgxRenderAdmissionUmdArm64.dll | 13524480 | `024da86beceb5f3b321a1cbb50466430bfab0a6544a32ce34e5aeecb64009524` |
+| AppleAgxRenderAdmissionUmdX64.dll | 14093824 | `229b684f01f54ad8fc3126bb7b2fc9e5e53b142770390456911727cf0738e0bd` |
+| AppleAgxRenderAdmissionUmd32.dll (x86) | 13740032 | `806eb20c4cee8eced9cabf754c7d50b7a79c999fd07ab3019f03d73c1b217f08` |
+| AppleAgxRenderAdmission.arm64xwow.inf | 5248 | `81f461edbeeadfc3a516f03ba6ebf3769a33afdfd5ff73edc09ca0664c3fd772` |
+| appleagxrenderadmission.cat | 4637 | `4b2b607d0240e12a129cc3a4bf7b92614bf868651e8d026540a9fee9add33cbd` |

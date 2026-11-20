@@ -1,0 +1,47 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "AppleAgxRenderAdmission.sys",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261120-1451-p45/package/AppleAgxRenderAdmission.sys",
+   "bytes": 654096,
+   "sha256": "14b690c91cce55f3bdd7bb97095fcca8aac44bee0a01eac2477a63b739bf6c93"
+  },
+  {
+   "name": "AppleAgxRenderAdmissionUmd.dll",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261120-1451-p45/package/AppleAgxRenderAdmissionUmd.dll",
+   "bytes": 14848,
+   "sha256": "6ebfbf12cd56c9664068af80a25227188bce5c6322210e3a9118b8534550d59f"
+  },
+  {
+   "name": "AppleAgxRenderAdmissionUmdArm64.dll",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261120-1451-p45/package/AppleAgxRenderAdmissionUmdArm64.dll",
+   "bytes": 13524480,
+   "sha256": "024da86beceb5f3b321a1cbb50466430bfab0a6544a32ce34e5aeecb64009524"
+  },
+  {
+   "name": "AppleAgxRenderAdmissionUmdX64.dll",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261120-1451-p45/package/AppleAgxRenderAdmissionUmdX64.dll",
+   "bytes": 14093824,
+   "sha256": "229b684f01f54ad8fc3126bb7b2fc9e5e53b142770390456911727cf0738e0bd"
+  },
+  {
+   "name": "AppleAgxRenderAdmissionUmd32.dll",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261120-1451-p45/package/AppleAgxRenderAdmissionUmd32.dll",
+   "bytes": 13740032,
+   "sha256": "806eb20c4cee8eced9cabf754c7d50b7a79c999fd07ab3019f03d73c1b217f08"
+  },
+  {
+   "name": "AppleAgxRenderAdmission.arm64xwow.inf",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261120-1451-p45/package/AppleAgxRenderAdmission.arm64xwow.inf",
+   "bytes": 5248,
+   "sha256": "81f461edbeeadfc3a516f03ba6ebf3769a33afdfd5ff73edc09ca0664c3fd772"
+  },
+  {
+   "name": "appleagxrenderadmission.cat",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/port-j274/gpu/driver-p15/out/j274-full-20261120-1451-p45/package/appleagxrenderadmission.cat",
+   "bytes": 4637,
+   "sha256": "4b2b607d0240e12a129cc3a4bf7b92614bf868651e8d026540a9fee9add33cbd"
+  }
+ ]
+}
