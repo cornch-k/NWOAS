@@ -475,3 +475,32 @@ nohup bash gpupool-s267/run-k43d-chain.sh <지금 실행기 .out> <지금 .link>
   ① 남은 2777 검사 줄 삭제, ② 배치 판정을 이번 부팅 K48의 프로세스 번호(pid) 것만 세도록 바꿈(K45t의 `first` 기록은 앞 부팅 것이 남을 수 있음) — `BOOT B/C PLACEMENT fresh_top=N fresh_low=M => OK|BAD`, OK = N > 0 이고 M = 0, ③ 요약 줄을 변수에 담아 쓰기(기록 파일을 읽으면서 같은 파일에 덧붙이던 것).
   배치 판정 규칙을 11:35 교대 시험 기록에 적용: T 값 없음 부팅 0/21·0/12 → BAD, T=1 부팅 14/0·14/0 → OK. 연쇄 전체는 여전히 실기 전.
   sha256 `be72a450617406a4a5d9d933cc90ae5cce604076f80b602304cf1d27e34be396` (6,810 B).
+
+## 20. 11-20 Edge GPU 그리기(`--enable-gpu-rasterization`) 정확성·안정성 시험 K52 준비 [실기 전]
+
+**결론: 드라이버를 바꾸지 않고, 같은 페이지를 "기본(CPU로 그림)"과 "GPU로 그림" 두 번 띄워 화면을 비교하는 시험을 만들었습니다. 맥미니에서는 아직 돌지 않았습니다. Parallels VM(Parallels GPU)에서는 도구가 끝까지 돌고 PASS가 나왔으며, 이것은 도구가 동작한다는 것만 뜻합니다.**
+
+| 파일 | 하는 일 | sha256 |
+|---|---|---|
+| `nwoas_scripts/gpucov/web/raster1.html` | 움직이지 않는 시험 페이지(글자 6가지 크기·한글, 그러데이션, 둥근 테두리·그림자, SVG, 회전·흐림·반투명, 표, 캔버스, 긴 목록. 높이 6,398 px) | `8bc1a17d…3b7e` |
+| `nwoas_scripts/gpucov/ps/edgeraster1.ps1` | Edge를 별도 프로필 + 127.0.0.1 DevTools로 띄워 4곳 캡처 → 60초 스크롤·확대 반복 → 다시 캡처. 비교는 8×8 칸 평균(칸 평균 차 16 초과 = 나쁜 칸) | `78f126f2…02a7` |
+| `nwoas_scripts/gpucov/jobs/K52-edge-raster-ab.cmd` (2,324 B) | 두 번 실행 + 비교 + 판정 줄 | `0d9b9788…c9dc` |
+| `nwoas_scripts/file-delivery-s243/make-edgeraster.py`, `manifests/gpucov-edgeraster.json`, `jobs/gpucov19-edgeraster.cmd` (1,672 B) | 위 두 파일을 `C:\NWOAS\gpucov`로 전달 | `3d81eb96…bf37` |
+| `nwoas_scripts/gpupool-s275/run-edgeraster.sh` | 평소 실행기(S268) 부팅 → 전달 → K52. `gpupool-s272/run-edgegpu.sh`(10:23 실기에서 돈 것)와 같은 흐름 | `01a63d04…e9c6` |
+
+판정 줄 `K52 VERDICT … => PASS` 조건: GPU 쪽 `raster=enabled…`, 네 캡처 모두 나쁜 칸 1.0% 이하, GPU 쪽의 반복 전·후 캡처가 나쁜 칸 0, GPU 프로세스 1개(다시 뜨지 않음), 최근 충돌 수 0, FATAL 0, 컨텍스트 잃음 0, 60초 동안 300프레임 이상, 캡처 5장.
+
+VM 점검 값 [사실, VM · Parallels GPU, 13:05~13:08]:
+
+| 항목 | 기본 | GPU로 그림 |
+|---|---|---|
+| rasterization 상태 | unavailable_off | enabled_force |
+| 60초 프레임 수 | 3,564 | 3,559 |
+| 기본 대비 나쁜 칸 (4장, %) | — | 0.000 / 0.000 / 0.000 / 0.000 |
+| 기본 대비 가장 큰 칸 평균 차 (4장) | — | 6 / 9 / 1 / 3 |
+| 반복 전·후 나쁜 칸 | 0 | 0 |
+| GPU 프로세스 수 · FATAL · 잃음 | 1 · 0 · 0 | 1 · 0 · 0 |
+
+- 일부러 다른 그림을 넣으면 나쁜 칸 39.9%·FAIL이 나오는 것도 확인 [사실, VM].
+- VM에서 돌리지 않은 것: K52 작업 파일 자체(임시 .cmd 만들기), 전달 작업, `run-edgeraster.sh`. VM 시험 폴더(`C:\nwtest\er`, 공유 폴더 `ertest`)는 지움.
+- 한계: 기준 "16"과 "1.0%"는 VM에서 본 차이(최대 9, 0%)에 여유를 둔 값이고, 맥미니 첫 결과를 보고 다듬어야 할 수 있음 [가설]. 화면 캡처는 DevTools가 합성 결과를 읽어 오는 것이라 모니터에 실제로 나간 화면과 같다는 보장은 아님.

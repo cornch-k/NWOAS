@@ -1,0 +1,17 @@
+{
+ "version": 1,
+ "artifacts": [
+  {
+   "name": "edgeraster1.ps1",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/ps/edgeraster1.ps1",
+   "bytes": 12636,
+   "sha256": "78f126f283dfff8c192a3b4f3147f55be7e63a2a7b2b20503b21c3acf4db02a7"
+  },
+  {
+   "name": "raster1.html",
+   "path": "/Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/gpucov/web/raster1.html",
+   "bytes": 7383,
+   "sha256": "8bc1a17d618e7d628a05a5365b90be7d654793c1bbb39f46f205db4f839c3b7e"
+  }
+ ]
+}

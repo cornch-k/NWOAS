@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>NWOAS raster test 1</title>
+<!-- K52: a static page that makes the browser rasterize text, gradients, rounded borders, shadows, SVG paths and
+     transforms. Nothing moves unless nwStress() is called, so two captures of the same scroll position must match. -->
+<style>
+html{scrollbar-width:none} ::-webkit-scrollbar{display:none}
+body{margin:0;background:#f4f1ea;color:#1b1b1f;font-family:"Segoe UI","Malgun Gothic",sans-serif;width:1200px}
+section{padding:28px 40px;border-bottom:1px solid #c9c2b4}
+h1{font-size:44px;margin:0 0 8px} h2{font-size:26px;margin:0 0 14px;color:#274060}
+p{margin:0 0 10px;line-height:1.5}
+.s10{font-size:10px}.s12{font-size:12px}.s14{font-size:14px}.s18{font-size:18px}.s24{font-size:24px}.s36{font-size:36px}
+.row{display:flex;gap:18px;flex-wrap:wrap}
+.box{width:160px;height:110px;border-radius:22px;border:6px solid #274060;box-shadow:6px 8px 18px rgba(0,0,0,.45)}
+.g1{background:linear-gradient(135deg,#e63946,#f1fa8c 50%,#2a9d8f)}
+.g2{background:radial-gradient(circle at 30% 30%,#fff,#457b9d 55%,#1d3557)}
+.g3{background:repeating-linear-gradient(45deg,#222 0 8px,#ffb703 8px 16px)}
+.g4{background:conic-gradient(#e63946,#f4a261,#e9c46a,#2a9d8f,#264653,#e63946)}
+.g5{background:#fff;border-style:dashed;border-color:#e63946}
+.g6{background:linear-gradient(#0000,#000a),linear-gradient(90deg,#8ecae6,#fb8500)}
+.rot{display:inline-block;transform:rotate(-7deg) skewX(8deg);background:#274060;color:#fff;padding:10px 26px;font-size:28px;border-radius:10px;margin:20px 30px}
+.sc{display:inline-block;transform:scale(1.6,0.8);transform-origin:left;font-size:22px;font-weight:700;color:#9d0208;margin:14px 0}
+table{border-collapse:collapse;font-size:13px} td,th{border:1px solid #555;padding:4px 10px} th{background:#274060;color:#fff}
+tr:nth-child(even) td{background:#e3ddd0}
+.cols{column-count:3;column-gap:28px;font-size:13px;text-align:justify}
+#spin{display:inline-block;width:140px;height:140px;border-radius:30px;background:conic-gradient(#274060,#8ecae6,#274060);border:5px solid #111;margin:20px 60px}
+.blur{filter:blur(3px);font-size:30px;color:#6a040f} .op{opacity:.45;background:#2a9d8f;color:#000;padding:8px;font-size:20px}
+</style></head><body>
+<section><h1>NWOAS 그리기 시험 1 — Raster test</h1>
+<p class="s10">10px The quick brown fox jumps over the lazy dog 0123456789 다람쥐 헌 쳇바퀴에 타고파 !@#$%^&amp;*()</p>
+<p class="s12">12px The quick brown fox jumps over the lazy dog 0123456789 다람쥐 헌 쳇바퀴에 타고파</p>
+<p class="s14">14px The quick brown fox jumps over the lazy dog 0123456789 다람쥐 헌 쳇바퀴에 타고파</p>
+<p class="s18"><b>18px bold</b> <i>italic</i> <u>underline</u> <s>strike</s> 경복궁 근정전 사정전 강녕전 교태전</p>
+<p class="s24" style="font-family:Consolas,monospace">24px mono: for(i=0;i&lt;n;i++){ sum += a[i]*b[i]; }</p>
+<p class="s36" style="font-family:Georgia,serif;color:#6a040f">36px Serif — Ångström ñ ü ß œ 한글 漢字 かな</p></section>
+<section><h2>Gradients, borders, shadows</h2><div class="row">
+<div class="box g1"></div><div class="box g2"></div><div class="box g3"></div><div class="box g4"></div><div class="box g5"></div><div class="box g6"></div></div></section>
+<section><h2>SVG paths</h2>
+<svg width="1100" height="260" viewBox="0 0 1100 260">
+<defs><linearGradient id="lg" x1="0" x2="1"><stop offset="0" stop-color="#e63946"/><stop offset="1" stop-color="#1d3557"/></linearGradient></defs>
+<path d="M20 200 C 150 10, 300 10, 420 200 S 700 250, 820 60" fill="none" stroke="url(#lg)" stroke-width="14" stroke-linecap="round"/>
+<path d="M60 240 L120 120 L180 240 Z M260 240 L320 120 L380 240 Z" fill="#2a9d8f" stroke="#111" stroke-width="3" stroke-linejoin="round"/>
+<circle cx="900" cy="130" r="100" fill="none" stroke="#274060" stroke-width="2" stroke-dasharray="6 4"/>
+<circle cx="900" cy="130" r="70" fill="#f4a261" fill-opacity=".7"/><ellipse cx="960" cy="150" rx="110" ry="40" fill="#e63946" fill-opacity=".5"/>
+<g stroke="#111" stroke-width="1"><line x1="500" y1="20" x2="760" y2="21"/><line x1="500" y1="30" x2="760" y2="36"/><line x1="500" y1="40" x2="760" y2="60"/><line x1="500" y1="50" x2="760" y2="110"/></g>
+<text x="520" y="230" font-size="34" font-family="Segoe UI" fill="#1d3557" stroke="#fff" stroke-width=".6">SVG text 글자 0123</text></svg></section>
+<section><h2>Transforms, filters, opacity</h2>
+<span class="rot">rotate + skew 회전</span><span class="sc">scale(1.6, 0.8) 늘림</span><div id="spin"></div>
+<p class="blur">blur(3px) 흐림 효과 text</p><p class="op">opacity 0.45 over the page background 반투명</p></section>
+<section><h2>Table</h2><table id="tb"></table></section>
+<section><h2>Columns of small text</h2><div class="cols" id="cols"></div></section>
+<section><h2>Canvas 2D</h2><canvas id="cv" width="1100" height="300"></canvas></section>
+<section><h2>Long list</h2><div id="list"></div></section>
+<script>
+(function(){
+var tb=document.getElementById('tb'),h='<tr><th>#</th><th>전각</th><th>hex</th><th>value</th><th>bar</th></tr>',nm=['근정전','사정전','강녕전','교태전','경회루','자경전','향원정','집옥재'];
+for(var i=0;i<16;i++){h+='<tr><td>'+i+'</td><td>'+nm[i%8]+'</td><td>0x'+(i*2654435761>>>0).toString(16)+'</td><td>'+(i*37.125).toFixed(3)+'</td><td><div style="height:10px;width:'+(20+i*17)+'px;background:hsl('+(i*23)+',70%,45%)"></div></td></tr>'}
+tb.innerHTML=h;
+var s='';for(var j=0;j<60;j++){s+='Line '+j+': pack my box with five dozen liquor jugs; 키스의 고유조건은 입술끼리 만나야 하고 특별한 기술은 필요치 않다. '}
+document.getElementById('cols').textContent=s;
+var c=document.getElementById('cv').getContext('2d');
+for(var k=0;k<40;k++){c.fillStyle='hsl('+(k*9)+',80%,50%)';c.beginPath();c.arc(30+k*27,150+100*Math.sin(k/3),8+k%7*3,0,7);c.fill();c.strokeStyle='#111';c.lineWidth=1+k%3;c.stroke()}
+c.font='30px Segoe UI';c.fillStyle='#111';c.fillText('canvas text 캔버스 0123456789',20,40);
+var l='';for(var m=0;m<70;m++){l+='<p class="s14" style="background:hsl('+(m*11)+',45%,'+(82+m%3*4)+'%);border-left:'+(4+m%5*3)+'px solid hsl('+(m*31)+',60%,35%);padding:6px 12px;border-radius:'+(m%4*6)+'px">'+m+'. 항목 item '+(m*7919%1000)+' — the five boxing wizards jump quickly; 정 참판 양반댁 규수 큰 교자 타고 혼례 치른 날</p>'}
+document.getElementById('list').innerHTML=l;
+// nwStress(ms): scrolls the whole page up and down, changes the zoom every 20 frames (every tile is rasterized
+// again) and spins one box; restores zoom, transform and scroll 0 at the end and resolves with the frame count.
+window.nwStress=function(ms){return new Promise(function(res){
+ var t0=performance.now(),n=0,done=false,sp=document.getElementById('spin');
+ function fin(){if(done)return;done=true;document.body.style.zoom='';sp.style.transform='';scrollTo(0,0);setTimeout(function(){res(n)},700)}
+ setTimeout(fin,ms+5000);
+ function f(){if(done)return;var t=performance.now()-t0;if(t>=ms){fin();return}
+  n++;var H=document.documentElement.scrollHeight-innerHeight;scrollTo(0,Math.abs(Math.sin(t/900))*H);
+  if(n%20==0)document.body.style.zoom=1+((n/20)%5)*0.05;
+  sp.style.transform='rotate('+(t/20)+'deg) scale('+(1+0.3*Math.sin(t/300))+')';requestAnimationFrame(f)}
+ requestAnimationFrame(f)})};
+})();
+</script></body></html>
