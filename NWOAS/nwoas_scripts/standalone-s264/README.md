@@ -501,3 +501,18 @@ bash /Users/angigyeom/Desktop/DEV/NWOAS/nwoas_scripts/standalone-s264/s264-dryru
 
 - 두 C 실행 진단 출력의 `DARTDIAG … MAPPED-WRONG-TARGET`·`DARTERR STALE` 묶음(28줄)은 같은 날 맥북 실행기 S268/S269 부팅에도 똑같이 있습니다(처음 "0줄"이라 적은 것은 부팅마다 다른 `err=` 값으로 찾아 잘못 센 것). 두 실행기의 USB 상태가 같고 무해함 → `ANALYSIS-dartdiag-20261121.md`. USB 키보드·마우스 정상(콘치님 확인).
 - 끝내는 방법: 시작 메뉴 → 다시 시작 → 맥미니가 맥북 연결 대기(D4)로 돌아오고 감시 도구는 USB가 끊겨 rc=1로 끝남(정상).
+
+## 17. 4-1 ESP 준비 + 맥북 리허설 3종 (2026-11-21 01:09~01:18) [사실]
+
+결론: PLAN-4-1 6장 4~8번이 모두 통과했습니다. 남은 것은 9번 1TR 카드(콘치님 손)입니다.
+
+| 순서 | 기록 | 결과 |
+|---|---|---|
+| 4 ESP 준비 | `esp41/runs/esp41-*.txt` (`esp41/run-esp41-copy.sh link …`) | 전달 6개·ESP 되읽기 6개 모두 MATCH, `NWOAS ESP-4-1 COPY COMPLETE`. ESP에 `m1n1` 폴더가 원래 없어 새로 만듦(before\ 백업 대상 없음), `nowin` 없음 |
+| 5 4-2 리허설 | `runs/slot-stage1-42-20261121-010949.txt` | rc 0: 1단계 → ESP s264G → 3 s 뒤 자동 시작(`nowin -1 cfg -1 payload 0`) → C 실행기 → `S264 entering guest`, 맥북 바이트 없음. 바탕화면·와이파이·소리 동작(콘치님 눈) |
+| 6 1단계 + S268 + SSD | `runs/slot-stage1-main-*.txt` | `ST1-S268 DONE | qd=ON | q1s=PASS | q2=PASS | safety=ok/ok | chkdsk_rc=0 | diskevt=0 | VERDICT=PASS` |
+| 7 일부러 실패 | `runs/slot-stage1-negative-*.txt` | missing·fault 둘 다 `NEGATIVE PASS`(재부팅 없이 1단계 USB 프록시 → D4 되올림), 끝에 평소 S268 부팅 |
+| 8 공개 실패 사례 | `gh issue view` 01:2x | #441 열림(갱신 09-12, 댓글 0), #404 열림(09-11), #425·#255 닫힘 — 5장 이후 새 보고 없음 |
+
+- 처음 만든 `esp41/run-esp41-copy.sh`는 평소 래퍼가 끝나기를 기다려 멈췄습니다(래퍼는 Windows가 도는 동안 안 끝남). 래퍼는 그대로 두고 제 스크립트만 끈 뒤, 래퍼를 떼어 띄우고 `DONE` 줄로 판정하도록 고쳤습니다.
+- 맥북 없이 켜는 실행기(s264G)·ESP 페이로드(S261)는 평소 구성(g262U·S280·GPU 풀·WFI/틱)보다 이전 판입니다. 1TR은 1단계만 등록하고 1단계가 읽는 ESP 파일은 나중에 바꿀 수 있으므로, 새 판은 10번(4-2 배치) 전에 맞춥니다.
