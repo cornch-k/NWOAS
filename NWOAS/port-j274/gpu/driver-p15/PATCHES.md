@@ -707,3 +707,29 @@ UMD 기록 풀이 (2758, Cinebench 프로세스, 시각 순서) [사실, 소스 
 | AppleAgxRenderAdmissionUmd32.dll (x86) | 13739520 | `8c59885bf15c951601be4de77930a238e2352ca10ead1560e1ce28f0a2372fd4` |
 | AppleAgxRenderAdmission.arm64xwow.inf | 5248 | `e57fa00fcfe18fae9575db96bde8be74efba2aa56f72f68860209c245e18844d` |
 | appleagxrenderadmission.cat | 4637 | `edbb8708cd227f5b7748065fc3887101d54ef0434d37c5a930ae27946e4663de` |
+
+## P44 (NWOAS-J274, 2026-11-20) — DXBC→NIR 변환기: mov·movc·swapc의 부호·절댓값 표시를 소수 방식으로 (판 2779)
+
+결론: **판 2779 = 2778(P43) + `mesa/dxbc/dxbc_to_nir.c` 세 군데. UMD(ARM64·x64·x86)만 바뀌고 KMD 소스는 그대로입니다** [빌드만].
+근거: 2778 실기에서 ps_5_0의 atan·atan2가 틀리고, `movc r, 조건, -a, a` 꼴만 따로 재도 틀림(K57·K58, `RESULT-2775.md` 26·27장). 변환기가 이 명령들의 값을 정수형으로 읽어 `-x`를 `nir_ineg`, `|x|`를 `nir_iabs`로 적용하고 있었습니다.
+
+| 바뀐 것 | 내용 |
+|---|---|
+| `mesa/dxbc/dxbc_to_nir.c` DXBC_OP_MOV | `SRC(1, saturate ? F : U)` → `SRC(1, F)` |
+| 같은 파일 DXBC_OP_MOVC | 고를 값 두 개 `SRC(2, U)`, `SRC(3, U)` → `F` (조건은 그대로 U) |
+| 같은 파일 DXBC_OP_SWAPC | 바꿀 값 두 개 `SRC(3, U)`, `SRC(4, U)` → `F` |
+| `build-p44.sh` | build-p43.sh 복사, PACKAGE_BUILD 2779, 실행 이름 j274g4v |
+
+- 표시가 없는 mov·movc·swapc는 읽는 방식이 달라지지 않습니다(`read_src`는 형을 표시 적용에만 씀, 467-476행). 이 변환기는 D3D12 경로도 같이 쓰므로 그쪽에도 적용됩니다.
+- 빌드(`build-p44.sh`, 실행 이름 j274g4v, 14:17~14:24): 한 번에 성공, DriverVer 30.0.2779.0, 경고 46 · 오류 0, STAMPINF/INF2CAT/SIGN 0, INFVERIF_RC 1627(2777·2778과 같음). 고친 소스가 VM 빌드 트리(`C:\agx\AD04-persistent-dwm-next\…\dxbc_to_nir.c`, 14:16:35)에 있는 것 확인.
+  차이 파일 `P44-driver.diff`. 결과물 `out/j274-full-20261120-1417-p44`.
+
+| 파일 | 바이트 | sha256 |
+|---|---|---|
+| AppleAgxRenderAdmission.sys | 654096 | `472b97c03e04ac127b1dac6e595240def6956efa3adc451783a08a1c7bbc7299` |
+| AppleAgxRenderAdmissionUmd.dll (ARM64X 전달) | 14848 | `f7477213290b9827f00091e3a595c3e94937f35b378eaba19ae28b1ddb3d6140` |
+| AppleAgxRenderAdmissionUmdArm64.dll | 13523456 | `c0122e1780ad83607ade4713d75bf51b65101e2d5ff9d0db3d6d269621806330` |
+| AppleAgxRenderAdmissionUmdX64.dll | 14093312 | `c2352c6cf6f53ebc3711f3d724eb8e544d6da27e372a1c1912da1193f6c951e7` |
+| AppleAgxRenderAdmissionUmd32.dll (x86) | 13739520 | `0be8462d2156ec52a728f7a4f96e627caca68d6d252ac2d72f85981a4e829221` |
+| AppleAgxRenderAdmission.arm64xwow.inf | 5248 | `eb55bdeb761e86c20b8252328e21ad29738a65a18a1c00ac8e6162b6d58d304f` |
+| appleagxrenderadmission.cat | 4637 | `3b316ba49a2bb7474893a569d1d6cbc8e726e623f4a939935f2eb75800adde8e` |

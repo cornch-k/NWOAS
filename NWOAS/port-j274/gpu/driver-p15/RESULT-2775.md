@@ -635,3 +635,20 @@ VM 점검 값 [사실, VM · Parallels GPU, 13:05~13:08]:
 - 코드 [사실]: `mesa/dxbc/dxbc_to_nir.c:1514-1518` MOVC는 값 두 개를 `SRC(…, U)`(정수형)로 읽고, `read_src`(467-476행)는 정수형이면 마이너스를 `nir_ineg`, 절댓값을 `nir_iabs`로 적용합니다. 소수 값에 정수 부호 뒤집기를 하면 다른 값이 됩니다. MOV(1474행, 포화가 아닐 때)와 SWAPC(1611-1616행)도 같은 방식입니다.
 - 원뿔 그러데이션과의 연결 [가설]: Edge 셰이더 `4-6d91a6dc`에 `movc r1.x, r1.x, l(1), -v4.x`와 `movc r1.x, r1.x, -r1.y, r1.y`가 있습니다.
 - 다음: `gpucov/jobs/K58-psfile-movc.cmd`(재부팅 없음)로 확인 → 맞으면 세 명령의 표시를 소수 방식으로 적용하게 고친 2779(P44, UMD만 변경).
+
+## 27. 11-20 K58 결과와 2779(P44) 빌드·시험 준비
+
+**결론: 원인 후보가 실기에서 확인됐습니다 [사실]. 조건으로 고르는 명령에 마이너스나 절댓값 표시가 붙은 경우만 틀립니다. 변환기 세 군데를 고친 2779를 빌드했고 [빌드만], 실기는 아직입니다.**
+
+| K58 식 (AGX arm64·x64 같음, WARP 기준) | 결과 | 다른 픽셀 / 최대 차 |
+|---|---|---|
+| sel_plain, sel_neg_same, movc_const, mul_sign, atan_abs | 같음 | 0 |
+| movc_neg, movc_neg2 (고를 값 한쪽에 마이너스) | 다름 | 1,984 / 126 |
+| movc_abs (고를 값 한쪽에 절댓값) | 다름 | 1,024 / 251 |
+| atan_negabs | 다름 | 4,016 / 126 |
+| atan_signed | 다름 | 2,008 / 126 |
+
+- 기록: `nwoas_scripts/logs/agxmed1g-s249-20261120-141111.VgAssI.link/job-6.log`. VM(Parallels)에서는 10/10 같음.
+- 고친 것과 빌드: `PATCHES.md` P44.
+- 실기 준비 [실기 전]: `nwoas_scripts/file-delivery-s243/make-2779.py`, `agx-s248/jobs/I42-install-2779.cmd`, `R41-rollback-2778.cmd`, `gpucov/jobs/K52c-edge-raster-ab-2779.cmd`·`K53c-er3-export.cmd`(파일 이름 er3-*, 앞 결과를 덮어쓰지 않음), `gpupool-s279/run-2779-chain.sh`(시작 전 검사만 호스트에서 통과).
+- 통과 기준: VC 30.0.2779.0, K58 arm64·x64 각 10/10, K57 17/18(`lt_abs` 대각선 동률 10픽셀만 남음), K56 12/12, K52c에서 원뿔 그러데이션 자리 차이 사라짐, 풀 시험·K43c·K50·K38g·K38dg·K41 회귀 없음. K54는 반 픽셀 누락 때문에 FAIL 줄이 계속 나옵니다(2779에서 고치지 않음). 다만 K54의 ps_5_0 atan 계열 숫자가 ps_4_0과 같아져야 합니다(atan 432, atan2 105, atan2_neg 135).

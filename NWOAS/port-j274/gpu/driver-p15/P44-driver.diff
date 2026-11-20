@@ -1,0 +1,36 @@
+--- a/drivers/apple-agx/mesa/dxbc/dxbc_to_nir.c	2026-11-20 14:16:35
++++ b/drivers/apple-agx/mesa/dxbc/dxbc_to_nir.c	2026-11-20 14:16:35
+@@ -1471,7 +1471,10 @@
+    case DXBC_OP_ROUND_NI: r = nir_ffloor(b, SRC(1, F)); break;
+    case DXBC_OP_ROUND_PI: r = nir_fceil(b, SRC(1, F)); break;
+    case DXBC_OP_ROUND_Z: r = nir_ftrunc(b, SRC(1, F)); break;
+-   case DXBC_OP_MOV: r = SRC(1, insn->saturate ? F : U); break;
++   /* P44 (2779): mov, movc and swapc carry untyped bits, but the operand modifiers
++    * fxc puts on them (-x, |x|) are float ones (movc r, c, -a, a at the end of
++    * atan/atan2). Reading the values as integers applied ineg/iabs to float bits. */
++   case DXBC_OP_MOV: r = SRC(1, F); break;
+    /* SM 4 leaves the derivative precision to the implementation (TGSI
+     * DDX/DDY -> generic ddx/ddy); SM 5 names it */
+    case DXBC_OP_DERIV_RTX: r = nir_ddx(b, SRC(1, F)); break;
+@@ -1513,8 +1516,8 @@
+    case DXBC_OP_FTOU: r = nir_f2u32(b, SRC(1, F)); break;
+    case DXBC_OP_MOVC:
+       s0 = SRC(1, U);
+-      s1 = SRC(2, U);
+-      s2 = SRC(3, U);
++      s1 = SRC(2, F); /* P44: float modifiers, see DXBC_OP_MOV */
++      s2 = SRC(3, F);
+       r = nir_bcsel(b, nir_ine_imm(b, s0, 0), s1, s2);
+       break;
+    case DXBC_OP_IMUL: case DXBC_OP_UMUL: {
+@@ -1610,8 +1613,8 @@
+    }
+    case DXBC_OP_SWAPC:
+       s0 = nir_ine_imm(b, SRC(2, U), 0);
+-      s1 = SRC(3, U);
+-      s2 = SRC(4, U);
++      s1 = SRC(3, F); /* P44: float modifiers, see DXBC_OP_MOV */
++      s2 = SRC(4, F);
+       write_dst(c, insn, &insn->operands[0], nir_bcsel(b, s0, s2, s1), false);
+       write_dst(c, insn, &insn->operands[1], nir_bcsel(b, s0, s1, s2), false);
+       return true;
